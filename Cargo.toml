@@ -1,0 +1,37 @@
+[workspace]
+# Use the edition-2021 resolver (resolver = "2") to avoid mixed-resolver surprises in
+# workspaces containing members that target the 2021 edition.
+resolver = "2"
+
+members = [
+    "crates/spectral-cortex-lib",
+    "crates/spectral-cortex-cli",
+    "crates/spectral-cortex-mcp",
+]
+
+# Exclude common build artefacts from workspace package listing (keeps tooling cleaner).
+exclude = [
+    "target",
+    "crates/*/target",
+]
+
+# Workspace-wide metadata and recommended tooling settings.
+[workspace.metadata]
+# Recommended minimum Rust edition for members (individual crates may opt for newer).
+rust-version = "1.70"
+
+# Optional: workspace-level scripts / CI hints can be placed here.
+[workspace.metadata.ci]
+# Commands CI should run for the workspace (used by repo automation).
+check-commands = [
+    "cargo fmt --all -- --check",
+    "cargo clippy --all --all-targets -- -D warnings",
+    "cargo test --all"
+]
+
+# Force a single ndarray version across the workspace to avoid duplicate-type issues
+# caused by multiple ndarray versions pulled in by different dependencies (rust-embed,
+# linfa, etc.). The library crates should use ndarray = "0.15.6" for compatibility with
+# the embedded assets; the workspace patch ensures a unified API type for compilation.
+# Workspace patch removed. Manage `ndarray` versions per-crate in each member Cargo.toml
+# to avoid workspace-level patch conflicts and allow Cargo to resolve compatible versions.

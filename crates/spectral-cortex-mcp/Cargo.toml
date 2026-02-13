@@ -1,0 +1,17 @@
+[package]
+name = "spectral-cortex-mcp"
+version = "0.1.0"
+edition = "2021"
+description = "MCP server for querying Spectral Cortex SMG"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+rmcp = { version = "0.15.0", features = ["server", "macros", "transport-io"] }
+tokio = { version = "1.46", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+spectral-cortex = { package = "spectral-cortex-lib", path = "../spectral-cortex-lib" }
+
+[[bin]]
+name = "spectral-cortex-mcp"
+path = "src/main.rs"

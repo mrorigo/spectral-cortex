@@ -1,0 +1,62 @@
+[package]
+name = "spectral-cortex"
+version = "0.1.0"
+edition = "2021"
+description = "CLI for ingesting git history and querying the Spectral Memory Graph (SMG)"
+license = "MIT"
+# authors intentionally omitted for automation-friendly commits
+
+[dependencies]
+# Local library crate (the spectral cortex library)
+spectral-cortex = { package = "spectral-cortex-lib", path = "../spectral-cortex-lib" }
+
+# CLI parsing
+clap = { version = "4", features = ["derive"] }
+
+# Error handling and convenience
+anyhow = "1.0"
+thiserror = "1.0"
+scopeguard = "1.2"
+
+# Git access (optional backend; feature gated)
+git2 = { version = "0.15", optional = true }
+
+# Serialization for CLI I/O (JSON output)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Date and time parsing for temporal flags
+chrono = { version = "0.4", features = ["serde"] }
+
+# Progress reporting (optional)
+indicatif = { version = "0.17", optional = true }
+
+# Optional async runtime (only used if a subcommand requires async operations)
+tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+num = "0.4.3"
+regex = "1.11"
+
+[features]
+# Default features enable the git2 backend and progress bars for a pleasant UX.
+default = ["git2-backend", "progress"]
+
+# Enable git2-based ingestion (libgit2)
+git2-backend = ["git2"]
+
+# Enable progress indicators and nicer CLI feedback
+progress = ["indicatif"]
+
+# Enable async support (opt-in)
+async = ["tokio"]
+
+[[bin]]
+name = "spectral-cortex"
+path = "src/main.rs"
+
+[package.metadata]
+# Guidance for CI; tools may use these commands for workspace checks.
+ci-commands = [
+    "cargo fmt --all -- --check",
+    "cargo clippy --all --all-targets -- -D warnings",
+    "cargo test --all"
+]
