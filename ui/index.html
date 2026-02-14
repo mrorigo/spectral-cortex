@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Spectral Cortex | SMG Explorer</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;600&display=swap"
+            rel="stylesheet"
+        />
+        <link rel="stylesheet" href="./styles.css" />
+    </head>
+    <body>
+        <div class="mesh" aria-hidden="true"></div>
+
+        <header class="topbar">
+            <div class="container topbar-inner">
+                <div class="brand-wrap">
+                    <div class="logo" aria-hidden="true"></div>
+                    <div>
+                        <p class="eyebrow">Spectral Cortex</p>
+                        <h1>SMG Explorer</h1>
+                    </div>
+                </div>
+                <div class="actions">
+                    <label class="btn btn-ghost" for="file-input"
+                        >Load JSON</label
+                    >
+                    <input
+                        id="file-input"
+                        type="file"
+                        accept="application/json,.json"
+                    />
+                    <button id="save-btn" class="btn btn-primary" disabled>
+                        Save JSON
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="container app">
+            <section class="status panel">
+                <div><b>File:</b> <span id="file-name">None</span></div>
+                <div><b>Notes:</b> <span id="note-count">0</span></div>
+                <div><b>Dirty:</b> <span id="dirty-flag">No</span></div>
+                <div>
+                    <b>Validation:</b>
+                    <span id="validation-summary">No file loaded</span>
+                </div>
+            </section>
+
+            <section class="workspace">
+                <aside class="panel rail">
+                    <h2>Explore</h2>
+                    <div class="field">
+                        <label for="search-input">Search</label>
+                        <input
+                            id="search-input"
+                            type="text"
+                            placeholder="note_id, context, raw content, commit"
+                        />
+                    </div>
+                    <div class="field">
+                        <label for="sort-select">Sort</label>
+                        <select id="sort-select">
+                            <option value="id_asc">Note ID (asc)</option>
+                            <option value="id_desc">Note ID (desc)</option>
+                            <option value="timestamp_desc">
+                                Newest timestamp
+                            </option>
+                        </select>
+                    </div>
+                    <div class="field checkbox-row">
+                        <input id="show-long-range" type="checkbox" checked />
+                        <label for="show-long-range"
+                            >Show long-range links</label
+                        >
+                    </div>
+                    <p id="list-meta" class="mono muted">No notes loaded</p>
+                    <div
+                        id="note-list"
+                        class="note-list"
+                        aria-live="polite"
+                    ></div>
+                </aside>
+
+                <section class="panel graph-panel">
+                    <div class="graph-header">
+                        <h2>Force Graph</h2>
+                        <p class="muted">Selected note neighborhood</p>
+                    </div>
+                    <div id="graph-root" class="graph-root"></div>
+                </section>
+
+                <aside class="panel editor">
+                    <h2>Editor</h2>
+                    <p id="selected-note-meta" class="mono muted">
+                        No note selected
+                    </p>
+
+                    <div class="field">
+                        <label for="context-input">Context</label>
+                        <textarea
+                            id="context-input"
+                            rows="4"
+                            disabled
+                        ></textarea>
+                    </div>
+
+                    <div class="field">
+                        <label for="raw-input">Raw Content</label>
+                        <textarea id="raw-input" rows="6" disabled></textarea>
+                    </div>
+
+                    <div class="field">
+                        <label for="related-input"
+                            >Related Note IDs (comma/space/newline)</label
+                        >
+                        <textarea
+                            id="related-input"
+                            rows="4"
+                            disabled
+                        ></textarea>
+                    </div>
+
+                    <div class="meta-grid" id="readonly-meta"></div>
+
+                    <div class="editor-actions">
+                        <button id="apply-btn" class="btn btn-primary" disabled>
+                            Apply Changes
+                        </button>
+                        <button id="delete-btn" class="btn btn-danger" disabled>
+                            Delete Note
+                        </button>
+                    </div>
+                </aside>
+            </section>
+        </main>
+
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.js"></script>
+        <script src="./app.js"></script>
+    </body>
+</html>
