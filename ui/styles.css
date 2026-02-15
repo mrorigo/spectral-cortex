@@ -10,7 +10,7 @@
     --line: #d8ccbb;
     --shadow: 0 12px 40px rgba(20, 40, 36, 0.12);
     --radius: 18px;
-    --maxw: 1320px;
+    --maxw: 100vw;
 }
 
 * {
@@ -39,6 +39,8 @@ body {
         linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
     color: var(--ink);
     line-height: 1.4;
+    height: 100vh;
+    overflow: hidden;
 }
 
 .mesh {
@@ -55,8 +57,8 @@ body {
 }
 
 .container {
-    width: min(var(--maxw), 94vw);
-    margin: 0 auto;
+    width: var(--maxw);
+    margin: 0;
 }
 
 .topbar {
@@ -73,7 +75,7 @@ body {
     justify-content: space-between;
     align-items: center;
     gap: 1rem;
-    padding: 0.8rem 0;
+    padding: 0.8rem 0.9rem;
 }
 
 .brand-wrap {
@@ -172,9 +174,12 @@ h2 {
 }
 
 .app {
-    padding: 1rem 0 1.2rem;
-    display: grid;
+    padding: 0.7rem 0.9rem 0.9rem;
+    display: flex;
+    flex-direction: column;
     gap: 0.9rem;
+    height: calc(100vh - 78px);
+    min-height: 0;
 }
 
 .panel {
@@ -194,10 +199,15 @@ h2 {
 
 .workspace {
     display: grid;
-    grid-template-columns: 300px 1fr 360px;
+    grid-template-columns: clamp(220px, 17vw, 280px) minmax(0, 1fr) clamp(
+            260px,
+            22vw,
+            330px
+        );
     gap: 0.9rem;
-    min-height: calc(100vh - 180px);
-    align-items: start;
+    min-height: 0;
+    flex: 1;
+    align-items: stretch;
 }
 
 .rail,
@@ -207,11 +217,13 @@ h2 {
     display: flex;
     flex-direction: column;
     gap: 0.65rem;
+    min-height: 0;
+    height: 100%;
 }
 
 .rail,
 .graph-panel {
-    height: min(72vh, 760px);
+    height: 100%;
 }
 
 .field {
@@ -297,6 +309,17 @@ textarea {
     gap: 0.6rem;
 }
 
+.graph-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.65rem;
+    align-items: end;
+}
+
+.slider-field input[type="range"] {
+    padding: 0;
+}
+
 .graph-root {
     border: 1px solid var(--line);
     border-radius: 14px;
@@ -304,6 +327,7 @@ textarea {
     height: 100%;
     background: rgba(255, 255, 255, 0.58);
     overflow: hidden;
+    position: relative;
 }
 
 .graph-empty {
@@ -315,6 +339,10 @@ textarea {
     display: flex;
     gap: 0.55rem;
     flex-wrap: wrap;
+}
+
+.editor {
+    overflow: auto;
 }
 
 .meta-grid {
@@ -353,9 +381,79 @@ textarea {
     fill: var(--ink);
 }
 
+.graph-hover-card {
+    position: absolute;
+    left: 0;
+    top: 0;
+    max-width: min(340px, calc(100% - 1.5rem));
+    background: rgba(255, 250, 241, 0.97);
+    border: 1px solid rgba(19, 35, 38, 0.18);
+    border-radius: 12px;
+    box-shadow: 0 16px 34px rgba(14, 36, 40, 0.22);
+    padding: 0.56rem 0.66rem;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(4px) scale(0.985);
+    transition:
+        opacity 90ms ease,
+        transform 90ms ease;
+    z-index: 8;
+}
+
+.graph-pinned-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 7;
+}
+
+.graph-hover-card.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.graph-hover-card.pinned {
+    border-color: rgba(239, 108, 77, 0.55);
+    box-shadow: 0 20px 42px rgba(173, 68, 44, 0.26);
+}
+
+.hover-title {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.hover-kind {
+    font-size: 0.68rem;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.hover-snippet {
+    margin: 0.33rem 0 0.42rem;
+    font-size: 0.79rem;
+    line-height: 1.35;
+    color: var(--ink);
+}
+
+.hover-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.6rem;
+    font-size: 0.7rem;
+    color: var(--ink-soft);
+    font-family: "IBM Plex Mono", monospace;
+}
+
 @media (max-width: 1180px) {
     .workspace {
         grid-template-columns: 280px 1fr;
+        overflow: hidden;
     }
 
     .editor {
@@ -368,6 +466,15 @@ textarea {
 }
 
 @media (max-width: 820px) {
+    body {
+        height: auto;
+        overflow: auto;
+    }
+
+    .app {
+        height: auto;
+    }
+
     .topbar-inner {
         flex-direction: column;
         align-items: flex-start;
@@ -382,9 +489,13 @@ textarea {
         min-height: auto;
     }
 
+    .graph-controls {
+        grid-template-columns: 1fr;
+    }
+
     .rail,
     .graph-panel {
-        height: 420px;
+        height: auto;
     }
 
     .graph-root {

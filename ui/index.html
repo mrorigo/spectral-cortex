@@ -91,6 +91,38 @@
                         <h2>Force Graph</h2>
                         <p class="muted">Selected note neighborhood</p>
                     </div>
+                    <div class="graph-controls">
+                        <div class="field slider-field">
+                            <label for="related-limit-slider">
+                                Related / node:
+                                <span id="related-limit-value" class="mono"
+                                    >5</span
+                                >
+                            </label>
+                            <input
+                                id="related-limit-slider"
+                                type="range"
+                                min="1"
+                                max="50"
+                                step="1"
+                                value="5"
+                            />
+                        </div>
+                        <div class="field slider-field">
+                            <label for="depth-slider">
+                                Expansion depth:
+                                <span id="depth-value" class="mono">1</span>
+                            </label>
+                            <input
+                                id="depth-slider"
+                                type="range"
+                                min="1"
+                                max="9"
+                                step="1"
+                                value="1"
+                            />
+                        </div>
+                    </div>
                     <div id="graph-root" class="graph-root"></div>
                 </section>
 

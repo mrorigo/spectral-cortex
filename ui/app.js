@@ -8,6 +8,7 @@
     selectedNoteId: null,
     dirty: false,
     filters: { query: "", sort: "id_asc" },
+    graphControls: { relatedLimit: 5, depth: 1 },
     validation: { errors: [], warnings: [] },
   };
 
@@ -24,6 +25,10 @@
     searchInput: document.getElementById("search-input"),
     sortSelect: document.getElementById("sort-select"),
     showLongRange: document.getElementById("show-long-range"),
+    relatedLimitSlider: document.getElementById("related-limit-slider"),
+    relatedLimitValue: document.getElementById("related-limit-value"),
+    depthSlider: document.getElementById("depth-slider"),
+    depthValue: document.getElementById("depth-value"),
     listMeta: document.getElementById("list-meta"),
     noteList: document.getElementById("note-list"),
     graphRoot: document.getElementById("graph-root"),
@@ -42,6 +47,8 @@
     els.searchInput.addEventListener("input", onFilterChange);
     els.sortSelect.addEventListener("change", onFilterChange);
     els.showLongRange.addEventListener("change", () => renderGraph());
+    els.relatedLimitSlider.addEventListener("input", onGraphControlChange);
+    els.depthSlider.addEventListener("input", onGraphControlChange);
     els.applyBtn.addEventListener("click", applyEditorChanges);
     els.deleteBtn.addEventListener("click", deleteSelectedNote);
 
@@ -66,7 +73,25 @@
 
     syncStatus();
     renderList();
+    syncGraphControls();
     renderGraphEmpty("Load an SMG JSON file to visualize the graph.");
+  }
+
+  function onGraphControlChange() {
+    state.graphControls.relatedLimit = Number.parseInt(
+      els.relatedLimitSlider.value,
+      10,
+    );
+    state.graphControls.depth = Number.parseInt(els.depthSlider.value, 10);
+    syncGraphControls();
+    renderGraph();
+  }
+
+  function syncGraphControls() {
+    els.relatedLimitValue.textContent = String(
+      state.graphControls.relatedLimit,
+    );
+    els.depthValue.textContent = String(state.graphControls.depth);
   }
 
   function onFileChange(event) {
@@ -151,6 +176,26 @@
         errors.push(`Duplicate note_id: ${note.note_id}`);
       }
       ids.add(note.note_id);
+
+      if (!Array.isArray(note.related_note_links)) {
+        errors.push(
+          `note ${note.note_id} is missing \`related_note_links\` array.`,
+        );
+      } else {
+        for (const entry of note.related_note_links) {
+          const valid =
+            Array.isArray(entry) &&
+            entry.length === 2 &&
+            typeof entry[0] === "number" &&
+            typeof entry[1] === "number";
+          if (!valid) {
+            errors.push(
+              `note ${note.note_id} has invalid related_note_links entries; expected [number, number].`,
+            );
+            break;
+          }
+        }
+      }
     }
 
     if (
@@ -194,24 +239,28 @@
     for (const note of state.graph.notes) {
       if (typeof note.note_id === "number") {
         state.notesById.set(note.note_id, note);
-        state.reverseRelated.set(note.note_id, new Set());
+        state.reverseRelated.set(note.note_id, new Map());
         state.longRangeById.set(note.note_id, []);
       }
     }
 
     for (const note of state.graph.notes) {
       const srcId = note.note_id;
-      const related = Array.isArray(note.related_note_ids)
-        ? note.related_note_ids
+      const related = Array.isArray(note.related_note_links)
+        ? note.related_note_links
         : [];
-      for (const dstId of related) {
+      for (const entry of related) {
+        if (!Array.isArray(entry) || entry.length !== 2) {
+          continue;
+        }
+        const [dstId, score] = entry;
         if (!state.reverseRelated.has(dstId)) {
           state.validation.warnings.push(
             `note ${srcId} references missing related note ${dstId}`,
           );
           continue;
         }
-        state.reverseRelated.get(dstId).add(srcId);
+        state.reverseRelated.get(dstId).set(srcId, score);
       }
     }
 
@@ -373,7 +422,16 @@
     els.selectedNoteMeta.textContent = `note_id=${note.note_id}`;
     els.contextInput.value = String(note.context ?? "");
     els.rawInput.value = String(note.raw_content ?? "");
-    els.relatedInput.value = (note.related_note_ids || []).join(", ");
+    els.relatedInput.value = Array.isArray(note.related_note_links)
+      ? note.related_note_links
+          .map((entry) =>
+            Array.isArray(entry) && entry.length === 2
+              ? `${entry[0]}:${entry[1].toFixed(3)}`
+              : "",
+          )
+          .filter(Boolean)
+          .join(", ")
+      : "";
 
     const sourceTurns = Array.isArray(note.source_turn_ids)
       ? note.source_turn_ids.length
@@ -419,18 +477,29 @@
       return;
     }
 
-    const parsedIds = parseIdList(els.relatedInput.value);
-    const deduped = Array.from(new Set(parsedIds));
-    const existing = deduped.filter((id) => state.notesById.has(id));
-    const dropped = deduped.filter((id) => !state.notesById.has(id));
+    const parsedLinks = parseRelatedLinks(els.relatedInput.value);
+    const deduped = new Map();
+    for (const [id, score] of parsedLinks) {
+      const prev = deduped.get(id);
+      deduped.set(id, prev === undefined ? score : Math.max(prev, score));
+    }
+    const existing = [];
+    const dropped = [];
+    for (const [id, score] of deduped.entries()) {
+      if (state.notesById.has(id)) {
+        existing.push([id, score]);
+      } else {
+        dropped.push(id);
+      }
+    }
 
     note.context = els.contextInput.value;
     note.raw_content = els.rawInput.value;
-    note.related_note_ids = existing;
+    note.related_note_links = existing;
 
     if (dropped.length > 0) {
       state.validation.warnings.push(
-        `Dropped missing related ids for ${note.note_id}: ${dropped.join(", ")}`,
+        `Dropped missing related links for ${note.note_id}: ${dropped.join(", ")}`,
       );
     }
 
@@ -442,13 +511,25 @@
     renderGraph();
   }
 
-  function parseIdList(text) {
+  function parseRelatedLinks(text) {
     return text
       .split(/[\s,]+/)
       .map((chunk) => chunk.trim())
       .filter(Boolean)
-      .map((chunk) => Number.parseInt(chunk, 10))
-      .filter((n) => Number.isInteger(n));
+      .map((chunk) => {
+        const [idPart, scorePart] = chunk.split(":");
+        const id = Number.parseInt(idPart, 10);
+        const score =
+          scorePart === undefined ? 0 : Number.parseFloat(scorePart.trim());
+        if (!Number.isInteger(id)) {
+          return null;
+        }
+        if (!Number.isFinite(score)) {
+          return null;
+        }
+        return [id, score];
+      })
+      .filter((entry) => entry !== null);
   }
 
   function deleteSelectedNote() {
@@ -458,8 +539,8 @@
     }
 
     const note = state.notesById.get(id);
-    const outbound = Array.isArray(note.related_note_ids)
-      ? note.related_note_ids.length
+    const outbound = Array.isArray(note.related_note_links)
+      ? note.related_note_links.length
       : 0;
     const inbound = state.reverseRelated.get(id)?.size ?? 0;
     const ok = window.confirm(
@@ -485,12 +566,13 @@
     }
 
     for (const item of notes) {
-      if (!Array.isArray(item.related_note_ids)) {
-        item.related_note_ids = [];
+      if (!Array.isArray(item.related_note_links)) {
+        item.related_note_links = [];
         continue;
       }
-      item.related_note_ids = item.related_note_ids.filter(
-        (relatedId) => relatedId !== id,
+      item.related_note_links = item.related_note_links.filter(
+        (entry) =>
+          Array.isArray(entry) && entry.length === 2 && entry[0] !== id,
       );
     }
 
@@ -574,6 +656,14 @@
     els.graphRoot.innerHTML = "";
     const width = Math.max(420, els.graphRoot.clientWidth || 640);
     const height = Math.max(340, els.graphRoot.clientHeight || 520);
+    const pinnedLayer = document.createElement("div");
+    pinnedLayer.className = "graph-pinned-layer";
+    els.graphRoot.appendChild(pinnedLayer);
+    const pinnedCards = new Map();
+    const hoverCard = document.createElement("div");
+    hoverCard.className = "graph-hover-card";
+    hoverCard.setAttribute("aria-hidden", "true");
+    els.graphRoot.appendChild(hoverCard);
 
     const svg = d3
       .select(els.graphRoot)
@@ -583,14 +673,13 @@
       .attr("viewBox", `0 0 ${width} ${height}`);
 
     const scene = svg.append("g");
-    svg.call(
-      d3
-        .zoom()
-        .scaleExtent([0.35, 4])
-        .on("zoom", (event) => {
-          scene.attr("transform", event.transform);
-        }),
-    );
+    const zoomBehavior = d3
+      .zoom()
+      .scaleExtent([0.35, 4])
+      .on("zoom", (event) => {
+        scene.attr("transform", event.transform);
+      });
+    svg.call(zoomBehavior);
 
     const linkColor = {
       related_out: "#0d7f70",
@@ -601,17 +690,50 @@
       selected: "#ef6c4d",
       outbound: "#0d7f70",
       inbound: "#1d5f9d",
+      expanded: "#5a8f76",
       long_range: "#d7892f",
+    };
+
+    const scoredValues = data.links
+      .map((d) => (Number.isFinite(d.score) ? d.score : 0))
+      .sort((a, b) => a - b);
+    const minScore = scoredValues.length > 0 ? scoredValues[0] : 0;
+    const maxScore =
+      scoredValues.length > 0 ? scoredValues[scoredValues.length - 1] : 1;
+    const normalizeScore = (value) => {
+      const score = Number.isFinite(value) ? value : 0;
+      if (maxScore <= minScore) {
+        return score > 0 ? 1 : 0;
+      }
+      return Math.max(
+        0,
+        Math.min(1, (score - minScore) / (maxScore - minScore)),
+      );
     };
 
     const link = scene
       .append("g")
-      .attr("stroke-opacity", 0.56)
       .selectAll("line")
       .data(data.links)
       .join("line")
-      .attr("stroke-width", (d) => (d.kind === "long_range" ? 2 : 1.3))
+      .attr("stroke-width", (d) => {
+        const n = normalizeScore(d.score);
+        const base = d.kind === "long_range" ? 1.8 : 1.1;
+        const extra = d.kind === "long_range" ? 2.4 : 1.8;
+        return base + n * extra;
+      })
+      .attr("stroke-opacity", (d) => {
+        const n = normalizeScore(d.score);
+        const base = d.kind === "long_range" ? 0.35 : 0.24;
+        const extra = d.kind === "long_range" ? 0.58 : 0.64;
+        return Math.max(0.05, Math.min(1, base + n * extra));
+      })
       .attr("stroke", (d) => linkColor[d.kind] || "#8aa");
+
+    // Persist normalized link strength for both rendering and force simulation.
+    for (const entry of data.links) {
+      entry.strengthNorm = normalizeScore(entry.score);
+    }
 
     const node = scene
       .append("g")
@@ -623,12 +745,48 @@
       .attr("stroke", "#fff")
       .attr("stroke-width", 1.2)
       .style("cursor", "pointer")
-      .on("click", (_, d) => {
+      .on("mouseenter", (event, d) => {
+        const ref = state.notesById.get(d.id);
+        hoverCard.innerHTML = buildNodeHoverCardHtml(ref, d, false);
+        hoverCard.classList.add("visible");
+        positionHoverCard(event, hoverCard, els.graphRoot);
+      })
+      .on("mousemove", (event) => {
+        if (hoverCard.classList.contains("visible")) {
+          positionHoverCard(event, hoverCard, els.graphRoot);
+        }
+      })
+      .on("mouseleave", () => {
+        hideHoverCard(hoverCard);
+      })
+      .on("contextmenu", (event, d) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (pinnedCards.has(d.id)) {
+          pinnedCards.get(d.id).remove();
+          pinnedCards.delete(d.id);
+          return;
+        }
+
+        const ref = state.notesById.get(d.id);
+        const pinCard = document.createElement("div");
+        pinCard.className = "graph-hover-card pinned visible";
+        pinCard.innerHTML = buildNodeHoverCardHtml(ref, d, true);
+        pinnedLayer.appendChild(pinCard);
+        positionHoverCard(event, pinCard, els.graphRoot);
+        pinnedCards.set(d.id, pinCard);
+      })
+      .on("click", (event, d) => {
+        event.stopPropagation();
         state.selectedNoteId = d.id;
         renderList();
         renderEditor();
         renderGraph();
       });
+
+    svg.on("click", () => {
+      hideHoverCard(hoverCard);
+    });
 
     node.append("title").text((d) => {
       const ref = state.notesById.get(d.id);
@@ -652,7 +810,19 @@
         d3
           .forceLink(data.links)
           .id((d) => d.id)
-          .distance((d) => (d.kind === "long_range" ? 120 : 70)),
+          .distance((d) => {
+            const n = Number.isFinite(d.strengthNorm) ? d.strengthNorm : 0;
+            if (d.kind === "long_range") {
+              return 145 - n * 55;
+            }
+            return 90 - n * 45;
+          })
+          .strength((d) => {
+            const n = Number.isFinite(d.strengthNorm) ? d.strengthNorm : 0;
+            const base = d.kind === "long_range" ? 0.08 : 0.15;
+            const extra = d.kind === "long_range" ? 0.22 : 0.45;
+            return base + n * extra;
+          }),
       )
       .force("charge", d3.forceManyBody().strength(-180))
       .force("center", d3.forceCenter(width / 2, height / 2))
@@ -660,15 +830,7 @@
         "collision",
         d3.forceCollide().radius((d) => (d.kind === "selected" ? 14 : 10)),
       )
-      .on("tick", () => {
-        link
-          .attr("x1", (d) => d.source.x)
-          .attr("y1", (d) => d.source.y)
-          .attr("x2", (d) => d.target.x)
-          .attr("y2", (d) => d.target.y);
-        node.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
-        label.attr("x", (d) => d.x).attr("y", (d) => d.y);
-      });
+      .on("tick", ticked);
 
     node.call(
       d3
@@ -692,12 +854,78 @@
           event.subject.fy = null;
         }),
     );
+
+    // Pre-settle briefly, then fit the full neighborhood in view.
+    simulation.stop();
+    for (let i = 0; i < 80; i += 1) {
+      simulation.tick();
+    }
+    ticked();
+    zoomToFit(svg, zoomBehavior, data.nodes, width, height, 26);
+    simulation.alpha(0.35).restart();
+
+    function ticked() {
+      link
+        .attr("x1", (d) => d.source.x)
+        .attr("y1", (d) => d.source.y)
+        .attr("x2", (d) => d.target.x)
+        .attr("y2", (d) => d.target.y);
+      node.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
+      label.attr("x", (d) => d.x).attr("y", (d) => d.y);
+    }
+  }
+
+  function zoomToFit(svg, zoomBehavior, nodes, width, height, padding) {
+    if (!nodes.length) {
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    for (const n of nodes) {
+      if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) {
+        continue;
+      }
+      if (n.x < minX) minX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.x > maxX) maxX = n.x;
+      if (n.y > maxY) maxY = n.y;
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
+      return;
+    }
+
+    const boxW = Math.max(1, maxX - minX);
+    const boxH = Math.max(1, maxY - minY);
+    const fitW = Math.max(1, width - padding * 2);
+    const fitH = Math.max(1, height - padding * 2);
+    const scale = Math.max(
+      0.35,
+      Math.min(4, Math.min(fitW / boxW, fitH / boxH)),
+    );
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const tx = width / 2 - centerX * scale;
+    const ty = height / 2 - centerY * scale;
+
+    svg.call(
+      zoomBehavior.transform,
+      d3.zoomIdentity.translate(tx, ty).scale(scale),
+    );
   }
 
   function buildNeighborhoodData(selectedId) {
     const nodes = [];
     const links = [];
     const nodeKinds = new Map([[selectedId, "selected"]]);
+    const depth = Math.max(1, Math.min(3, state.graphControls.depth));
+    const relatedLimit = Math.max(1, state.graphControls.relatedLimit);
+    const visitedDepth = new Map([[selectedId, 0]]);
+    const queue = [{ id: selectedId, depth: 0 }];
+    const edgeSet = new Set();
 
     const pushNode = (id, kind) => {
       if (!state.notesById.has(id)) {
@@ -707,35 +935,123 @@
         nodeKinds.set(id, kind);
         return;
       }
-      if (nodeKinds.get(id) === "long_range" && kind !== "long_range") {
+      const rank = {
+        selected: 4,
+        outbound: 3,
+        inbound: 3,
+        expanded: 2,
+        long_range: 1,
+      };
+      if (rank[kind] > (rank[nodeKinds.get(id)] || 0)) {
         nodeKinds.set(id, kind);
       }
     };
 
-    const selectedNote = state.notesById.get(selectedId);
-    const outbound = Array.isArray(selectedNote?.related_note_ids)
-      ? selectedNote.related_note_ids
-      : [];
-    const inbound = Array.from(state.reverseRelated.get(selectedId) || []);
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || current.depth >= depth) {
+        continue;
+      }
+      const srcId = current.id;
+      const note = state.notesById.get(srcId);
+      if (!note) {
+        continue;
+      }
 
-    for (const id of outbound) {
-      pushNode(id, "outbound");
-      links.push({ source: selectedId, target: id, kind: "related_out" });
-    }
+      const outbound = Array.isArray(note.related_note_links)
+        ? note.related_note_links
+            .filter(
+              (entry) =>
+                Array.isArray(entry) &&
+                entry.length === 2 &&
+                Number.isInteger(entry[0]) &&
+                Number.isFinite(entry[1]),
+            )
+            .sort((a, b) => b[1] - a[1])
+        : [];
+      const inbound = Array.from(
+        state.reverseRelated.get(srcId)?.entries() || [],
+      )
+        .filter(
+          (entry) =>
+            Array.isArray(entry) &&
+            entry.length === 2 &&
+            Number.isInteger(entry[0]) &&
+            Number.isFinite(entry[1]),
+        )
+        .sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+      const budget = Math.max(0, relatedLimit);
+      let used = 0;
 
-    for (const id of inbound) {
-      pushNode(id, "inbound");
-      links.push({ source: id, target: selectedId, kind: "related_in" });
+      for (const [dstId, score] of outbound) {
+        if (used >= budget) {
+          break;
+        }
+        if (!state.notesById.has(dstId)) {
+          continue;
+        }
+        used += 1;
+        pushNode(dstId, current.depth === 0 ? "outbound" : "expanded");
+        const edgeKey = `${srcId}->${dstId}:out`;
+        if (!edgeSet.has(edgeKey)) {
+          edgeSet.add(edgeKey);
+          links.push({
+            source: srcId,
+            target: dstId,
+            kind: "related_out",
+            score,
+          });
+        }
+        const nextDepth = current.depth + 1;
+        if (
+          !visitedDepth.has(dstId) ||
+          nextDepth < (visitedDepth.get(dstId) ?? Number.MAX_SAFE_INTEGER)
+        ) {
+          visitedDepth.set(dstId, nextDepth);
+          queue.push({ id: dstId, depth: nextDepth });
+        }
+      }
+
+      for (const [dstId, score] of inbound) {
+        if (used >= budget) {
+          break;
+        }
+        if (!state.notesById.has(dstId)) {
+          continue;
+        }
+        used += 1;
+        pushNode(dstId, current.depth === 0 ? "inbound" : "expanded");
+        const edgeKey = `${dstId}->${srcId}:in`;
+        if (!edgeSet.has(edgeKey)) {
+          edgeSet.add(edgeKey);
+          links.push({
+            source: dstId,
+            target: srcId,
+            kind: "related_in",
+            score,
+          });
+        }
+        const nextDepth = current.depth + 1;
+        if (
+          !visitedDepth.has(dstId) ||
+          nextDepth < (visitedDepth.get(dstId) ?? Number.MAX_SAFE_INTEGER)
+        ) {
+          visitedDepth.set(dstId, nextDepth);
+          queue.push({ id: dstId, depth: nextDepth });
+        }
+      }
     }
 
     if (els.showLongRange.checked) {
       const longRange = state.longRangeById.get(selectedId) || [];
-      for (const entry of longRange.slice(0, 50)) {
+      const longRangeLimit = Math.min(relatedLimit, 50);
+      for (const entry of longRange.slice(0, longRangeLimit)) {
         pushNode(entry.other, "long_range");
         links.push({
           source: selectedId,
           target: entry.other,
           kind: "long_range",
+          score: Number.isFinite(entry.score) ? entry.score : 0,
         });
       }
     }
@@ -756,6 +1072,89 @@
 
   function renderGraphEmpty(message) {
     els.graphRoot.innerHTML = `<div class="graph-empty">${message}</div>`;
+  }
+
+  function buildNodeHoverCardHtml(note, nodeRef, isPinned) {
+    if (!note) {
+      return `<div class="hover-title">#${nodeRef.id}</div><p class="hover-snippet">Missing note payload.</p>`;
+    }
+    const relatedCount = Array.isArray(note.related_note_links)
+      ? note.related_note_links.length
+      : 0;
+    const sourceCommits = Array.isArray(note.source_commit_ids)
+      ? note.source_commit_ids
+          .filter((id) => typeof id === "string" && id.trim().length > 0)
+          .map((id) => id.trim().slice(0, 8))
+      : [];
+    const sourceTimes = Array.isArray(note.source_timestamps)
+      ? note.source_timestamps
+          .filter((ts) => Number.isFinite(ts))
+          .map((ts) => formatTimestamp(ts))
+      : [];
+    const kind = nodeRef.kind || "node";
+    const commitText =
+      sourceCommits.length > 0 ? summarizeList(sourceCommits, 3) : "none";
+    const timeText =
+      sourceTimes.length > 0 ? summarizeList(sourceTimes, 2) : "none";
+    return `
+      <div class="hover-title">#${note.note_id} <span class="hover-kind">${kind}</span></div>
+      <p class="hover-snippet">${summarize(note.context || note.raw_content || "", 160)}</p>
+      <div class="hover-meta">
+        <span>related: ${relatedCount}</span>
+        <span>commits: ${commitText}</span>
+        <span>times: ${timeText}</span>
+        <span>${isPinned ? "pinned (right-click node to unpin)" : "right-click to pin"}</span>
+      </div>
+    `;
+  }
+
+  function hideHoverCard(card) {
+    card.classList.remove("visible");
+  }
+
+  function positionHoverCard(event, card, root) {
+    const rootRect = root.getBoundingClientRect();
+    const cardRect = card.getBoundingClientRect();
+    const margin = 14;
+    let x = event.clientX - rootRect.left + 12;
+    let y = event.clientY - rootRect.top + 12;
+
+    if (x + cardRect.width > rootRect.width - margin) {
+      x = event.clientX - rootRect.left - cardRect.width - 12;
+    }
+    if (x < margin) {
+      x = margin;
+    }
+    if (y + cardRect.height > rootRect.height - margin) {
+      y = event.clientY - rootRect.top - cardRect.height - 12;
+    }
+    if (y < margin) {
+      y = margin;
+    }
+
+    card.style.left = `${Math.round(x)}px`;
+    card.style.top = `${Math.round(y)}px`;
+  }
+
+  function formatTimestamp(epochSeconds) {
+    const value = Number(epochSeconds);
+    if (!Number.isFinite(value) || value <= 0) {
+      return "n/a";
+    }
+    const dt = new Date(value * 1000);
+    if (Number.isNaN(dt.getTime())) {
+      return "n/a";
+    }
+    return dt.toISOString().slice(0, 10);
+  }
+
+  function summarizeList(values, maxItems) {
+    if (!Array.isArray(values) || values.length === 0) {
+      return "none";
+    }
+    const shown = values.slice(0, maxItems);
+    const extra = values.length - shown.length;
+    return extra > 0 ? `${shown.join(", ")} +${extra}` : shown.join(", ");
   }
 
   function summarize(text, max) {
