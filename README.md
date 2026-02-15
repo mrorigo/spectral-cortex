@@ -59,7 +59,7 @@ A dedicated MCP subcommand is available for agent workflows that need compact, m
 
 Run it over stdio:
 ```bash
-spectral-cortex mcp --smg smg-roo.json
+spectral-cortex mcp --smg smg.json
 ```
 
 Available tools:
@@ -74,7 +74,7 @@ MCP client wiring example (recommended):
   "mcpServers": {
     "spectral-cortex": {
       "command": "spectral-cortex",
-      "args": ["mcp", "--smg", "/path/to/smg-roo.json"]
+      "args": ["mcp", "--smg", "/path/to/smg.json"]
     }
   }
 }
@@ -86,7 +86,7 @@ If the binary is not on `PATH`, use an absolute path:
   "mcpServers": {
     "spectral-cortex": {
       "command": "/absolute/path/to/spectral-cortex",
-      "args": ["mcp", "--smg", "/absolute/path/to/smg-roo.json"]
+      "args": ["mcp", "--smg", "/absolute/path/to/smg.json"]
     }
   }
 }
@@ -98,7 +98,7 @@ Development fallback (build+run from source each launch):
   "mcpServers": {
     "spectral-cortex": {
       "command": "cargo",
-      "args": ["run", "-p", "spectral-cortex", "--release", "--", "mcp", "--smg", "smg-roo.json"],
+      "args": ["run", "-p", "spectral-cortex", "--release", "--", "mcp", "--smg", "smg.json"],
       "cwd": "/Users/origo/src/spectral-cortex"
     }
   }
