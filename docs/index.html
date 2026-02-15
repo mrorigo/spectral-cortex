@@ -1,0 +1,835 @@
+<!doctype html>
+<html class="dark" lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta content="width=device-width, initial-scale=1.0" name="viewport" />
+        <title>Spectral Cortex | Advanced Cognitive AI Memory</title>
+        <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+        <link
+            href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&amp;family=Outfit:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"
+            rel="stylesheet"
+        />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
+            rel="stylesheet"
+        />
+        <script id="tailwind-config">
+            tailwind.config = {
+                darkMode: "class",
+                theme: {
+                    extend: {
+                        colors: {
+                            primary: "#b066ff",
+                            secondary: "#3b82f6",
+                            accent: "#ff71cf",
+                            "background-dark": "#0a0514",
+                            "surface-dark": "#150d26",
+                            "border-dark": "#2d1b4d",
+                        },
+                        fontFamily: {
+                            display: ["Plus Jakarta Sans", "sans-serif"],
+                            body: ["Outfit", "sans-serif"],
+                            mono: ["JetBrains Mono", "monospace"],
+                        },
+                        borderRadius: {
+                            DEFAULT: "0.5rem",
+                            lg: "1rem",
+                            xl: "1.5rem",
+                            full: "9999px",
+                        },
+                    },
+                },
+            };
+        </script>
+        <style type="text/tailwindcss">
+            .grid-pattern {
+                background-image: radial-gradient(
+                    circle,
+                    rgba(176, 102, 255, 0.1) 1px,
+                    transparent 1px
+                );
+                background-size: 40px 40px;
+            }
+            .ethereal-glow-top {
+                filter: blur(140px);
+                background: radial-gradient(
+                    circle,
+                    rgba(176, 102, 255, 0.2) 0%,
+                    rgba(59, 130, 246, 0.1) 50%,
+                    transparent 80%
+                );
+            }
+            .ethereal-glow-bottom {
+                filter: blur(140px);
+                background: radial-gradient(
+                    circle,
+                    rgba(255, 113, 207, 0.15) 0%,
+                    rgba(176, 102, 255, 0.1) 50%,
+                    transparent 80%
+                );
+            }
+            .glass-card {
+                background: rgba(21, 13, 38, 0.6);
+                backdrop-filter: blur(12px);
+                border: 1px solid rgba(176, 102, 255, 0.15);
+            }
+            .text-gradient {
+                background: linear-gradient(
+                    135deg,
+                    #fff 0%,
+                    #b066ff 50%,
+                    #ff71cf 100%
+                );
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                text-shadow: 5px 5px 10px rgba(255, 255, 255, 0.1);
+                line-height: 1.3em !important;
+            }
+            .animate-subtle-float {
+                animation: float 6s ease-in-out infinite;
+            }
+            @keyframes float {
+                0%,
+                100% {
+                    transform: translateY(0);
+                }
+                50% {
+                    transform: translateY(-10px);
+                }
+            }
+        </style>
+    </head>
+    <body
+        class="bg-background-dark text-slate-100 font-body selection:bg-primary/30 selection:text-white overflow-x-hidden"
+    >
+        <div class="fixed inset-0 grid-pattern pointer-events-none z-0"></div>
+        <div
+            class="fixed top-[-10%] right-[-5%] w-[60%] h-[60%] ethereal-glow-top pointer-events-none z-0"
+        ></div>
+        <div
+            class="fixed bottom-[-10%] left-[-5%] w-[60%] h-[60%] ethereal-glow-bottom pointer-events-none z-0"
+        ></div>
+        <div class="relative z-10">
+            <header
+                class="sticky top-0 z-50 w-full border-b border-primary/10 bg-background-dark/80 backdrop-blur-xl"
+            >
+                <div
+                    class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between"
+                >
+                    <div class="flex items-center gap-4">
+                        <div
+                            class="size-10 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center text-white shadow-lg shadow-primary/20"
+                        >
+                            <span class="material-symbols-outlined text-2xl"
+                                >neurology</span
+                            >
+                        </div>
+                        <span
+                            class="text-2xl font-display font-extrabold tracking-tight text-white"
+                            >Spectral Cortex</span
+                        >
+                    </div>
+                    <nav class="hidden md:flex items-center gap-10">
+                        <a
+                            class="text-sm font-medium text-slate-400 hover:text-white transition-colors"
+                            href="#features"
+                            >Capabilities</a
+                        >
+                        <a
+                            class="text-sm font-medium text-slate-400 hover:text-white transition-colors"
+                            href="#architecture"
+                            >Engine</a
+                        >
+                        <a
+                            class="text-sm font-medium text-slate-400 hover:text-white transition-colors"
+                            href="#mcp"
+                            >MCP Protocol</a
+                        >
+                        <a
+                            class="flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white px-5 py-2.5 rounded-full font-semibold text-sm transition-all"
+                            href="https://github.com/mrorigo/spectral-cortex"
+                            target="_blank"
+                        >
+                            <span class="material-symbols-outlined text-lg"
+                                >code</span
+                            >
+                            GitHub
+                        </a>
+                    </nav>
+                </div>
+            </header>
+            <section class="relative pt-4 pb-16 px-6 overflow-hidden">
+                <div class="max-w-5xl mx-auto text-center relative z-10">
+                    <div
+                        class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold uppercase tracking-widest mb-8"
+                    >
+                        <span class="relative flex h-2 w-2">
+                            <span
+                                class="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"
+                            ></span>
+                            <span
+                                class="relative inline-flex rounded-full h-2 w-2 bg-accent"
+                            ></span>
+                        </span>
+                        The Frontier of Agentic Recall
+                    </div>
+                    <h1
+                        class="text-6xl md:text-8xl font-display font-black leading-[1.05] tracking-tight mb-8 text-gradient"
+                    >
+                        Git History, as <br />Cognitive Memory
+                    </h1>
+                    <p
+                        class="text-xl md:text-2xl text-slate-400 max-w-3xl mx-auto font-light leading-relaxed mb-12"
+                    >
+                        Evolve your AI agents from simple tools to informed
+                        collaborators. Spectral Cortex maps technical evolution
+                        into a
+                        <span class="text-primary font-medium"
+                            >multidimensional memory graph</span
+                        >
+                        for high-fidelity retrieval.
+                    </p>
+                    <div
+                        class="flex flex-col sm:flex-row items-center justify-center gap-6"
+                    >
+                        <button
+                            class="w-full sm:w-auto px-10 py-5 bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-bold rounded-full transition-all flex items-center justify-center gap-3 text-lg shadow-xl shadow-primary/20"
+                        >
+                            View on GitHub
+                        </button>
+                        <button
+                            class="w-full sm:w-auto px-10 py-5 glass-card hover:bg-white/5 text-white font-bold rounded-full transition-all flex items-center justify-center gap-3 text-lg"
+                        >
+                            Read the Docs
+                        </button>
+                    </div>
+                </div>
+                <div
+                    class="max-w-6xl mx-auto mt-4 relative"
+                    style="margin-top: -32rem; z-index: -10"
+                >
+                    <div
+                        class="absolute inset-0 bg-gradient-to-t from-background-dark via-transparent to-transparent z-10"
+                    ></div>
+                    <div
+                        class="relative rounded-[2rem] border border-white/10 bg-surface-dark/40 overflow-hidden shadow-[0_0_100px_rgba(176,102,255,0.1)]"
+                    >
+                        <img
+                            class="w-full h-[550px] object-cover opacity-80"
+                            data-alt="Abstract shimmering neural network representing AI memory"
+                            src="logo.png"
+                        />
+                    </div>
+                </div>
+            </section>
+            <section class="py-32 px-6">
+                <div class="max-w-7xl mx-auto">
+                    <div class="grid lg:grid-cols-2 gap-20 items-center">
+                        <div>
+                            <h2
+                                class="text-4xl md:text-5xl font-display font-bold text-white mb-8 leading-tight"
+                            >
+                                Harvest Context from the
+                                <span class="text-accent">Vast Depths</span> of
+                                Development
+                            </h2>
+                            <p
+                                class="text-slate-400 text-xl mb-12 font-light leading-relaxed"
+                            >
+                                Traditional RAG misses the nuance of software
+                                evolution. Spectral Cortex treats every commit
+                                as a synaptic link, reconstructing the lost
+                                intent hidden within your repositories.
+                            </p>
+                            <div class="grid gap-6">
+                                <div
+                                    class="p-6 rounded-2xl glass-card group hover:border-primary/40 transition-all"
+                                >
+                                    <div class="flex items-start gap-5">
+                                        <div
+                                            class="size-12 rounded-lg bg-primary/10 flex items-center justify-center text-primary"
+                                        >
+                                            <span
+                                                class="material-symbols-outlined"
+                                                >psychology_alt</span
+                                            >
+                                        </div>
+                                        <div>
+                                            <h4
+                                                class="font-bold text-white text-lg mb-2"
+                                            >
+                                                Latent Insight Extraction
+                                            </h4>
+                                            <p
+                                                class="text-slate-400 leading-relaxed"
+                                            >
+                                                De-noise Git logs into
+                                                structured architectural
+                                                insights that agents can
+                                                actually reason about.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div
+                                    class="p-6 rounded-2xl glass-card group hover:border-accent/40 transition-all"
+                                >
+                                    <div class="flex items-start gap-5">
+                                        <div
+                                            class="size-12 rounded-lg bg-accent/10 flex items-center justify-center text-accent"
+                                        >
+                                            <span
+                                                class="material-symbols-outlined"
+                                                >schema</span
+                                            >
+                                        </div>
+                                        <div>
+                                            <h4
+                                                class="font-bold text-white text-lg mb-2"
+                                            >
+                                                Relational Graph Topology
+                                            </h4>
+                                            <p
+                                                class="text-slate-400 leading-relaxed"
+                                            >
+                                                Stop treating commits as
+                                                islands. We map the semantic
+                                                bridges between code changes
+                                                across time.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="relative">
+                            <div
+                                class="absolute -inset-10 bg-primary/10 rounded-full blur-3xl opacity-50"
+                            ></div>
+                            <div
+                                class="relative glass-card p-10 rounded-[2.5rem] border-white/5 overflow-hidden"
+                            >
+                                <div
+                                    class="absolute top-0 right-0 p-8 opacity-20"
+                                >
+                                    <span
+                                        class="material-symbols-outlined text-[10rem]"
+                                        >memory</span
+                                    >
+                                </div>
+                                <h3
+                                    class="font-mono text-accent text-sm mb-8 uppercase tracking-[0.2em] font-bold"
+                                >
+                                    Neural Reconstruction
+                                </h3>
+                                <div class="space-y-8 relative z-10">
+                                    <div class="flex items-center gap-4">
+                                        <div
+                                            class="h-1.5 w-16 bg-primary rounded-full"
+                                        ></div>
+                                        <div
+                                            class="h-1.5 flex-1 bg-white/5 rounded-full"
+                                        ></div>
+                                    </div>
+                                    <div class="grid grid-cols-2 gap-6">
+                                        <div
+                                            class="aspect-square rounded-2xl bg-white/5 border border-white/10 flex flex-col items-center justify-center p-6 text-center"
+                                        >
+                                            <span
+                                                class="material-symbols-outlined text-4xl text-primary mb-3"
+                                                >auto_awesome</span
+                                            >
+                                            <span
+                                                class="text-xs font-mono uppercase text-slate-500"
+                                                >Semantic Vector</span
+                                            >
+                                        </div>
+                                        <div
+                                            class="aspect-square rounded-2xl bg-white/5 border border-white/10 flex flex-col items-center justify-center p-6 text-center"
+                                        >
+                                            <span
+                                                class="material-symbols-outlined text-4xl text-accent mb-3"
+                                                >join_inner</span
+                                            >
+                                            <span
+                                                class="text-xs font-mono uppercase text-slate-500"
+                                                >Graph Link</span
+                                            >
+                                        </div>
+                                    </div>
+                                    <div
+                                        class="p-6 rounded-xl bg-primary/5 border border-primary/20"
+                                    >
+                                        <p
+                                            class="text-sm font-mono text-primary/80 leading-relaxed"
+                                        >
+                                            // Context Synthesis Complete<br />
+                                            // Found 24 related nodes in
+                                            Spectral Graph<br />
+                                            // Confidence Score: 0.982
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <section class="py-32 px-6" id="features">
+                <div class="max-w-7xl mx-auto text-center mb-20">
+                    <h2
+                        class="text-5xl font-display font-black text-white mb-6"
+                    >
+                        Advanced Capabilities
+                    </h2>
+                    <p class="text-slate-400 text-xl font-light">
+                        Built with Rust for high-frequency cognitive processing.
+                    </p>
+                </div>
+                <div
+                    class="max-w-7xl mx-auto grid md:grid-cols-2 lg:grid-cols-3 gap-8"
+                >
+                    <div
+                        class="p-10 rounded-3xl glass-card hover:bg-white/5 transition-all group"
+                    >
+                        <div
+                            class="size-16 rounded-2xl bg-gradient-to-br from-primary/20 to-secondary/20 border border-primary/30 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform"
+                        >
+                            <span
+                                class="material-symbols-outlined text-primary text-3xl"
+                                >fluid</span
+                            >
+                        </div>
+                        <h3
+                            class="text-2xl font-display font-bold text-white mb-4"
+                        >
+                            Neural Ingestion
+                        </h3>
+                        <p class="text-slate-400 leading-relaxed font-light">
+                            Intelligent filtering that discards operational
+                            noise, distilling history into pure architectural
+                            intent.
+                        </p>
+                    </div>
+                    <div
+                        class="p-10 rounded-3xl glass-card hover:bg-white/5 transition-all group"
+                    >
+                        <div
+                            class="size-16 rounded-2xl bg-gradient-to-br from-accent/20 to-primary/20 border border-accent/30 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform"
+                        >
+                            <span
+                                class="material-symbols-outlined text-accent text-3xl"
+                                >model_training</span
+                            >
+                        </div>
+                        <h3
+                            class="text-2xl font-display font-bold text-white mb-4"
+                        >
+                            Semantic Indexing
+                        </h3>
+                        <p class="text-slate-400 leading-relaxed font-light">
+                            High-dimensional embeddings allow agents to grasp
+                            the "why" behind changes, bypassing keyword
+                            limitations.
+                        </p>
+                    </div>
+                    <div
+                        class="p-10 rounded-3xl glass-card hover:bg-white/5 transition-all group"
+                    >
+                        <div
+                            class="size-16 rounded-2xl bg-gradient-to-br from-secondary/20 to-primary/20 border border-secondary/30 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform"
+                        >
+                            <span
+                                class="material-symbols-outlined text-secondary text-3xl"
+                                >bubble_chart</span
+                            >
+                        </div>
+                        <h3
+                            class="text-2xl font-display font-bold text-white mb-4"
+                        >
+                            Spectral Topology
+                        </h3>
+                        <p class="text-slate-400 leading-relaxed font-light">
+                            Tunable clustering parameters organize your codebase
+                            into a logical, searchable cognitive map.
+                        </p>
+                    </div>
+                    <div
+                        class="p-10 rounded-3xl glass-card hover:bg-white/5 transition-all group"
+                    >
+                        <div
+                            class="size-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform"
+                        >
+                            <span
+                                class="material-symbols-outlined text-white text-3xl"
+                                >link</span
+                            >
+                        </div>
+                        <h3
+                            class="text-2xl font-display font-bold text-white mb-4"
+                        >
+                            Synaptic Linking
+                        </h3>
+                        <p class="text-slate-400 leading-relaxed font-light">
+                            Automated scoring of relationships between commits,
+                            documentation, and issues for total context.
+                        </p>
+                    </div>
+                    <div
+                        class="p-10 rounded-3xl glass-card hover:bg-white/5 transition-all group"
+                    >
+                        <div
+                            class="size-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform"
+                        >
+                            <span
+                                class="material-symbols-outlined text-white text-3xl"
+                                >timeline</span
+                            >
+                        </div>
+                        <h3
+                            class="text-2xl font-display font-bold text-white mb-4"
+                        >
+                            Temporal Decay
+                        </h3>
+                        <p class="text-slate-400 leading-relaxed font-light">
+                            Smart re-ranking ensures agents prioritize modern
+                            architecture while retaining legacy wisdom.
+                        </p>
+                    </div>
+                    <div
+                        class="p-10 rounded-3xl glass-card hover:bg-white/5 transition-all group"
+                    >
+                        <div
+                            class="size-16 rounded-2xl bg-gradient-to-br from-primary to-accent flex items-center justify-center mb-8 group-hover:scale-110 transition-transform shadow-lg shadow-primary/20"
+                        >
+                            <span
+                                class="material-symbols-outlined text-white text-3xl"
+                                >terminal</span
+                            >
+                        </div>
+                        <h3
+                            class="text-2xl font-display font-bold text-white mb-4"
+                        >
+                            MCP Protocol
+                        </h3>
+                        <p class="text-slate-400 leading-relaxed font-light">
+                            Native integration for Claude and other top-tier
+                            agents, creating a seamless stream of codebase
+                            memory.
+                        </p>
+                    </div>
+                </div>
+            </section>
+            <section class="py-32 px-6" id="architecture">
+                <div class="max-w-7xl mx-auto">
+                    <div class="flex flex-col lg:flex-row gap-20 items-center">
+                        <div class="w-full lg:w-5/12">
+                            <h2
+                                class="text-4xl font-display font-bold text-white mb-10"
+                            >
+                                Local-First, Transparent Reasoning
+                            </h2>
+                            <div class="space-y-12">
+                                <div class="flex gap-6">
+                                    <div class="flex flex-col items-center">
+                                        <div
+                                            class="size-10 rounded-full bg-primary flex items-center justify-center text-white font-bold ring-8 ring-primary/10"
+                                        >
+                                            1
+                                        </div>
+                                        <div
+                                            class="w-0.5 h-full bg-border-dark my-2"
+                                        ></div>
+                                    </div>
+                                    <div>
+                                        <h4
+                                            class="text-xl font-bold text-white mb-2"
+                                        >
+                                            Neural Ingest
+                                        </h4>
+                                        <p class="text-slate-400 font-light">
+                                            High-speed Rust parsers crawl
+                                            history, extracting metadata and
+                                            diffs.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div class="flex gap-6">
+                                    <div class="flex flex-col items-center">
+                                        <div
+                                            class="size-10 rounded-full bg-secondary flex items-center justify-center text-white font-bold ring-8 ring-secondary/10"
+                                        >
+                                            2
+                                        </div>
+                                        <div
+                                            class="w-0.5 h-full bg-border-dark my-2"
+                                        ></div>
+                                    </div>
+                                    <div>
+                                        <h4
+                                            class="text-xl font-bold text-white mb-2"
+                                        >
+                                            Topic Segmentation
+                                        </h4>
+                                        <p class="text-slate-400 font-light">
+                                            Multi-topic commits are atomized
+                                            into distinct semantic nodes for
+                                            precision.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div class="flex gap-6">
+                                    <div class="flex flex-col items-center">
+                                        <div
+                                            class="size-10 rounded-full bg-accent flex items-center justify-center text-white font-bold ring-8 ring-accent/10"
+                                        >
+                                            3
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4
+                                            class="text-xl font-bold text-white mb-2"
+                                        >
+                                            Graph Retrieval
+                                        </h4>
+                                        <p class="text-slate-400 font-light">
+                                            Context-rich data is served
+                                            instantly via standard AI protocols.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="w-full lg:w-7/12" id="mcp">
+                            <div
+                                class="glass-card rounded-[2rem] border-white/10 overflow-hidden shadow-2xl"
+                            >
+                                <div
+                                    class="bg-white/5 px-6 py-4 flex items-center justify-between border-b border-white/10"
+                                >
+                                    <div class="flex gap-2">
+                                        <div
+                                            class="size-3 rounded-full bg-red-400/30"
+                                        ></div>
+                                        <div
+                                            class="size-3 rounded-full bg-yellow-400/30"
+                                        ></div>
+                                        <div
+                                            class="size-3 rounded-full bg-green-400/30"
+                                        ></div>
+                                    </div>
+                                    <span
+                                        class="text-xs font-mono text-slate-500 tracking-widest uppercase"
+                                        >mcp_kernel.io</span
+                                    >
+                                </div>
+                                <div
+                                    class="p-10 font-mono text-sm sm:text-base bg-black/20"
+                                >
+                                    <div class="flex gap-4 mb-6">
+                                        <span class="text-slate-700">01</span>
+                                        <span class="text-primary italic"
+                                            >// Initialize memory
+                                            interface</span
+                                        >
+                                    </div>
+                                    <div class="flex gap-4 mb-8">
+                                        <span class="text-slate-700">02</span>
+                                        <div>
+                                            <span class="text-secondary"
+                                                >spectral-cortex</span
+                                            >
+                                            <span class="text-white">
+                                                mcp --smg brain_v2.json</span
+                                            >
+                                        </div>
+                                    </div>
+                                    <div
+                                        class="mt-10 p-6 rounded-xl bg-black/40 border border-white/5"
+                                    >
+                                        <div
+                                            class="text-xs text-slate-500 mb-4 uppercase tracking-[0.2em]"
+                                        >
+                                            Active Streams
+                                        </div>
+                                        <div class="space-y-3">
+                                            <p
+                                                class="text-green-400 flex items-center gap-3"
+                                            >
+                                                <span
+                                                    class="size-2 rounded-full bg-green-400 animate-pulse"
+                                                ></span>
+                                                Graph Core Online
+                                            </p>
+                                            <p class="text-slate-400">
+                                                Loading cognitive map: 100%
+                                            </p>
+                                            <p class="text-accent">
+                                                Auth protocol established with
+                                                Claude-3.5-Sonnet
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <section class="py-32 px-6">
+                <div class="max-w-7xl mx-auto">
+                    <div class="grid md:grid-cols-3 gap-10">
+                        <div
+                            class="glass-card p-10 rounded-[2rem] border-primary/10 hover:border-primary/40 transition-all"
+                        >
+                            <div
+                                class="size-14 rounded-2xl bg-primary/20 flex items-center justify-center text-primary mb-8 shadow-[0_0_20px_rgba(176,102,255,0.2)]"
+                            >
+                                <span class="material-symbols-outlined text-3xl"
+                                    >filter_tilt_shift</span
+                                >
+                            </div>
+                            <h3
+                                class="text-2xl font-display font-bold text-white mb-4"
+                            >
+                                Graph-First
+                            </h3>
+                            <p
+                                class="text-slate-400 font-light leading-relaxed"
+                            >
+                                We don't just search; we navigate the logical
+                                evolutionary structure of your codebase.
+                            </p>
+                        </div>
+                        <div
+                            class="glass-card p-10 rounded-[2rem] border-accent/10 hover:border-accent/40 transition-all"
+                        >
+                            <div
+                                class="size-14 rounded-2xl bg-accent/20 flex items-center justify-center text-accent mb-8 shadow-[0_0_20px_rgba(255,113,207,0.2)]"
+                            >
+                                <span class="material-symbols-outlined text-3xl"
+                                    >psychology</span
+                                >
+                            </div>
+                            <h3
+                                class="text-2xl font-display font-bold text-white mb-4"
+                            >
+                                Cognitive Split
+                            </h3>
+                            <p
+                                class="text-slate-400 font-light leading-relaxed"
+                            >
+                                Multi-topic changes are elegantly parsed into
+                                atomic units, preventing context pollution.
+                            </p>
+                        </div>
+                        <div
+                            class="glass-card p-10 rounded-[2rem] border-secondary/10 hover:border-secondary/40 transition-all"
+                        >
+                            <div
+                                class="size-14 rounded-2xl bg-secondary/20 flex items-center justify-center text-secondary mb-8 shadow-[0_0_20px_rgba(59,130,246,0.2)]"
+                            >
+                                <span class="material-symbols-outlined text-3xl"
+                                    >verified</span
+                                >
+                            </div>
+                            <h3
+                                class="text-2xl font-display font-bold text-white mb-4"
+                            >
+                                Traceable
+                            </h3>
+                            <p
+                                class="text-slate-400 font-light leading-relaxed"
+                            >
+                                Complete provenance. Every piece of memory
+                                retrieved points back to a verifiable source.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            <section class="py-40 px-6 relative overflow-hidden">
+                <div
+                    class="absolute inset-0 ethereal-glow-top opacity-30"
+                ></div>
+                <div class="max-w-4xl mx-auto text-center relative z-10">
+                    <h2
+                        class="text-5xl md:text-7xl font-display font-black text-white mb-10 leading-tight"
+                    >
+                        Elevate Your AI's <br /><span class="text-gradient"
+                            >Intelligence Horizon</span
+                        >
+                    </h2>
+                    <div
+                        class="flex flex-col sm:flex-row items-center justify-center gap-6"
+                    >
+                        <a
+                            class="w-full sm:w-auto px-12 py-6 bg-white text-background-dark font-extrabold rounded-full transition-all text-xl shadow-2xl hover:scale-105 active:scale-95"
+                            href="https://github.com/mrorigo/spectral-cortex"
+                        >
+                            Get Started Free
+                        </a>
+                    </div>
+                    <p
+                        class="mt-12 text-slate-500 font-mono text-sm tracking-widest uppercase"
+                    >
+                        cargo install spectral-cortex
+                    </p>
+                </div>
+            </section>
+            <footer
+                class="py-16 px-6 border-t border-white/5 bg-background-dark"
+            >
+                <div
+                    class="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-10"
+                >
+                    <div class="flex items-center gap-4">
+                        <div
+                            class="size-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-white"
+                        >
+                            <span class="material-symbols-outlined text-lg"
+                                >neurology</span
+                            >
+                        </div>
+                        <span
+                            class="font-display font-extrabold text-white text-lg"
+                            >Spectral Cortex</span
+                        >
+                        <span class="text-slate-700 hidden sm:inline">|</span>
+                        <span class="text-slate-500 text-sm font-mono"
+                            >mrorigo/spectral-cortex</span
+                        >
+                    </div>
+                    <div
+                        class="flex flex-wrap items-center justify-center gap-10"
+                    >
+                        <div
+                            class="flex items-center gap-2 text-slate-400 text-xs uppercase tracking-widest font-bold"
+                        >
+                            <span
+                                class="material-symbols-outlined text-xl text-primary"
+                                >bolt</span
+                            >
+                            Engineered in Rust
+                        </div>
+                        <div
+                            class="flex items-center gap-2 text-slate-400 text-xs uppercase tracking-widest font-bold"
+                        >
+                            <span
+                                class="material-symbols-outlined text-xl text-accent"
+                                >public</span
+                            >
+                            Open Architecture
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="max-w-7xl mx-auto mt-12 pt-12 border-t border-white/5 text-center text-slate-600 text-xs font-light"
+                >
+                    © 2024 Spectral Cortex Research Lab. Mapping the future of
+                    machine cognition.
+                </div>
+            </footer>
+        </div>
+    </body>
+</html>
