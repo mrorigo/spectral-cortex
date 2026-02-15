@@ -33,8 +33,42 @@ fn torch_lib_dir(build_dir: &Path) -> Option<PathBuf> {
         .map(|(_, path)| path)
 }
 
+fn copy_dylibs_to_dir(src_dir: &Path, dst_dir: &Path) {
+    let _ = fs::create_dir_all(dst_dir);
+    if let Ok(entries) = fs::read_dir(src_dir) {
+        for entry in entries.flatten() {
+            let src = entry.path();
+            let is_dylib = src
+                .extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s == "dylib")
+                .unwrap_or(false);
+            if !is_dylib {
+                continue;
+            }
+            if let Some(name) = src.file_name() {
+                let dst = dst_dir.join(name);
+                let _ = fs::copy(&src, &dst);
+            }
+        }
+    }
+}
+
+fn install_bin_dir() -> Option<PathBuf> {
+    if let Some(root) = env::var_os("CARGO_INSTALL_ROOT") {
+        return Some(PathBuf::from(root).join("bin"));
+    }
+    if let Some(cargo_home) = env::var_os("CARGO_HOME") {
+        return Some(PathBuf::from(cargo_home).join("bin"));
+    }
+    env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo/bin"))
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=CARGO_INSTALL_ROOT");
+    println!("cargo:rerun-if-env-changed=CARGO_HOME");
+    println!("cargo:rerun-if-env-changed=HOME");
     let out_dir = match env::var_os("OUT_DIR") {
         Some(v) => PathBuf::from(v),
         None => return,
@@ -55,29 +89,17 @@ fn main() {
         None => return,
     };
 
-    if let Some(lib_dir) = torch_lib_dir(&build_dir) {
-        let stable_runtime_dir = profile_dir.join("libtorch");
-        let _ = fs::create_dir_all(&stable_runtime_dir);
+    if env::var("CARGO_CFG_TARGET_OS").ok().as_deref() == Some("macos") {
+        if let Some(lib_dir) = torch_lib_dir(&build_dir) {
+            let stable_runtime_dir = profile_dir.join("libtorch");
+            copy_dylibs_to_dir(&lib_dir, &stable_runtime_dir);
 
-        if let Ok(entries) = fs::read_dir(&lib_dir) {
-            for entry in entries.flatten() {
-                let src = entry.path();
-                let is_dylib = src
-                    .extension()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s == "dylib")
-                    .unwrap_or(false);
-                if !is_dylib {
-                    continue;
-                }
-
-                if let Some(name) = src.file_name() {
-                    let dst = stable_runtime_dir.join(name);
-                    let _ = fs::copy(&src, &dst);
-                }
+            if let Some(bin_dir) = install_bin_dir() {
+                let install_runtime_dir = bin_dir.join("libtorch");
+                copy_dylibs_to_dir(&lib_dir, &install_runtime_dir);
             }
-        }
 
-        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/libtorch");
+            println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/libtorch");
+        }
     }
 }

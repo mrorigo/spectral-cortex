@@ -33,24 +33,24 @@ cd spectral-memory-graph/rust-version
 cargo build --release
 ```
 
-Install the CLI binary directly:
+Install from this repository:
 
 ```bash
-cargo install spectral-cortex
+cargo install --path crates/spectral-cortex-cli --force
 ```
+
+On macOS, install also provisions Torch runtime dylibs under `~/.cargo/bin/libtorch` so the installed binary can run directly.
 
 Ingest a repository and build the SMG (recommended CLI flow):
 
 ```bash
-cargo run --manifest-path rust-version/Cargo.toml -p spectral-cortex --features git2-backend --release -- \
-  ingest --repo /path/to/repo --out smg.json
+spectral-cortex ingest --repo /path/to/repo --out smg.json
 ```
 
 Query the saved SMG programmatically (JSON output suitable for agents):
 
 ```bash
-cargo run --manifest-path rust-version/Cargo.toml -p spectral-cortex --release -- \
-  query --query "why did we add X" --smg smg.json --json --top-k 10
+spectral-cortex query --query "why did we add X" --smg smg.json --json --top-k 10
 ```
 
 MCP server (markdown-first tools)
@@ -59,7 +59,7 @@ A dedicated MCP subcommand is available for agent workflows that need compact, m
 
 Run it over stdio:
 ```bash
-cargo run -p spectral-cortex --release -- mcp --smg smg-roo.json
+spectral-cortex mcp --smg smg-roo.json
 ```
 
 Available tools:
