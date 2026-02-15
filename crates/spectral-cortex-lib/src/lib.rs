@@ -14,7 +14,7 @@ pub mod temporal;
 pub mod utils;
 
 // Re‑export primary types for ergonomic use.
-pub use graph::SpectralMemoryGraph;
+pub use graph::{SpectralBuildConfig, SpectralMemoryGraph};
 pub use model::{conversation_turn::ConversationTurn, smg_note::SMGNote};
 
 use anyhow::Result;
@@ -38,7 +38,7 @@ use std::path::Path;
 /// - `embedding`: the stored embedding vector (Vec<f32>)
 /// - `source_turn_ids`: list of source turn ids (u64)
 /// - `spectral_coords`: optional spectral coordinates (if present)
-/// - `related_note_ids`: adjacency list of related notes by id
+/// - `related_note_links`: optional adjacency list with similarity score
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SerializableNote {
     pub note_id: u32,
@@ -48,13 +48,14 @@ pub struct SerializableNote {
     /// Precomputed L2 norm of the embedding for fast cosine similarity computation.
     pub norm: f32,
     pub source_turn_ids: Vec<u64>,
-    /// Optional list of source commit ids (hex strings) parallel to `source_turn_ids`.
+    /// List of source commit ids (hex strings) parallel to `source_turn_ids`.
     /// Each entry inside the inner Vec is itself optional to represent synthetic/non-git turns.
-    pub source_commit_ids: Option<Vec<Option<String>>>,
-    /// Optional list of source timestamps (unix epoch seconds) parallel to `source_turn_ids`.
-    /// Persisted as `None` when empty to keep the JSON compact.
-    pub source_timestamps: Option<Vec<u64>>,
-    pub related_note_ids: Vec<u32>,
+    pub source_commit_ids: Vec<Option<String>>,
+    /// List of source timestamps (unix epoch seconds) parallel to `source_turn_ids`.
+    pub source_timestamps: Vec<u64>,
+    /// Adjacency list with similarity scores.
+    /// Tuple shape: `(related_note_id, spectral_similarity)`.
+    pub related_note_links: Vec<(u32, f32)>,
 }
 
 /// Top-level serialisable SMG container.
@@ -84,23 +85,9 @@ impl From<&SMGNote> for SerializableNote {
             embedding: n.embedding.clone(),
             norm: n.norm,
             source_turn_ids: n.source_turn_ids.clone(),
-            // Persist commit ids if any are present.
-            source_commit_ids: {
-                if n.source_commit_ids.is_empty() {
-                    None
-                } else {
-                    Some(n.source_commit_ids.clone())
-                }
-            },
-            // Persist source timestamps if any are present.
-            source_timestamps: {
-                if n.source_timestamps.is_empty() {
-                    None
-                } else {
-                    Some(n.source_timestamps.clone())
-                }
-            },
-            related_note_ids: n.related_note_ids.clone(),
+            source_commit_ids: n.source_commit_ids.clone(),
+            source_timestamps: n.source_timestamps.clone(),
+            related_note_links: n.related_note_links.clone(),
         }
     }
 }
@@ -138,7 +125,7 @@ pub fn save_smg_json(smg: &SpectralMemoryGraph, path: &Path) -> Result<()> {
     let mut metadata = HashMap::new();
     metadata.insert(
         "format_version".to_string(),
-        "spectral-cortex-1".to_string(),
+        "spectral-cortex-v1".to_string(),
     );
 
     let serial = SerializableSMG {
@@ -174,6 +161,17 @@ pub fn save_smg_json(smg: &SpectralMemoryGraph, path: &Path) -> Result<()> {
 pub fn load_smg_json(path: &Path) -> Result<SpectralMemoryGraph> {
     let file = BufReader::new(File::open(path)?);
     let serial: SerializableSMG = serde_json::from_reader(file)?;
+    let format_version = serial
+        .metadata
+        .get("format_version")
+        .map(String::as_str)
+        .unwrap_or("unknown");
+    if format_version != "spectral-cortex-v1" {
+        return Err(anyhow::anyhow!(
+            "unsupported SMG format_version '{}'; expected 'spectral-cortex-v1'",
+            format_version
+        ));
+    }
 
     // Create a fresh graph (this also initialises logging/embedder per existing API).
     let mut smg = SpectralMemoryGraph::new()?;
@@ -190,15 +188,13 @@ pub fn load_smg_json(path: &Path) -> Result<SpectralMemoryGraph> {
             embedding: sn.embedding,
             norm: sn.norm,
             source_turn_ids: sn.source_turn_ids,
-            // Restore persisted commit ids if present; otherwise use an empty vector.
-            source_commit_ids: sn.source_commit_ids.unwrap_or_default(),
-            // Restore persisted source timestamps if present; otherwise use an empty vector.
-            source_timestamps: sn.source_timestamps.unwrap_or_default(),
+            source_commit_ids: sn.source_commit_ids,
+            source_timestamps: sn.source_timestamps,
             // We intentionally do NOT restore per-note spectral coordinates from the
             // persisted file. The global spectral matrices are recomputable and we
             // prefer to keep the JSON compact and avoid confusion by omitting this field.
             spectral_coords: None,
-            related_note_ids: sn.related_note_ids,
+            related_note_links: sn.related_note_links,
         };
         smg.notes.insert(nid, note);
         // Keep next_id ahead of the highest assembled note id.

@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[test]
 fn integration_candidate_k_min_score() -> Result<()> {
     // 1) Prepare synthetic conversation turns. The first entry is an exact match.
-    let samples = vec![
+    let samples = [
         "unique exact match: special-phrase",
         "add new feature for export",
         "refactor storage layer",

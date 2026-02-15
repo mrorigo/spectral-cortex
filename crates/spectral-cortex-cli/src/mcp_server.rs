@@ -1,10 +1,15 @@
-// Rust guideline compliant 2026-02-13
+// Rust guideline compliant 2026-02-15
 
 use std::path::Path;
+use std::sync::Arc;
 
+use anyhow::{Context, Result};
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    schemars,
+    model::*,
+    schemars, tool_handler,
+    transport::stdio,
+    ServerHandler, ServiceExt,
 };
 use serde::Deserialize;
 use spectral_cortex::{load_smg_json, SpectralMemoryGraph};
@@ -16,8 +21,6 @@ const DEFAULT_SNIPPET_CHARS: usize = 140;
 /// Input for querying the graph with a text query.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct QueryGraphInput {
-    #[schemars(description = "Path to an SMG JSON file")]
-    pub smg_path: String,
     #[schemars(description = "Text query to run against the graph")]
     pub query: String,
     #[schemars(description = "Number of rows to return (default: 5)")]
@@ -33,8 +36,6 @@ pub struct QueryGraphInput {
 /// Input for inspecting one note and its related notes.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct InspectNoteInput {
-    #[schemars(description = "Path to an SMG JSON file")]
-    pub smg_path: String,
     #[schemars(description = "Note id to inspect")]
     pub note_id: u32,
     #[schemars(description = "Number of related notes to include (default: 10)")]
@@ -46,31 +47,43 @@ pub struct InspectNoteInput {
 /// Input for listing long-range links.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct LongRangeLinksInput {
-    #[schemars(description = "Path to an SMG JSON file")]
-    pub smg_path: String,
     #[schemars(description = "Number of long-range links to include (default: 20)")]
     pub top_k: Option<usize>,
 }
 
 /// Input for quick graph summary.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GraphSummaryInput {
-    #[schemars(description = "Path to an SMG JSON file")]
-    pub smg_path: String,
-}
+pub struct GraphSummaryInput {}
 
 /// MCP server that provides compact tools for SMG query and inspection.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SpectralCortexMcpServer {
     pub tool_router: ToolRouter<Self>,
+    pub smg_path: String,
+    pub smg: Arc<SpectralMemoryGraph>,
+}
+
+#[tool_handler]
+impl ServerHandler for SpectralCortexMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            instructions: Some(
+                "Spectral Cortex MCP Server: compact markdown tools for querying a preloaded SMG file. Prefer small top_k values to keep responses token efficient.".into(),
+            ),
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            ..Default::default()
+        }
+    }
 }
 
 #[rmcp::tool_router]
 impl SpectralCortexMcpServer {
     /// Construct a new server instance.
-    pub fn new() -> Self {
+    pub fn new(smg_path: String, smg: SpectralMemoryGraph) -> Self {
         Self {
             tool_router: Self::tool_router(),
+            smg_path,
+            smg: Arc::new(smg),
         }
     }
 
@@ -116,13 +129,6 @@ impl SpectralCortexMcpServer {
 }
 
 impl SpectralCortexMcpServer {
-    fn load_graph(path: &str) -> anyhow::Result<SpectralMemoryGraph> {
-        let p = Path::new(path);
-        let smg = load_smg_json(p)
-            .map_err(|e| anyhow::anyhow!("failed to load SMG '{}': {e}", p.display()))?;
-        Ok(smg)
-    }
-
     fn clamp_top_k(top_k: Option<usize>, default_k: usize, max_k: usize) -> usize {
         top_k.unwrap_or(default_k).max(1).min(max_k)
     }
@@ -151,15 +157,14 @@ impl SpectralCortexMcpServer {
         })
     }
 
-    fn query_graph_impl(&self, input: QueryGraphInput) -> anyhow::Result<String> {
-        let smg = Self::load_graph(&input.smg_path)?;
+    fn query_graph_impl(&self, input: QueryGraphInput) -> Result<String> {
+        let smg = &self.smg;
         let top_k = Self::clamp_top_k(input.top_k, DEFAULT_TOP_K, 50);
         let links_k = Self::clamp_top_k(input.links_k, DEFAULT_LINKS_K, 10);
         let snippet_chars = input
             .snippet_chars
             .unwrap_or(DEFAULT_SNIPPET_CHARS)
-            .max(40)
-            .min(300);
+            .clamp(40, 300);
 
         let mut scored = smg
             .retrieve_with_scores(&input.query, top_k.saturating_mul(4))
@@ -174,14 +179,14 @@ impl SpectralCortexMcpServer {
 
         let mut out = String::new();
         out.push_str(&format!("# Query: `{}`\n", input.query));
-        out.push_str(&format!("- SMG: `{}`\n", input.smg_path));
+        out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
         out.push_str(&format!("- hits: {}\n\n", scored.len()));
 
         out.push_str("| # | turn_id | note_id | score | snippet |\n");
         out.push_str("|---|---------|---------|-------|---------|\n");
 
         for (idx, (turn_id, score)) in scored.iter().enumerate() {
-            if let Some(note_id) = Self::find_note_by_turn_id(&smg, *turn_id) {
+            if let Some(note_id) = Self::find_note_by_turn_id(smg, *turn_id) {
                 if let Some(note) = smg.notes.get(&note_id) {
                     let snip =
                         Self::compact_snippet(&note.context, snippet_chars).replace('|', "\\|");
@@ -200,7 +205,7 @@ impl SpectralCortexMcpServer {
         if !scored.is_empty() {
             out.push_str("\n## Related Notes\n");
             for (turn_id, _) in scored {
-                if let Some(note_id) = Self::find_note_by_turn_id(&smg, turn_id) {
+                if let Some(note_id) = Self::find_note_by_turn_id(smg, turn_id) {
                     let related = smg.get_related_note_links(note_id, Some(links_k));
                     let compact = if related.is_empty() {
                         String::from("none")
@@ -219,14 +224,13 @@ impl SpectralCortexMcpServer {
         Ok(out)
     }
 
-    fn inspect_note_impl(&self, input: InspectNoteInput) -> anyhow::Result<String> {
-        let smg = Self::load_graph(&input.smg_path)?;
+    fn inspect_note_impl(&self, input: InspectNoteInput) -> Result<String> {
+        let smg = &self.smg;
         let links_k = Self::clamp_top_k(input.links_k, 10, 25);
         let snippet_chars = input
             .snippet_chars
             .unwrap_or(DEFAULT_SNIPPET_CHARS)
-            .max(40)
-            .min(300);
+            .clamp(40, 300);
 
         let note = smg
             .notes
@@ -235,7 +239,7 @@ impl SpectralCortexMcpServer {
 
         let mut out = String::new();
         out.push_str(&format!("# Note {}\n", note.note_id));
-        out.push_str(&format!("- SMG: `{}`\n", input.smg_path));
+        out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
         out.push_str(&format!("- source_turn_ids: {:?}\n", note.source_turn_ids));
         out.push_str(&format!(
             "- source_commit_ids: {:?}\n",
@@ -266,14 +270,14 @@ impl SpectralCortexMcpServer {
         Ok(out)
     }
 
-    fn long_range_links_impl(&self, input: LongRangeLinksInput) -> anyhow::Result<String> {
-        let smg = Self::load_graph(&input.smg_path)?;
+    fn long_range_links_impl(&self, input: LongRangeLinksInput) -> Result<String> {
+        let smg = &self.smg;
         let top_k = Self::clamp_top_k(input.top_k, 20, 100);
         let links = smg.get_long_range_links(Some(top_k));
 
         let mut out = String::new();
         out.push_str("# Long-Range Links\n");
-        out.push_str(&format!("- SMG: `{}`\n", input.smg_path));
+        out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
         out.push_str(&format!("- links: {}\n\n", links.len()));
         out.push_str("| # | note_a | note_b | spectral_similarity |\n");
         out.push_str("|---|--------|--------|---------------------|\n");
@@ -285,8 +289,8 @@ impl SpectralCortexMcpServer {
         Ok(out)
     }
 
-    fn graph_summary_impl(&self, input: GraphSummaryInput) -> anyhow::Result<String> {
-        let smg = Self::load_graph(&input.smg_path)?;
+    fn graph_summary_impl(&self, _input: GraphSummaryInput) -> Result<String> {
+        let smg = &self.smg;
 
         let links_count = smg.long_range_links.as_ref().map(|v| v.len()).unwrap_or(0);
         let cluster_labels = smg.cluster_labels.as_ref().map(|v| v.len()).unwrap_or(0);
@@ -294,7 +298,7 @@ impl SpectralCortexMcpServer {
 
         let mut out = String::new();
         out.push_str("# Graph Summary\n");
-        out.push_str(&format!("- SMG: `{}`\n", input.smg_path));
+        out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
         out.push_str(&format!("- notes: {}\n", smg.notes.len()));
         out.push_str(&format!("- next_id: {}\n", smg.next_id));
         out.push_str(&format!("- long_range_links: {}\n", links_count));
@@ -311,4 +315,27 @@ impl SpectralCortexMcpServer {
 
         Ok(out)
     }
+}
+
+/// Run the MCP server over stdio with a preloaded SMG graph.
+pub fn run_mcp_server(smg_path: &Path) -> Result<()> {
+    let smg_path = smg_path
+        .to_path_buf()
+        .canonicalize()
+        .unwrap_or_else(|_| smg_path.to_path_buf());
+    let smg = load_smg_json(&smg_path)
+        .with_context(|| format!("failed to load SMG '{}'", smg_path.display()))?;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .context("failed to build tokio runtime for MCP server")?;
+
+    runtime.block_on(async move {
+        let service = SpectralCortexMcpServer::new(smg_path.display().to_string(), smg)
+            .serve(stdio())
+            .await?;
+        service.waiting().await?;
+        Ok::<(), anyhow::Error>(())
+    })
 }

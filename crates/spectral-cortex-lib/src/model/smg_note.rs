@@ -24,7 +24,9 @@ pub struct SMGNote {
     pub source_timestamps: Vec<u64>,
     // Placeholder for future spectral coordinates – not used in the stub.
     pub spectral_coords: Option<Vec<f32>>, // not persisted directly
-    pub related_note_ids: Vec<u32>,
+    /// Related notes with spectral similarity scores.
+    /// Tuple shape: `(related_note_id, spectral_similarity)`.
+    pub related_note_links: Vec<(u32, f32)>,
 }
 
 impl SMGNote {

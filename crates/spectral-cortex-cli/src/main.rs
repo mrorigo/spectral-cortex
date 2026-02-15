@@ -14,7 +14,7 @@
 //!  - Prefer `anyhow::Result` for application-level error handling.
 //!
 //! Usage examples:
-//!  cargo run -p spectral-cortex -- ingest --repo /path/to/repo --rebuild
+//!  cargo run -p spectral-cortex -- ingest --repo /path/to/repo
 //!
 //! Notes:
 //!  - The ingest command currently uses the library API (`SpectralMemoryGraph::new`,
@@ -32,6 +32,12 @@ use indicatif::{ProgressBar, ProgressStyle};
 use regex::{Regex, RegexBuilder};
 use serde_json::json;
 use spectral_cortex::embed;
+
+mod git_commit_split;
+mod mcp_server;
+
+use crate::git_commit_split::{split_commit_message, CommitSplitConfig, CommitSplitStats};
+use crate::mcp_server::run_mcp_server;
 
 /// Local library crate export (hyphen -> underscore).
 use spectral_cortex::{
@@ -55,7 +61,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Ingest a git repository into an SMG and (optionally) build spectral structures.
+    /// Ingest a git repository into an SMG and build spectral structures.
     Ingest(IngestArgs),
 
     /// Incrementally update an existing SMG with only new commits (alias for ingest --append --incremental).
@@ -66,6 +72,9 @@ enum Commands {
 
     /// Retrieve a specific note by note_id and inspect related notes.
     Note(NoteArgs),
+
+    /// Run an MCP stdio server using a preloaded SMG file.
+    Mcp(McpArgs),
 }
 
 /// Arguments for the `ingest` subcommand.
@@ -74,10 +83,6 @@ struct IngestArgs {
     /// Path to the git repository (defaults to current directory).
     #[arg(short, long, value_name = "PATH", default_value = ".")]
     repo: PathBuf,
-
-    /// Recompute spectral structures after ingesting (recommended).
-    #[arg(long)]
-    rebuild: bool,
 
     /// Path to write SMG JSON output (optional).
     #[arg(long, short = 'o', value_name = "PATH")]
@@ -119,6 +124,18 @@ struct IngestArgs {
     /// Recommended for post-commit hooks with `--append --out <smg.json>`.
     #[arg(long)]
     incremental: bool,
+
+    /// Commit message split mode: off|auto|strict.
+    #[arg(long = "git-commit-split-mode", default_value = "auto")]
+    git_commit_split_mode: String,
+
+    /// Maximum number of segments emitted per commit.
+    #[arg(long = "git-commit-split-max-segments", default_value_t = 6)]
+    git_commit_split_max_segments: usize,
+
+    /// Minimum parser confidence for emitting split segments in auto mode (0.0..1.0).
+    #[arg(long = "git-commit-split-min-confidence", default_value_t = 0.75)]
+    git_commit_split_min_confidence: f32,
 }
 
 /// Arguments for the `update` subcommand.
@@ -131,10 +148,6 @@ struct UpdateArgs {
     /// Path to SMG JSON file to update in place.
     #[arg(long, short = 'o', value_name = "PATH")]
     out: PathBuf,
-
-    /// Recompute spectral structures after ingesting new commits (recommended).
-    #[arg(long)]
-    rebuild: bool,
 
     /// Maximum number of commits to scan from git history.
     #[arg(long)]
@@ -159,6 +172,18 @@ struct UpdateArgs {
     /// Apply case-insensitive matching for git line filters.
     #[arg(long = "git-filter-case-insensitive")]
     git_filter_case_insensitive: bool,
+
+    /// Commit message split mode: off|auto|strict.
+    #[arg(long = "git-commit-split-mode", default_value = "auto")]
+    git_commit_split_mode: String,
+
+    /// Maximum number of segments emitted per commit.
+    #[arg(long = "git-commit-split-max-segments", default_value_t = 6)]
+    git_commit_split_max_segments: usize,
+
+    /// Minimum parser confidence for emitting split segments in auto mode (0.0..1.0).
+    #[arg(long = "git-commit-split-min-confidence", default_value_t = 0.75)]
+    git_commit_split_min_confidence: f32,
 }
 
 /// Arguments for the `query` subcommand (skeleton).
@@ -258,6 +283,14 @@ struct NoteArgs {
     json: bool,
 }
 
+/// Arguments for the `mcp` subcommand.
+#[derive(Args, Debug)]
+struct McpArgs {
+    /// Path to the SMG JSON file to preload and serve.
+    #[arg(short = 's', long = "smg", alias = "smd", value_name = "PATH")]
+    smg: PathBuf,
+}
+
 /// Application entry point.
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -267,14 +300,19 @@ fn main() -> Result<()> {
         Commands::Update(args) => run_update(args),
         Commands::Query(args) => run_query(args),
         Commands::Note(args) => run_note(args),
+        Commands::Mcp(args) => run_mcp(args),
     }
+}
+
+/// Run the `mcp` subcommand.
+fn run_mcp(args: McpArgs) -> Result<()> {
+    run_mcp_server(&args.smg)
 }
 
 /// Run the `update` subcommand as an alias for incremental append ingestion.
 fn run_update(args: UpdateArgs) -> Result<()> {
     let ingest_args = IngestArgs {
         repo: args.repo,
-        rebuild: args.rebuild,
         out: Some(args.out),
         append: true,
         include_diff: false,
@@ -285,6 +323,9 @@ fn run_update(args: UpdateArgs) -> Result<()> {
         git_filter_preset: args.git_filter_preset,
         git_filter_case_insensitive: args.git_filter_case_insensitive,
         incremental: true,
+        git_commit_split_mode: args.git_commit_split_mode,
+        git_commit_split_max_segments: args.git_commit_split_max_segments,
+        git_commit_split_min_confidence: args.git_commit_split_min_confidence,
     };
     run_ingest(ingest_args)
 }
@@ -295,7 +336,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 /// 1. Collects commits from the repository (using `git2` if available).
 /// 2. Converts commits into `ConversationTurn` objects.
 /// 3. Ingests them into `SpectralMemoryGraph`.
-/// 4. Optionally rebuilds spectral structures.
+/// 4. Rebuilds spectral structures.
 ///
 /// # Errors
 ///
@@ -316,9 +357,10 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     });
 
     let git_filters = GitFilterConfig::from_ingest_args(&args)?;
+    let split_config = CommitSplitConfig::from_ingest_args(&args)?;
 
     // Collect commits into conversation turns.
-    let collected = collect_commits(&args.repo, args.max_commits, &git_filters)
+    let collected = collect_commits(&args.repo, args.max_commits, &git_filters, &split_config)
         .with_context(|| format!("collecting commits from {}", args.repo.display()))?;
     let mut turns = collected.turns;
 
@@ -342,6 +384,17 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
             ratio
         );
     }
+    println!(
+        "Commit split summary: mode={} commits_seen={} commits_split={} total_segments={} fallback_single={} parser_modes=[headers:{} bullets:{} paragraphs:{}]",
+        split_config.mode.as_str(),
+        collected.split_stats.commits_seen,
+        collected.split_stats.commits_split,
+        collected.split_stats.total_segments_emitted,
+        collected.split_stats.fallback_to_single,
+        collected.split_stats.segments_from_headers,
+        collected.split_stats.segments_from_bullets,
+        collected.split_stats.segments_from_paragraphs
+    );
 
     // Validate append/out combination.
     if args.append && args.out.is_none() {
@@ -453,32 +506,28 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
 
     ingest_bar.finish_with_message(format!("Ingested {} turns into the SMG.", smg.notes.len()));
 
-    // Optionally rebuild spectral structures with progress bar.
-    if args.rebuild {
-        let spectral_bar = ProgressBar::new(10);
-        spectral_bar.set_style(
-            ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] [{bar:40.green/yellow}] {pos}/{len} {msg}")
-                .unwrap()
-                .progress_chars("##-"),
-        );
-        spectral_bar.set_message("Building spectral structures...");
+    // Always rebuild spectral structures with progress bar.
+    let spectral_bar = ProgressBar::new(10);
+    spectral_bar.set_style(
+        ProgressStyle::default_bar()
+            .template("[{elapsed_precise}] [{bar:40.green/yellow}] {pos}/{len} {msg}")
+            .unwrap()
+            .progress_chars("##-"),
+    );
+    spectral_bar.set_message("Building spectral structures...");
 
-        // Create a progress callback that updates the bar
-        let progress_cb = Arc::new({
-            let bar = spectral_bar.clone();
-            move |msg: String, fraction: f32| {
-                bar.set_message(msg);
-                bar.set_position((fraction * 10.0).floor() as u64);
-            }
-        });
+    // Create a progress callback that updates the bar
+    let progress_cb = Arc::new({
+        let bar = spectral_bar.clone();
+        move |msg: String, fraction: f32| {
+            bar.set_message(msg);
+            bar.set_position((fraction * 10.0).floor() as u64);
+        }
+    });
 
-        smg.build_spectral_structure(Some(progress_cb))
-            .context("building spectral structures")?;
-        spectral_bar.finish_with_message("Spectral build complete.");
-    } else {
-        println!("Skipping spectral rebuild (use --rebuild to compute spectral structures).");
-    }
+    smg.build_spectral_structure(Some(progress_cb))
+        .context("building spectral structures")?;
+    spectral_bar.finish_with_message("Spectral build complete.");
 
     // Optionally persist to JSON.
     if let Some(outp) = args.out {
@@ -563,6 +612,7 @@ impl GitFilterConfig {
 struct CollectCommitsOutput {
     turns: Vec<ConversationTurn>,
     filter_stats: GitFilterStats,
+    split_stats: CommitSplitStats,
 }
 
 fn apply_git_line_filters(
@@ -780,7 +830,7 @@ fn run_query(args: QueryArgs) -> Result<()> {
                     .and_then(|idx| note.source_commit_ids.get(idx).cloned().flatten());
 
                 // Base object for the note (include score and commit id).
-                let related_note_ids: Vec<serde_json::Value> = smg
+                let related_notes: Vec<serde_json::Value> = smg
                     .get_related_note_links(nid, args.links_k)
                     .into_iter()
                     .map(|(related_nid, sim)| {
@@ -797,7 +847,7 @@ fn run_query(args: QueryArgs) -> Result<()> {
                     "raw_content": note.raw_content,
                     "context": note.context,
                     "source_turn_ids": note.source_turn_ids,
-                    "related_note_ids": related_note_ids,
+                    "related_notes": related_notes,
                     "commit_id": commit_id_for_turn,
                 });
                 // If cluster labels are present, map the note id to its label using the sorted ordering.
@@ -1044,6 +1094,7 @@ fn collect_commits(
     repo_path: &PathBuf,
     max_commits: Option<usize>,
     filters: &GitFilterConfig,
+    split_config: &CommitSplitConfig,
 ) -> Result<CollectCommitsOutput> {
     // The implementation uses git2 when compiled with the feature; otherwise, fail-fast.
     #[cfg(feature = "git2-backend")]
@@ -1061,6 +1112,7 @@ fn collect_commits(
 
         let mut turns: Vec<ConversationTurn> = Vec::new();
         let mut filter_stats = GitFilterStats::default();
+        let mut split_stats = CommitSplitStats::default();
         let mut idx: u64 = 1;
 
         for (i, oid_result) in revwalk.enumerate() {
@@ -1086,25 +1138,31 @@ fn collect_commits(
             let time = commit.time();
             let timestamp = time.seconds() as u64;
 
-            // Construct ConversationTurn. The library expects turn_id:u64 and fields per README.
-            let turn = ConversationTurn {
-                turn_id: idx,
-                speaker: author_name,
-                content: filtered_content,
-                topic: "git".to_string(),
-                entities: Vec::new(),
-                // Record the originating commit id (hex) for easy lookup from query results.
-                commit_id: Some(oid.to_string()),
-                timestamp,
-            };
+            let commit_id = oid.to_string();
+            let segments = split_commit_message(&filtered_content, split_config, &mut split_stats);
 
-            turns.push(turn);
-            idx = idx.saturating_add(1);
+            for segment in segments {
+                // Construct ConversationTurn. The library expects turn_id:u64 and fields per README.
+                let turn = ConversationTurn {
+                    turn_id: idx,
+                    speaker: author_name.clone(),
+                    content: segment.to_content(),
+                    topic: "git".to_string(),
+                    entities: Vec::new(),
+                    // Record the originating commit id (hex) for easy lookup from query results.
+                    commit_id: Some(commit_id.clone()),
+                    timestamp,
+                };
+
+                turns.push(turn);
+                idx = idx.saturating_add(1);
+            }
         }
 
         Ok(CollectCommitsOutput {
             turns,
             filter_stats,
+            split_stats,
         })
     }
 

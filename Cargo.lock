@@ -3163,6 +3163,7 @@ dependencies = [
  "indicatif 0.17.11",
  "num",
  "regex",
+ "rmcp",
  "scopeguard",
  "serde",
  "serde_json",
@@ -3188,17 +3189,6 @@ dependencies = [
  "rust_embed",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "spectral-cortex-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "rmcp",
- "serde",
- "spectral-cortex-lib",
- "tokio",
 ]
 
 [[package]]

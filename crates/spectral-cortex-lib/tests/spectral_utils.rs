@@ -22,7 +22,7 @@ fn test_assemble_and_cosine() {
             source_commit_ids: vec![],
             source_timestamps: vec![],
             spectral_coords: None,
-            related_note_ids: vec![],
+            related_note_links: vec![],
         },
     );
     notes.insert(
@@ -37,7 +37,7 @@ fn test_assemble_and_cosine() {
             source_commit_ids: vec![],
             source_timestamps: vec![],
             spectral_coords: None,
-            related_note_ids: vec![],
+            related_note_links: vec![],
         },
     );
 

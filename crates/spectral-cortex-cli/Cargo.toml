@@ -31,8 +31,9 @@ chrono = { version = "0.4", features = ["serde"] }
 # Progress reporting (optional)
 indicatif = { version = "0.17", optional = true }
 
-# Optional async runtime (only used if a subcommand requires async operations)
-tokio = { version = "1", features = ["rt-multi-thread", "macros"], optional = true }
+# Async runtime and MCP server transport
+tokio = { version = "1", features = ["full"] }
+rmcp = { version = "0.15.0", features = ["server", "macros", "transport-io"] }
 num = "0.4.3"
 regex = "1.11"
 
@@ -45,9 +46,6 @@ git2-backend = ["git2"]
 
 # Enable progress indicators and nicer CLI feedback
 progress = ["indicatif"]
-
-# Enable async support (opt-in)
-async = ["tokio"]
 
 [[bin]]
 name = "spectral-cortex"

@@ -43,6 +43,67 @@ pub struct SpectralMemoryGraph {
     pub long_range_links: Option<Vec<(u32, u32, f32)>>, // (note_id_a, note_id_b, spectral_similarity)
 }
 
+/// Configurable parameters for spectral-structure construction.
+#[derive(Debug, Clone)]
+pub struct SpectralBuildConfig {
+    /// Number of spectral embedding dimensions to compute.
+    pub num_spectral_dims: usize,
+    /// Threshold for adjacency sparsification.
+    pub adj_sparse_threshold: f32,
+    /// Minimum spectral similarity for long-range link detection.
+    pub spectral_link_similarity_threshold: f32,
+    /// Maximum embedding similarity for long-range link detection.
+    pub embed_link_similarity_threshold: f32,
+    /// Maximum cluster count allowed by eigengap selection.
+    pub max_clusters: usize,
+    /// Minimum cluster count allowed by eigengap selection.
+    pub min_clusters: usize,
+}
+
+impl Default for SpectralBuildConfig {
+    fn default() -> Self {
+        Self {
+            num_spectral_dims: 8,
+            adj_sparse_threshold: 0.2,
+            spectral_link_similarity_threshold: 0.9,
+            embed_link_similarity_threshold: 0.5,
+            max_clusters: 24,
+            min_clusters: 2,
+        }
+    }
+}
+
+impl SpectralBuildConfig {
+    /// Validate config invariants before build.
+    pub fn validate(&self) -> Result<()> {
+        if self.num_spectral_dims == 0 {
+            return Err(anyhow::anyhow!("num_spectral_dims must be >= 1"));
+        }
+        if !(0.0..=1.0).contains(&self.adj_sparse_threshold) {
+            return Err(anyhow::anyhow!(
+                "adj_sparse_threshold must be in [0.0, 1.0]"
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.spectral_link_similarity_threshold) {
+            return Err(anyhow::anyhow!(
+                "spectral_link_similarity_threshold must be in [0.0, 1.0]"
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.embed_link_similarity_threshold) {
+            return Err(anyhow::anyhow!(
+                "embed_link_similarity_threshold must be in [0.0, 1.0]"
+            ));
+        }
+        if self.min_clusters == 0 {
+            return Err(anyhow::anyhow!("min_clusters must be >= 1"));
+        }
+        if self.max_clusters < self.min_clusters {
+            return Err(anyhow::anyhow!("max_clusters must be >= min_clusters"));
+        }
+        Ok(())
+    }
+}
+
 impl SpectralMemoryGraph {
     /// Create a new, empty SMG.
     pub fn new() -> Result<Self> {
@@ -87,8 +148,8 @@ impl SpectralMemoryGraph {
     ///
     /// If `long_range_links` are available, this returns neighbors with their spectral
     /// similarity scores ranked by descending similarity and limited by `top_k` when provided.
-    /// If they are not available, this falls back to the stored `related_note_ids` list on
-    /// the note with a default score of `0.0`.
+    /// If they are not available, this falls back to the stored `related_note_links` list
+    /// on the note.
     pub fn get_related_note_links(&self, note_id: u32, top_k: Option<usize>) -> Vec<(u32, f32)> {
         if let Some(links) = &self.long_range_links {
             let mut neighbors: HashMap<u32, f32> = HashMap::new();
@@ -116,11 +177,8 @@ impl SpectralMemoryGraph {
         }
 
         if let Some(note) = self.notes.get(&note_id) {
-            let mut ids: Vec<(u32, f32)> = note
-                .related_note_ids
-                .iter()
-                .map(|nid| (*nid, 0.0))
-                .collect();
+            let mut ids: Vec<(u32, f32)> = note.related_note_links.clone();
+            ids.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
             if let Some(k) = top_k {
                 ids.truncate(k);
             }
@@ -128,14 +186,6 @@ impl SpectralMemoryGraph {
         }
 
         Vec::new()
-    }
-
-    /// Get related note ids for a specific note using long-range link scores.
-    pub fn get_related_note_ids(&self, note_id: u32, top_k: Option<usize>) -> Vec<u32> {
-        self.get_related_note_links(note_id, top_k)
-            .into_iter()
-            .map(|(nid, _)| nid)
-            .collect()
     }
 
     /// Ingest a conversation turn into the SMG as a single `SMGNote`.
@@ -152,7 +202,7 @@ impl SpectralMemoryGraph {
             source_commit_ids: vec![turn.commit_id.clone()],
             source_timestamps: vec![turn.timestamp],
             spectral_coords: None,
-            related_note_ids: Vec::new(),
+            related_note_links: Vec::new(),
         };
         self.notes.insert(self.next_id, note);
         self.next_id += 1;
@@ -206,7 +256,7 @@ impl SpectralMemoryGraph {
                 source_commit_ids: vec![turn.commit_id.clone()],
                 source_timestamps: vec![turn.timestamp],
                 spectral_coords: None,
-                related_note_ids: Vec::new(),
+                related_note_links: Vec::new(),
             };
             self.notes.insert(self.next_id, note);
             self.next_id += 1;
@@ -238,6 +288,15 @@ impl SpectralMemoryGraph {
     /// The optional `progress` callback is called with a message and progress fraction (0.0..1.0)
     /// for each major step.
     pub fn build_spectral_structure(&mut self, progress: Option<ProgressCallback>) -> Result<()> {
+        self.build_spectral_structure_with_config(progress, &SpectralBuildConfig::default())
+    }
+
+    /// Build spectral structures using a custom construction config.
+    pub fn build_spectral_structure_with_config(
+        &mut self,
+        progress: Option<ProgressCallback>,
+        config: &SpectralBuildConfig,
+    ) -> Result<()> {
         use crate::graph::spectral::{
             assemble_embedding_matrix, compute_centroids_in_embedding_space,
             compute_spectral_embeddings, cosine_similarity_matrix, detect_long_range_links,
@@ -245,13 +304,7 @@ impl SpectralMemoryGraph {
             spectral_decomposition,
         };
 
-        // Tunable constants.
-        const SMG_NUM_SPECTRAL_DIMS: usize = 8;
-        const ADJ_SPARSE_THRESHOLD: f32 = 0.2;
-        const SPECTRAL_LINK_SIM: f32 = 0.7;
-        const EMBED_LINK_SIM: f32 = 0.5;
-        const MAX_CLUSTERS: usize = 12;
-        const MIN_CLUSTERS: usize = 2;
+        config.validate()?;
 
         let n = self.notes.len();
         if n < 3 {
@@ -290,7 +343,7 @@ impl SpectralMemoryGraph {
 
         // 3) Sparsify adjacency in-place (zero diagonal + threshold).
         report_progress(3, TOTAL_STEPS, "Sparsifying adjacency matrix".to_string());
-        sparsify_adj(&mut sim, ADJ_SPARSE_THRESHOLD);
+        sparsify_adj(&mut sim, config.adj_sparse_threshold);
         self.similarity_matrix = Some(sim.clone());
 
         // 4) Normalized Laplacian (L = I - D^{-1/2} W D^{-1/2}).
@@ -299,11 +352,11 @@ impl SpectralMemoryGraph {
 
         // 5) Eigen-decomposition.
         report_progress(5, TOTAL_STEPS, "Performing eigen-decomposition".to_string());
-        let (eigenvalues, eigenvectors) = spectral_decomposition(&lap, SMG_NUM_SPECTRAL_DIMS)?;
+        let (eigenvalues, eigenvectors) = spectral_decomposition(&lap, config.num_spectral_dims)?;
 
         // 6) Spectral embeddings: take leading `k` eigenvectors and row-normalize.
         report_progress(6, TOTAL_STEPS, "Extracting spectral embeddings".to_string());
-        let n_components = std::cmp::min(SMG_NUM_SPECTRAL_DIMS, n.saturating_sub(1));
+        let n_components = std::cmp::min(config.num_spectral_dims, n.saturating_sub(1));
         let spectral_emb = compute_spectral_embeddings(&eigenvectors, n_components, true);
         self.spectral_embeddings = Some(spectral_emb.clone());
 
@@ -316,9 +369,9 @@ impl SpectralMemoryGraph {
         // The eigengap heuristic expects eigenvalues sorted ascending as produced by nalgebra.
         let mut suggested_k = eigengap_heuristic(&eigenvalues);
         // Clamp into sensible bounds using the standard library `clamp`.
-        suggested_k = suggested_k.clamp(MIN_CLUSTERS, MAX_CLUSTERS);
+        suggested_k = suggested_k.clamp(config.min_clusters, config.max_clusters);
         // Also ensure we don't ask for more clusters than points.
-        let n_clusters = std::cmp::min(suggested_k, std::cmp::max(MIN_CLUSTERS, n));
+        let n_clusters = std::cmp::min(suggested_k, std::cmp::max(config.min_clusters, n));
 
         // 8) K-Means on spectral embeddings.
         report_progress(8, TOTAL_STEPS, "Running K-Means clustering".to_string());
@@ -349,28 +402,28 @@ impl SpectralMemoryGraph {
             self.similarity_matrix
                 .as_ref()
                 .expect("similarity matrix set"),
-            SPECTRAL_LINK_SIM,
-            EMBED_LINK_SIM,
+            config.spectral_link_similarity_threshold,
+            config.embed_link_similarity_threshold,
             note_ids.as_slice(),
             None, // no top-k limit during build
         );
         // Store the links with scores for later retrieval
         self.long_range_links = Some(pairs.clone());
 
-        // Also populate related_note_ids (for backward compatibility). Reset first
-        // to prevent stale links from accumulating across repeated rebuilds.
+        // Also populate per-note related links for persistence and fallback retrieval.
+        // Reset first to prevent stale links from accumulating across repeated rebuilds.
         for note in self.notes.values_mut() {
-            note.related_note_ids.clear();
+            note.related_note_links.clear();
         }
-        for (a, b, _) in pairs.into_iter() {
+        for (a, b, score) in pairs.into_iter() {
             if let Some(note_a) = self.notes.get_mut(&a) {
-                if !note_a.related_note_ids.contains(&b) {
-                    note_a.related_note_ids.push(b);
+                if !note_a.related_note_links.iter().any(|(nid, _)| *nid == b) {
+                    note_a.related_note_links.push((b, score));
                 }
             }
             if let Some(note_b) = self.notes.get_mut(&b) {
-                if !note_b.related_note_ids.contains(&a) {
-                    note_b.related_note_ids.push(a);
+                if !note_b.related_note_links.iter().any(|(nid, _)| *nid == a) {
+                    note_b.related_note_links.push((a, score));
                 }
             }
         }

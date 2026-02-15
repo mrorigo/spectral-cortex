@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[test]
 fn integration_roundtrip() -> Result<()> {
     // 1) Prepare synthetic conversation turns (small, varied set).
-    let samples = vec![
+    let samples = [
         "fix bug in parser",
         "add new feature for export",
         "refactor storage layer",

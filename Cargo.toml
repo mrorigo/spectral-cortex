@@ -6,7 +6,6 @@ resolver = "2"
 members = [
     "crates/spectral-cortex-lib",
     "crates/spectral-cortex-cli",
-    "crates/spectral-cortex-mcp",
 ]
 
 # Exclude common build artefacts from workspace package listing (keeps tooling cleaner).
@@ -28,6 +27,12 @@ check-commands = [
     "cargo clippy --all --all-targets -- -D warnings",
     "cargo test --all"
 ]
+
+[profile.dev]
+rpath = true
+
+[profile.release]
+rpath = true
 
 # Force a single ndarray version across the workspace to avoid duplicate-type issues
 # caused by multiple ndarray versions pulled in by different dependencies (rust-embed,

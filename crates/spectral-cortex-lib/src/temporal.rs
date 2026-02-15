@@ -388,7 +388,7 @@ mod tests {
         // Ages: A is old (60 days), B recent (2 days), C recent (1 day)
         let age_a = 60u64 * 24 * 3600;
         let age_b = 2u64 * 24 * 3600;
-        let age_c = 1u64 * 24 * 3600;
+        let age_c = 24 * 3600;
         let a_ts = now.saturating_sub(age_a);
         let b_ts = now.saturating_sub(age_b);
         let c_ts = now.saturating_sub(age_c);

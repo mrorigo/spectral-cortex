@@ -12,6 +12,7 @@ Highlights
 
 Contents
 - Quick start
+- MCP server (markdown-first tools)
 - Agent-oriented workflows & examples
 - CLI reference (important flags)
 - Temporal re-ranking behavior (defaults & control)
@@ -25,7 +26,7 @@ Quick start (developer)
 -----------------------
 Clone and build; the project bundles the MiniLM embedder so you can run locally:
 
-```spectral-memory-graph/rust-version/README.md#L60-64
+```bash
 # Clone and build
 git clone https://github.com/your-org/spectral-memory-graph.git
 cd spectral-memory-graph/rust-version
@@ -40,17 +41,102 @@ cargo install spectral-cortex
 
 Ingest a repository and build the SMG (recommended CLI flow):
 
-```spectral-memory-graph/rust-version/README.md#L66-74
+```bash
 cargo run --manifest-path rust-version/Cargo.toml -p spectral-cortex --features git2-backend --release -- \
-  ingest --repo /path/to/repo --rebuild --out smg.json
+  ingest --repo /path/to/repo --out smg.json
 ```
 
 Query the saved SMG programmatically (JSON output suitable for agents):
 
-```spectral-memory-graph/rust-version/README.md#L76-82
+```bash
 cargo run --manifest-path rust-version/Cargo.toml -p spectral-cortex --release -- \
   query --query "why did we add X" --smg smg.json --json --top-k 10
 ```
+
+MCP server (markdown-first tools)
+----------------------------------
+A dedicated MCP subcommand is available for agent workflows that need compact, markdown-first responses instead of verbose JSON.
+
+Run it over stdio:
+```bash
+cargo run -p spectral-cortex --release -- mcp --smg smg-roo.json
+```
+
+Available tools:
+- `graph_summary`: compact graph metadata for an SMG file
+- `query_graph`: semantic query with markdown tables and compact related-note summaries
+- `inspect_note`: inspect one note and related notes with spectral similarity
+- `long_range_links`: list top long-range links in markdown table format
+
+MCP client wiring example (recommended):
+```json
+{
+  "mcpServers": {
+    "spectral-cortex": {
+      "command": "spectral-cortex",
+      "args": ["mcp", "--smg", "/path/to/smg-roo.json"]
+    }
+  }
+}
+```
+
+If the binary is not on `PATH`, use an absolute path:
+```json
+{
+  "mcpServers": {
+    "spectral-cortex": {
+      "command": "/absolute/path/to/spectral-cortex",
+      "args": ["mcp", "--smg", "/absolute/path/to/smg-roo.json"]
+    }
+  }
+}
+```
+
+Development fallback (build+run from source each launch):
+```json
+{
+  "mcpServers": {
+    "spectral-cortex": {
+      "command": "cargo",
+      "args": ["run", "-p", "spectral-cortex", "--release", "--", "mcp", "--smg", "smg-roo.json"],
+      "cwd": "/Users/origo/src/spectral-cortex"
+    }
+  }
+}
+```
+
+Tool input examples:
+
+`graph_summary`
+```json
+{}
+```
+
+`query_graph`
+```json
+{
+  "query": "mcp protocol",
+  "top_k": 5,
+  "links_k": 3
+}
+```
+
+`inspect_note`
+```json
+{
+  "note_id": 5071,
+  "links_k": 10
+}
+```
+
+`long_range_links`
+```json
+{
+  "top_k": 20
+}
+```
+
+All MCP tool responses are markdown-first and intentionally compact to reduce token usage.
 
 Agent-oriented workflows & examples
 ----------------------------------
@@ -75,18 +161,18 @@ CLI reference (important flags)
 The CLI binary `spectral-cortex` exposes three primary flows: `ingest`, `update`, and `query`.
 
 Ingest (collect commits -> SMG):
-```spectral-memory-graph/rust-version/README.md#L114-118
-cargo run -p spectral-cortex --features git2-backend -- ingest --repo /path/to/repo --rebuild --out smg.json
+```bash
+cargo run -p spectral-cortex --features git2-backend -- ingest --repo /path/to/repo --out smg.json
 ```
 
 Update (incremental append ingest; only new commits are embedded):
 ```bash
 cargo run -p spectral-cortex --features git2-backend -- \
-  update --repo /path/to/repo --out smg.json --rebuild --git-filter-preset git-noise
+  update --repo /path/to/repo --out smg.json --git-filter-preset git-noise
 ```
 
 Query (default, temporal enabled):
-```spectral-memory-graph/rust-version/README.md#L120-130
+```bash
 cargo run -p spectral-cortex -- query --query "refactor" --smg smg.json --json --top-k 10
 ```
 
@@ -116,7 +202,6 @@ set -euo pipefail
 spectral-cortex update \
   --repo . \
   --out smg.json \
-  --rebuild \
   --git-filter-preset git-noise
 ```
 
@@ -153,7 +238,7 @@ Primary types:
   - `retrieve_with_scores(&self, query: &str, candidate_k: usize) -> Result<Vec<(u64, f32)>>`: returns per-turn final scores (semantic + temporal + cluster boosts). Callers may re-rank with a custom `TemporalConfig` if you prefer different defaults.
 
 - `ConversationTurn`
-  ```spectral-memory-graph/rust-version/README.md#L220-226
+  ```rust
   pub struct ConversationTurn {
       pub turn_id: u64,
       pub speaker: String,
@@ -172,13 +257,13 @@ Primary types:
     - `source_turn_ids: Vec<u64>`
     - `source_commit_ids: Vec<Option<String>>`
     - `source_timestamps: Vec<u64>`
-    - `related_note_ids: Vec<u32>`
+    - `related_note_links: Vec<(u32, f32)>`
 
 Persistence
 -----------
 SMG persistence uses a compact JSON representation (see `src/lib.rs` helpers):
 
-```spectral-memory-graph/rust-version/README.md#L252-260
+```rust
 // Save
 save_smg_json(&smg, Path::new("smg.json"))?;
 
@@ -198,12 +283,12 @@ Extensibility & agent hooks
 Testing & development
 ---------------------
 - Run unit tests:
-```spectral-memory-graph/rust-version/README.md#L292-294
+```bash
 cargo test -p spectral-cortex
 ```
 - Use deterministic fake embedder for tests (the project auto-selects a deterministic fake embedder under `cfg(test)` so CI is reproducible).
 - Linting & formatting:
-```spectral-memory-graph/rust-version/README.md#L298-301
+```bash
 cargo fmt
 cargo clippy -- -D warnings
 ```
@@ -224,20 +309,3 @@ If you improve retrieval, temporal defaults, or add learning-to-rank, please:
 License
 -------
 MIT. See `LICENSE` for details.
-
-MCP server (token-efficient tools)
-----------------------------------
-A dedicated MCP server binary is available for agent workflows that need compact, markdown-first responses instead of verbose JSON.
-
-Run it over stdio:
-```bash
-cargo run -p spectral-cortex-mcp --release
-```
-
-Available tools:
-- `graph_summary`: compact graph metadata for an SMG file
-- `query_graph`: semantic query with markdown tables and compact related-note summaries
-- `inspect_note`: inspect one note and related notes with spectral similarity
-- `long_range_links`: list top long-range links in markdown table format
-
-Typical MCP usage: provide `smg_path` in each tool call (for example `smg-roo.json`). Keep `top_k` small for token efficiency.

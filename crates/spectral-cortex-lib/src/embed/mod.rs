@@ -102,8 +102,7 @@ mod real {
         // The pool handles the actual embedding parallelism internally
         let results: Vec<Vec<Vec<f32>>> = texts
             .chunks(32)
-            .enumerate()
-            .map(|(_chunk_idx, chunk)| {
+            .map(|chunk| {
                 // Embed this chunk using the pool (which has its own worker threads)
                 let chunk_results = pool.embed_batch(chunk.to_vec())?;
 
