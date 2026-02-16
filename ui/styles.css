@@ -345,6 +345,28 @@ textarea {
     gap: 0.6rem;
 }
 
+.graph-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.graph-animate-btn {
+    padding: 0.42rem 0.8rem;
+    font-size: 0.78rem;
+}
+
+.graph-animate-btn.active {
+    border-color: rgba(28, 255, 216, 0.58);
+    color: #d8fff6;
+    background: linear-gradient(
+        135deg,
+        rgba(28, 255, 216, 0.24),
+        rgba(98, 168, 255, 0.2)
+    );
+    box-shadow: 0 0 0 1px rgba(28, 255, 216, 0.26);
+}
+
 .graph-controls {
     display: grid;
     grid-template-columns: 1fr 1fr;

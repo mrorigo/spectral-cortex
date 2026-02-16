@@ -89,9 +89,18 @@
                 <section class="panel graph-panel">
                     <div class="graph-header">
                         <h2>Force Graph</h2>
-                        <p id="graph-subtitle" class="muted">
-                            Selected note neighborhood
-                        </p>
+                        <div class="graph-header-actions">
+                            <button
+                                id="animate-btn"
+                                class="btn btn-ghost graph-animate-btn"
+                                type="button"
+                            >
+                                Play
+                            </button>
+                            <p id="graph-subtitle" class="muted">
+                                Selected note neighborhood
+                            </p>
+                        </div>
                     </div>
                     <div class="graph-controls">
                         <div class="field">
@@ -166,7 +175,7 @@
                                 id="long-range-topk-slider"
                                 type="range"
                                 min="10"
-                                max="1000"
+                                max="10000"
                                 step="10"
                                 value="120"
                             />

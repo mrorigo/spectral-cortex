@@ -18,11 +18,17 @@
     validation: { errors: [], warnings: [] },
     clusterById: new Map(),
     clusterCounts: new Map(),
+    graphAnimation: {
+      enabled: false,
+      simulation: null,
+      mode: "neighborhood",
+    },
   };
 
-  const LIMIT_LIST_RENDER = 300;
-  const GRAPH_NODE_CAP = 120;
-  const CLUSTER_MAP_NODE_CAP = 1200;
+  const LIMIT_LIST_RENDER = 500;
+  const GRAPH_NODE_CAP = 10000;
+  const CLUSTER_MAP_NODE_CAP = 10000;
+  const DEFAULT_ALPHA_DECAY = 0.00228;
   const CLUSTER_PALETTE = [
     "#1cffd8",
     "#62a8ff",
@@ -59,6 +65,7 @@
     longRangeTopKValue: document.getElementById("long-range-topk-value"),
     scoreHistogram: document.getElementById("score-histogram"),
     scoreMeta: document.getElementById("score-meta"),
+    animateBtn: document.getElementById("animate-btn"),
     graphSubtitle: document.getElementById("graph-subtitle"),
     listMeta: document.getElementById("list-meta"),
     noteList: document.getElementById("note-list"),
@@ -83,6 +90,7 @@
     els.viewModeSelect.addEventListener("change", onGraphControlChange);
     els.minScoreSlider.addEventListener("input", onGraphControlChange);
     els.longRangeTopKSlider.addEventListener("input", onGraphControlChange);
+    els.animateBtn.addEventListener("click", onToggleAnimation);
     els.applyBtn.addEventListener("click", applyEditorChanges);
     els.deleteBtn.addEventListener("click", deleteSelectedNote);
 
@@ -108,7 +116,14 @@
     syncStatus();
     renderList();
     syncGraphControls();
+    syncAnimateButton();
     renderGraphEmpty("Load an SMG JSON file to visualize the graph.");
+  }
+
+  function onToggleAnimation() {
+    state.graphAnimation.enabled = !state.graphAnimation.enabled;
+    syncAnimateButton();
+    applyAnimationState();
   }
 
   function onGraphControlChange() {
@@ -173,6 +188,47 @@
     els.longRangeTopKSlider.dataset.modeActive = String(
       isClusterMap || isLongRange || isClusterMatrix,
     );
+
+    const forceMode = !isClusterMatrix;
+    els.animateBtn.disabled = !forceMode;
+    if (!forceMode && state.graphAnimation.enabled) {
+      state.graphAnimation.enabled = false;
+    }
+    syncAnimateButton();
+  }
+
+  function syncAnimateButton() {
+    if (!els.animateBtn) {
+      return;
+    }
+    els.animateBtn.textContent = state.graphAnimation.enabled
+      ? "Pause"
+      : "Play";
+    els.animateBtn.classList.toggle("active", state.graphAnimation.enabled);
+    els.animateBtn.title = state.graphAnimation.enabled
+      ? "Pause continuous graph animation"
+      : "Play continuous graph animation";
+  }
+
+  function applyAnimationState() {
+    const simulation = state.graphAnimation.simulation;
+    if (!simulation) {
+      return;
+    }
+    if (state.graphAnimation.mode === "cluster_matrix") {
+      simulation.stop();
+      return;
+    }
+    if (state.graphAnimation.enabled) {
+      simulation.alphaDecay(DEFAULT_ALPHA_DECAY);
+      simulation.alphaMin(0);
+      simulation.alpha(2.722).alphaTarget(0.13).restart();
+      return;
+    }
+    simulation.alphaDecay(DEFAULT_ALPHA_DECAY);
+    simulation.alphaMin(0.1);
+    simulation.alphaTarget(0.01);
+    simulation.stop();
   }
 
   function onFileChange(event) {
@@ -741,6 +797,11 @@
       renderGraphEmpty("D3 failed to load from CDN.");
       return;
     }
+    if (state.graphAnimation.simulation) {
+      state.graphAnimation.simulation.stop();
+      state.graphAnimation.simulation = null;
+    }
+
     const data = buildGraphData();
     if (
       !data ||
@@ -758,6 +819,9 @@
       data.scoreDomain || null,
     );
     if (data.mode === "cluster_matrix") {
+      state.graphAnimation.mode = data.mode;
+      state.graphAnimation.simulation = null;
+      syncControlAvailability();
       renderClusterMatrix(data);
       return;
     }
@@ -784,39 +848,14 @@
       .attr("width", width)
       .attr("height", height)
       .attr("viewBox", `0 0 ${width} ${height}`);
-    const defs = svg.append("defs");
-    const linkGlow = defs
-      .append("filter")
-      .attr("id", "link-neon-glow")
-      .attr("x", "-50%")
-      .attr("y", "-50%")
-      .attr("width", "200%")
-      .attr("height", "200%");
-    linkGlow.append("feGaussianBlur").attr("stdDeviation", 1.35);
-    linkGlow.append("feMerge").html(`
-      <feMergeNode />
-      <feMergeNode in="SourceGraphic" />
-    `);
-    const nodeGlow = defs
-      .append("filter")
-      .attr("id", "node-neon-glow")
-      .attr("x", "-60%")
-      .attr("y", "-60%")
-      .attr("width", "220%")
-      .attr("height", "220%");
-    nodeGlow.append("feGaussianBlur").attr("stdDeviation", 2.1);
-    nodeGlow.append("feMerge").html(`
-      <feMergeNode />
-      <feMergeNode in="SourceGraphic" />
-    `);
 
     const scene = svg.append("g");
     const minZoomScale =
       data.mode === "cluster_map"
-        ? 0.05
+        ? 0.01
         : data.mode === "long_range"
-          ? 0.08
-          : 0.35;
+          ? 0.01
+          : 0.25;
     const zoomBehavior = d3
       .zoom()
       .scaleExtent([minZoomScale, 4])
@@ -873,7 +912,6 @@
         const extra = d.kind === "long_range" ? 0.58 : 0.64;
         return Math.max(0.05, Math.min(1, base + n * extra));
       })
-      .attr("filter", "url(#link-neon-glow)")
       .attr("stroke", (d) => linkColor[d.kind] || "#8aa");
 
     // Persist normalized link strength for both rendering and force simulation.
@@ -895,7 +933,6 @@
       })
       .attr("stroke", "#2a1749")
       .attr("stroke-width", 1.2)
-      .attr("filter", "url(#node-neon-glow)")
       .style("cursor", "pointer")
       .on("mouseenter", (event, d) => {
         const ref = state.notesById.get(d.id);
@@ -1006,6 +1043,8 @@
           ),
       )
       .on("tick", ticked);
+    state.graphAnimation.simulation = simulation;
+    state.graphAnimation.mode = data.mode;
 
     node.call(
       d3
@@ -1032,7 +1071,7 @@
 
     // Pre-settle briefly, then fit the full neighborhood in view.
     simulation.stop();
-    for (let i = 0; i < (data.mode === "cluster_map" ? 26 : 80); i += 1) {
+    for (let i = 0; i < (data.mode === "cluster_map" ? 126 : 80); i += 1) {
       simulation.tick();
     }
     ticked();
@@ -1049,9 +1088,7 @@
           ? 0.08
           : 0.35,
     );
-    if (data.mode === "neighborhood") {
-      simulation.alpha(0.35).restart();
-    }
+    applyAnimationState();
 
     function ticked() {
       link
