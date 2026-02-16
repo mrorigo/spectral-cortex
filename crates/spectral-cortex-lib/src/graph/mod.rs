@@ -67,7 +67,7 @@ impl Default for SpectralBuildConfig {
             adj_sparse_threshold: 0.2,
             spectral_link_similarity_threshold: 0.9,
             embed_link_similarity_threshold: 0.5,
-            max_clusters: 24,
+            max_clusters: 8,
             min_clusters: 2,
         }
     }
