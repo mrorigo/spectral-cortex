@@ -1,14 +1,16 @@
 :root {
-    --bg: #f6f2e9;
-    --bg-2: #efe8d9;
-    --ink: #132326;
-    --ink-soft: #415559;
-    --brand: #0d7f70;
-    --brand-2: #1d5f9d;
-    --accent: #ef6c4d;
-    --card: #fffaf1;
-    --line: #d8ccbb;
-    --shadow: 0 12px 40px rgba(20, 40, 36, 0.12);
+    --bg: #0a0514;
+    --bg-2: #130a25;
+    --surface: rgba(21, 13, 38, 0.72);
+    --surface-2: rgba(16, 10, 30, 0.92);
+    --ink: #eef1ff;
+    --ink-soft: #b4b9d3;
+    --primary: #b066ff;
+    --secondary: #3b82f6;
+    --accent: #ff71cf;
+    --line: rgba(176, 102, 255, 0.24);
+    --line-strong: rgba(176, 102, 255, 0.4);
+    --shadow: 0 22px 50px rgba(6, 3, 15, 0.55);
     --radius: 18px;
     --maxw: 100vw;
 }
@@ -24,17 +26,22 @@ body {
 }
 
 body {
-    font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+    font-family: "Outfit", "Space Grotesk", "Segoe UI", sans-serif;
     background:
         radial-gradient(
-            circle at 8% 12%,
-            rgba(239, 108, 77, 0.2),
+            circle at 10% 8%,
+            rgba(176, 102, 255, 0.2),
+            transparent 35%
+        ),
+        radial-gradient(
+            circle at 92% 0%,
+            rgba(59, 130, 246, 0.18),
             transparent 34%
         ),
         radial-gradient(
-            circle at 92% 8%,
-            rgba(29, 95, 157, 0.16),
-            transparent 32%
+            circle at 50% 100%,
+            rgba(255, 113, 207, 0.15),
+            transparent 45%
         ),
         linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
     color: var(--ink);
@@ -48,12 +55,14 @@ body {
     inset: 0;
     z-index: -1;
     pointer-events: none;
-    background-image:
-        linear-gradient(rgba(19, 35, 38, 0.045) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(19, 35, 38, 0.045) 1px, transparent 1px);
-    background-size: 42px 42px;
-    mask-image: radial-gradient(circle at center, black 45%, transparent 92%);
-    opacity: 0.4;
+    background-image: radial-gradient(
+        circle,
+        rgba(176, 102, 255, 0.13) 1px,
+        transparent 1px
+    );
+    background-size: 36px 36px;
+    mask-image: radial-gradient(circle at center, black 50%, transparent 95%);
+    opacity: 0.5;
 }
 
 .container {
@@ -65,9 +74,9 @@ body {
     position: sticky;
     top: 0;
     z-index: 20;
-    backdrop-filter: blur(8px);
-    background: rgba(246, 242, 233, 0.88);
-    border-bottom: 1px solid rgba(216, 204, 187, 0.8);
+    backdrop-filter: blur(12px);
+    background: rgba(10, 5, 20, 0.78);
+    border-bottom: 1px solid rgba(176, 102, 255, 0.16);
 }
 
 .topbar-inner {
@@ -90,12 +99,14 @@ body {
     border-radius: 10px;
     background: conic-gradient(
         from 210deg,
-        var(--brand),
-        var(--brand-2),
+        var(--primary),
+        var(--secondary),
         var(--accent),
-        var(--brand)
+        var(--primary)
     );
-    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.45);
+    box-shadow:
+        inset 0 0 0 2px rgba(255, 255, 255, 0.2),
+        0 0 24px rgba(176, 102, 255, 0.35);
 }
 
 .eyebrow {
@@ -112,8 +123,9 @@ h2 {
 }
 
 h1 {
-    font-family: "Fraunces", Georgia, serif;
+    font-family: "Plus Jakarta Sans", "Fraunces", Georgia, serif;
     font-size: 1.45rem;
+    letter-spacing: 0.01em;
 }
 
 h2 {
@@ -142,7 +154,12 @@ h2 {
     transition:
         transform 120ms ease,
         box-shadow 120ms ease,
-        background 120ms ease;
+        background 120ms ease,
+        border-color 120ms ease;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
 }
 
 .btn:active {
@@ -155,22 +172,22 @@ h2 {
 }
 
 .btn-primary {
-    color: #f9fffe;
-    background: linear-gradient(135deg, var(--brand), var(--brand-2));
-    box-shadow: 0 8px 24px rgba(13, 127, 112, 0.26);
+    color: #f9f6ff;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    box-shadow: 0 10px 24px rgba(84, 62, 174, 0.45);
 }
 
 .btn-ghost {
     display: inline-block;
-    background: rgba(255, 250, 241, 0.75);
-    border-color: var(--line);
+    background: rgba(176, 102, 255, 0.09);
+    border-color: rgba(176, 102, 255, 0.35);
     color: var(--ink);
 }
 
 .btn-danger {
-    color: #fff7f3;
-    background: linear-gradient(135deg, #d7563a, #ad3f2a);
-    box-shadow: 0 8px 20px rgba(173, 63, 42, 0.25);
+    color: #fff4fb;
+    background: linear-gradient(135deg, #e153ac, #b54793);
+    box-shadow: 0 10px 20px rgba(181, 71, 147, 0.32);
 }
 
 .app {
@@ -183,10 +200,11 @@ h2 {
 }
 
 .panel {
-    background: var(--card);
+    background: var(--surface);
     border: 1px solid var(--line);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
+    backdrop-filter: blur(12px);
 }
 
 .status {
@@ -195,6 +213,10 @@ h2 {
     gap: 0.8rem;
     padding: 0.8rem 1rem;
     font-size: 0.92rem;
+}
+
+.status b {
+    color: #dce2ff;
 }
 
 .workspace {
@@ -242,12 +264,20 @@ input,
 select,
 textarea {
     width: 100%;
-    border: 1px solid var(--line);
+    border: 1px solid rgba(176, 102, 255, 0.28);
     border-radius: 12px;
     padding: 0.54rem 0.62rem;
     font: inherit;
     color: var(--ink);
-    background: rgba(255, 255, 255, 0.65);
+    background: rgba(14, 9, 27, 0.78);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+    outline: none;
+    border-color: var(--line-strong);
+    box-shadow: 0 0 0 3px rgba(176, 102, 255, 0.18);
 }
 
 textarea {
@@ -257,6 +287,7 @@ textarea {
 .checkbox-row {
     flex-direction: row;
     align-items: center;
+    gap: 0.5rem;
 }
 
 .checkbox-row input {
@@ -264,9 +295,9 @@ textarea {
 }
 
 .note-list {
-    border: 1px solid var(--line);
+    border: 1px solid rgba(176, 102, 255, 0.2);
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.5);
+    background: rgba(9, 6, 18, 0.5);
     overflow: auto;
     min-height: 0;
     flex: 1;
@@ -277,22 +308,27 @@ textarea {
     display: grid;
     text-align: left;
     border: 0;
-    border-bottom: 1px solid rgba(216, 204, 187, 0.7);
+    border-bottom: 1px solid rgba(176, 102, 255, 0.16);
     background: transparent;
     padding: 0.55rem 0.62rem;
     cursor: pointer;
+    color: var(--ink);
 }
 
 .note-item:hover {
-    background: rgba(13, 127, 112, 0.08);
+    background: rgba(176, 102, 255, 0.14);
 }
 
 .note-item.active {
-    background: rgba(13, 127, 112, 0.16);
+    background: linear-gradient(
+        135deg,
+        rgba(176, 102, 255, 0.28),
+        rgba(59, 130, 246, 0.2)
+    );
 }
 
 .note-id {
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
     font-weight: 600;
     font-size: 0.8rem;
 }
@@ -318,14 +354,19 @@ textarea {
 
 .slider-field input[type="range"] {
     padding: 0;
+    accent-color: var(--primary);
 }
 
 .graph-root {
-    border: 1px solid var(--line);
+    border: 1px solid rgba(176, 102, 255, 0.24);
     border-radius: 14px;
     min-height: 0;
     height: 100%;
-    background: rgba(255, 255, 255, 0.58);
+    background: radial-gradient(
+        circle at 35% 18%,
+        rgba(176, 102, 255, 0.08),
+        rgba(10, 6, 20, 0.82)
+    );
     overflow: hidden;
     position: relative;
 }
@@ -352,10 +393,10 @@ textarea {
 }
 
 .meta-cell {
-    border: 1px solid var(--line);
+    border: 1px solid rgba(176, 102, 255, 0.22);
     border-radius: 10px;
     padding: 0.45rem 0.5rem;
-    background: rgba(255, 255, 255, 0.55);
+    background: rgba(12, 8, 24, 0.7);
     font-size: 0.83rem;
 }
 
@@ -366,7 +407,7 @@ textarea {
 }
 
 .mono {
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
 }
 
 .muted {
@@ -376,9 +417,9 @@ textarea {
 }
 
 .graph-node-label {
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-family: "JetBrains Mono", "IBM Plex Mono", ui-monospace, monospace;
     font-size: 11px;
-    fill: var(--ink);
+    fill: #dfe6ff;
 }
 
 .graph-hover-card {
@@ -386,10 +427,10 @@ textarea {
     left: 0;
     top: 0;
     max-width: min(340px, calc(100% - 1.5rem));
-    background: rgba(255, 250, 241, 0.97);
-    border: 1px solid rgba(19, 35, 38, 0.18);
+    background: rgba(16, 10, 30, 0.96);
+    border: 1px solid rgba(176, 102, 255, 0.42);
     border-radius: 12px;
-    box-shadow: 0 16px 34px rgba(14, 36, 40, 0.22);
+    box-shadow: 0 20px 40px rgba(4, 2, 12, 0.6);
     padding: 0.56rem 0.66rem;
     pointer-events: none;
     opacity: 0;
@@ -413,15 +454,64 @@ textarea {
 }
 
 .graph-hover-card.pinned {
-    border-color: rgba(239, 108, 77, 0.55);
-    box-shadow: 0 20px 42px rgba(173, 68, 44, 0.26);
+    border-color: rgba(255, 113, 207, 0.66);
+    box-shadow: 0 22px 42px rgba(132, 34, 106, 0.45);
+}
+
+.graph-legend {
+    position: absolute;
+    right: 0.7rem;
+    bottom: 0.7rem;
+    z-index: 6;
+    pointer-events: none;
+    min-width: 190px;
+    max-width: min(230px, calc(100% - 1.4rem));
+    background: rgba(14, 9, 27, 0.82);
+    border: 1px solid rgba(176, 102, 255, 0.26);
+    border-radius: 10px;
+    box-shadow: 0 12px 28px rgba(4, 2, 12, 0.45);
+    backdrop-filter: blur(8px);
+    padding: 0.45rem 0.5rem;
+    font-size: 0.68rem;
+    color: var(--ink-soft);
+}
+
+.legend-title {
+    font-family: "JetBrains Mono", monospace;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #e8edff;
+    margin-bottom: 0.26rem;
+}
+
+.legend-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    line-height: 1.45;
+}
+
+.legend-swatch {
+    --swatch: #fff;
+    width: 0.62rem;
+    height: 0.62rem;
+    border-radius: 999px;
+    background: var(--swatch);
+    box-shadow: 0 0 9px color-mix(in srgb, var(--swatch) 70%, transparent);
+    flex: 0 0 auto;
+}
+
+.legend-swatch.line {
+    width: 0.95rem;
+    height: 0.19rem;
+    border-radius: 999px;
 }
 
 .hover-title {
-    font-family: "IBM Plex Mono", monospace;
+    font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
     font-size: 0.78rem;
     font-weight: 600;
-    color: var(--ink);
+    color: #f1f3ff;
     display: flex;
     align-items: center;
     gap: 0.45rem;
@@ -438,7 +528,7 @@ textarea {
     margin: 0.33rem 0 0.42rem;
     font-size: 0.79rem;
     line-height: 1.35;
-    color: var(--ink);
+    color: #e3e8ff;
 }
 
 .hover-meta {
@@ -447,7 +537,7 @@ textarea {
     gap: 0.35rem 0.6rem;
     font-size: 0.7rem;
     color: var(--ink-soft);
-    font-family: "IBM Plex Mono", monospace;
+    font-family: "JetBrains Mono", monospace;
 }
 
 @media (max-width: 1180px) {

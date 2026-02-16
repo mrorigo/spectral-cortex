@@ -664,6 +664,18 @@
     hoverCard.className = "graph-hover-card";
     hoverCard.setAttribute("aria-hidden", "true");
     els.graphRoot.appendChild(hoverCard);
+    const legend = document.createElement("div");
+    legend.className = "graph-legend";
+    legend.innerHTML = `
+      <div class="legend-title">Legend</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#ff71cf"></span>Selected node</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#1cffd8"></span>Outbound / related out</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#62a8ff"></span>Inbound / related in</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#b066ff"></span>Expanded node</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#ffb347"></span>Long-range node</div>
+      <div class="legend-row"><span class="legend-swatch line" style="--swatch:#ff71cf"></span>Long-range link</div>
+    `;
+    els.graphRoot.appendChild(legend);
 
     const svg = d3
       .select(els.graphRoot)
@@ -671,6 +683,31 @@
       .attr("width", width)
       .attr("height", height)
       .attr("viewBox", `0 0 ${width} ${height}`);
+    const defs = svg.append("defs");
+    const linkGlow = defs
+      .append("filter")
+      .attr("id", "link-neon-glow")
+      .attr("x", "-50%")
+      .attr("y", "-50%")
+      .attr("width", "200%")
+      .attr("height", "200%");
+    linkGlow.append("feGaussianBlur").attr("stdDeviation", 1.35);
+    linkGlow.append("feMerge").html(`
+      <feMergeNode />
+      <feMergeNode in="SourceGraphic" />
+    `);
+    const nodeGlow = defs
+      .append("filter")
+      .attr("id", "node-neon-glow")
+      .attr("x", "-60%")
+      .attr("y", "-60%")
+      .attr("width", "220%")
+      .attr("height", "220%");
+    nodeGlow.append("feGaussianBlur").attr("stdDeviation", 2.1);
+    nodeGlow.append("feMerge").html(`
+      <feMergeNode />
+      <feMergeNode in="SourceGraphic" />
+    `);
 
     const scene = svg.append("g");
     const zoomBehavior = d3
@@ -682,16 +719,16 @@
     svg.call(zoomBehavior);
 
     const linkColor = {
-      related_out: "#0d7f70",
-      related_in: "#1d5f9d",
-      long_range: "#ef6c4d",
+      related_out: "#1cffd8",
+      related_in: "#62a8ff",
+      long_range: "#ff71cf",
     };
     const nodeColor = {
-      selected: "#ef6c4d",
-      outbound: "#0d7f70",
-      inbound: "#1d5f9d",
-      expanded: "#5a8f76",
-      long_range: "#d7892f",
+      selected: "#ff71cf",
+      outbound: "#1cffd8",
+      inbound: "#62a8ff",
+      expanded: "#b066ff",
+      long_range: "#ffb347",
     };
 
     const scoredValues = data.links
@@ -728,6 +765,7 @@
         const extra = d.kind === "long_range" ? 0.58 : 0.64;
         return Math.max(0.05, Math.min(1, base + n * extra));
       })
+      .attr("filter", "url(#link-neon-glow)")
       .attr("stroke", (d) => linkColor[d.kind] || "#8aa");
 
     // Persist normalized link strength for both rendering and force simulation.
@@ -742,8 +780,9 @@
       .join("circle")
       .attr("r", (d) => (d.kind === "selected" ? 11 : 7.5))
       .attr("fill", (d) => nodeColor[d.kind] || "#6a8")
-      .attr("stroke", "#fff")
+      .attr("stroke", "#2a1749")
       .attr("stroke-width", 1.2)
+      .attr("filter", "url(#node-neon-glow)")
       .style("cursor", "pointer")
       .on("mouseenter", (event, d) => {
         const ref = state.notesById.get(d.id);
