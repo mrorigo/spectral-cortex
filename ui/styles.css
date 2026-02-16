@@ -352,6 +352,41 @@ textarea {
     align-items: end;
 }
 
+.score-panel {
+    border: 1px solid rgba(176, 102, 255, 0.2);
+    border-radius: 12px;
+    background: rgba(10, 6, 20, 0.52);
+    padding: 0.46rem 0.56rem;
+}
+
+.score-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.3rem;
+}
+
+.score-histogram {
+    display: grid;
+    grid-template-columns: repeat(20, minmax(0, 1fr));
+    gap: 0.17rem;
+    align-items: end;
+    height: 56px;
+}
+
+.score-bar {
+    display: block;
+    border-radius: 3px 3px 0 0;
+    background: rgba(98, 168, 255, 0.32);
+    min-height: 4px;
+}
+
+.score-bar.active {
+    background: linear-gradient(180deg, #1cffd8, #62a8ff);
+    box-shadow: 0 0 8px rgba(98, 168, 255, 0.34);
+}
+
 .slider-field input[type="range"] {
     padding: 0;
     accent-color: var(--primary);
@@ -374,6 +409,88 @@ textarea {
 .graph-empty {
     padding: 1rem;
     color: var(--ink-soft);
+}
+
+.cluster-matrix-wrap {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    padding: 0.5rem;
+}
+
+.cluster-matrix {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: separate;
+    border-spacing: 4px;
+}
+
+.cluster-matrix-corner,
+.cluster-matrix-header {
+    background: rgba(19, 12, 34, 0.82);
+    border: 1px solid rgba(176, 102, 255, 0.28);
+    border-radius: 8px;
+    color: #dfe6ff;
+    font-weight: 600;
+    font-size: 0.76rem;
+    text-align: center;
+    padding: 0.34rem 0.42rem;
+    min-width: 44px;
+}
+
+.cluster-matrix-header.selected {
+    border-color: rgba(255, 113, 207, 0.7);
+    box-shadow: 0 0 0 1px rgba(255, 113, 207, 0.45);
+}
+
+.cluster-matrix-cell {
+    border: 1px solid rgba(176, 102, 255, 0.22);
+    border-radius: 8px;
+    text-align: center;
+    min-width: 54px;
+    height: 48px;
+    padding: 0.15rem 0.2rem;
+    color: #ecf0ff;
+    cursor: pointer;
+    transition:
+        transform 80ms ease,
+        box-shadow 80ms ease,
+        border-color 80ms ease;
+}
+
+.cluster-matrix-cell:hover {
+    transform: translateY(-1px);
+    border-color: rgba(98, 168, 255, 0.7);
+    box-shadow: 0 8px 16px rgba(8, 5, 18, 0.45);
+}
+
+.cluster-matrix-cell span {
+    display: block;
+    font-size: 0.76rem;
+    line-height: 1;
+}
+
+.cluster-matrix-cell small {
+    display: block;
+    margin-top: 0.24rem;
+    font-size: 0.63rem;
+    color: rgba(229, 236, 255, 0.88);
+}
+
+.cluster-matrix-cell.empty {
+    background: rgba(10, 6, 20, 0.65);
+    color: rgba(145, 157, 196, 0.52);
+    cursor: default;
+}
+
+.cluster-matrix-cell.empty:hover {
+    transform: none;
+    border-color: rgba(176, 102, 255, 0.22);
+    box-shadow: none;
+}
+
+.cluster-matrix-meta {
+    margin-top: 0.5rem;
 }
 
 .editor-actions {

@@ -89,14 +89,31 @@
                 <section class="panel graph-panel">
                     <div class="graph-header">
                         <h2>Force Graph</h2>
-                        <p class="muted">Selected note neighborhood</p>
+                        <p id="graph-subtitle" class="muted">
+                            Selected note neighborhood
+                        </p>
                     </div>
                     <div class="graph-controls">
+                        <div class="field">
+                            <label for="view-mode-select">View Mode</label>
+                            <select id="view-mode-select">
+                                <option value="neighborhood">
+                                    Neighborhood
+                                </option>
+                                <option value="cluster_map">Cluster Map</option>
+                                <option value="long_range">
+                                    Long-Range Links
+                                </option>
+                                <option value="cluster_matrix">
+                                    Cluster Matrix
+                                </option>
+                            </select>
+                        </div>
                         <div class="field slider-field">
                             <label for="related-limit-slider">
                                 Related / node:
                                 <span id="related-limit-value" class="mono"
-                                    >5</span
+                                    >3</span
                                 >
                             </label>
                             <input
@@ -105,7 +122,7 @@
                                 min="1"
                                 max="50"
                                 step="1"
-                                value="5"
+                                value="3"
                             />
                         </div>
                         <div class="field slider-field">
@@ -122,6 +139,45 @@
                                 value="1"
                             />
                         </div>
+                        <div class="field slider-field">
+                            <label for="min-score-slider">
+                                Min edge threshold (norm):
+                                <span id="min-score-value" class="mono"
+                                    >0.30</span
+                                >
+                            </label>
+                            <input
+                                id="min-score-slider"
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value="0.30"
+                            />
+                        </div>
+                        <div class="field slider-field">
+                            <label for="long-range-topk-slider">
+                                Long-range top K:
+                                <span id="long-range-topk-value" class="mono"
+                                    >120</span
+                                >
+                            </label>
+                            <input
+                                id="long-range-topk-slider"
+                                type="range"
+                                min="10"
+                                max="1000"
+                                step="10"
+                                value="120"
+                            />
+                        </div>
+                    </div>
+                    <div class="score-panel">
+                        <div class="score-panel-head">
+                            <span class="mono">Edge score distribution</span>
+                            <span id="score-meta" class="muted">No graph</span>
+                        </div>
+                        <div id="score-histogram" class="score-histogram"></div>
                     </div>
                     <div id="graph-root" class="graph-root"></div>
                 </section>

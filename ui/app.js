@@ -8,12 +8,35 @@
     selectedNoteId: null,
     dirty: false,
     filters: { query: "", sort: "id_asc" },
-    graphControls: { relatedLimit: 5, depth: 1 },
+    graphControls: {
+      relatedLimit: 3,
+      depth: 1,
+      viewMode: "neighborhood",
+      minScore: 0.3,
+      longRangeTopK: 120,
+    },
     validation: { errors: [], warnings: [] },
+    clusterById: new Map(),
+    clusterCounts: new Map(),
   };
 
   const LIMIT_LIST_RENDER = 300;
   const GRAPH_NODE_CAP = 120;
+  const CLUSTER_MAP_NODE_CAP = 1200;
+  const CLUSTER_PALETTE = [
+    "#1cffd8",
+    "#62a8ff",
+    "#ff71cf",
+    "#b066ff",
+    "#ffb347",
+    "#7bff8a",
+    "#59f0ff",
+    "#ff8bf8",
+    "#ffe16b",
+    "#8c9fff",
+    "#4cf7be",
+    "#ff9070",
+  ];
 
   const els = {
     fileInput: document.getElementById("file-input"),
@@ -29,6 +52,14 @@
     relatedLimitValue: document.getElementById("related-limit-value"),
     depthSlider: document.getElementById("depth-slider"),
     depthValue: document.getElementById("depth-value"),
+    viewModeSelect: document.getElementById("view-mode-select"),
+    minScoreSlider: document.getElementById("min-score-slider"),
+    minScoreValue: document.getElementById("min-score-value"),
+    longRangeTopKSlider: document.getElementById("long-range-topk-slider"),
+    longRangeTopKValue: document.getElementById("long-range-topk-value"),
+    scoreHistogram: document.getElementById("score-histogram"),
+    scoreMeta: document.getElementById("score-meta"),
+    graphSubtitle: document.getElementById("graph-subtitle"),
     listMeta: document.getElementById("list-meta"),
     noteList: document.getElementById("note-list"),
     graphRoot: document.getElementById("graph-root"),
@@ -49,6 +80,9 @@
     els.showLongRange.addEventListener("change", () => renderGraph());
     els.relatedLimitSlider.addEventListener("input", onGraphControlChange);
     els.depthSlider.addEventListener("input", onGraphControlChange);
+    els.viewModeSelect.addEventListener("change", onGraphControlChange);
+    els.minScoreSlider.addEventListener("input", onGraphControlChange);
+    els.longRangeTopKSlider.addEventListener("input", onGraphControlChange);
     els.applyBtn.addEventListener("click", applyEditorChanges);
     els.deleteBtn.addEventListener("click", deleteSelectedNote);
 
@@ -83,15 +117,62 @@
       10,
     );
     state.graphControls.depth = Number.parseInt(els.depthSlider.value, 10);
+    state.graphControls.viewMode = String(els.viewModeSelect.value || "");
+    state.graphControls.minScore = Number.parseFloat(els.minScoreSlider.value);
+    state.graphControls.longRangeTopK = Number.parseInt(
+      els.longRangeTopKSlider.value,
+      10,
+    );
     syncGraphControls();
     renderGraph();
   }
 
   function syncGraphControls() {
+    els.viewModeSelect.value = state.graphControls.viewMode;
+    els.relatedLimitSlider.value = String(state.graphControls.relatedLimit);
+    els.depthSlider.value = String(state.graphControls.depth);
+    els.minScoreSlider.value = String(state.graphControls.minScore);
+    els.longRangeTopKSlider.value = String(state.graphControls.longRangeTopK);
     els.relatedLimitValue.textContent = String(
       state.graphControls.relatedLimit,
     );
     els.depthValue.textContent = String(state.graphControls.depth);
+    els.minScoreValue.textContent = state.graphControls.minScore.toFixed(2);
+    els.longRangeTopKValue.textContent = String(
+      state.graphControls.longRangeTopK,
+    );
+    syncControlAvailability();
+  }
+
+  function syncControlAvailability() {
+    const mode = state.graphControls.viewMode;
+    const isNeighborhood = mode === "neighborhood";
+    const isClusterMap = mode === "cluster_map";
+    const isLongRange = mode === "long_range";
+    const isClusterMatrix = mode === "cluster_matrix";
+
+    // Neighborhood + cluster map use related budget, long-range-only mode does not.
+    els.relatedLimitSlider.disabled = isLongRange || isClusterMatrix;
+    // Depth only affects neighborhood expansion.
+    els.depthSlider.disabled = !isNeighborhood;
+    // Min score affects all graph modes.
+    els.minScoreSlider.disabled = false;
+    // Long-range top-K affects cluster map, long-range, and cluster-matrix views.
+    els.longRangeTopKSlider.disabled = isNeighborhood;
+    // Long-range toggle is irrelevant in long-range-only mode.
+    els.showLongRange.disabled = isLongRange;
+    if (isLongRange) {
+      els.showLongRange.checked = true;
+    }
+
+    // Keep mode relationships explicit for readability in dev tools.
+    els.relatedLimitSlider.dataset.modeActive = String(
+      isNeighborhood || isClusterMap,
+    );
+    els.depthSlider.dataset.modeActive = String(isNeighborhood);
+    els.longRangeTopKSlider.dataset.modeActive = String(
+      isClusterMap || isLongRange || isClusterMatrix,
+    );
   }
 
   function onFileChange(event) {
@@ -231,6 +312,8 @@
     state.notesById = new Map();
     state.reverseRelated = new Map();
     state.longRangeById = new Map();
+    state.clusterById = new Map();
+    state.clusterCounts = new Map();
 
     if (!state.graph || !Array.isArray(state.graph.notes)) {
       return;
@@ -241,6 +324,23 @@
         state.notesById.set(note.note_id, note);
         state.reverseRelated.set(note.note_id, new Map());
         state.longRangeById.set(note.note_id, []);
+      }
+    }
+
+    if (Array.isArray(state.graph.cluster_labels)) {
+      for (const [idx, note] of state.graph.notes.entries()) {
+        if (typeof note?.note_id !== "number") {
+          continue;
+        }
+        const clusterId = Number.parseInt(state.graph.cluster_labels[idx], 10);
+        if (!Number.isInteger(clusterId)) {
+          continue;
+        }
+        state.clusterById.set(note.note_id, clusterId);
+        state.clusterCounts.set(
+          clusterId,
+          (state.clusterCounts.get(clusterId) || 0) + 1,
+        );
       }
     }
 
@@ -637,19 +737,28 @@
   }
 
   function renderGraph() {
-    const note = state.notesById.get(state.selectedNoteId);
-    if (!note) {
-      renderGraphEmpty("Select a note to render its neighborhood graph.");
-      return;
-    }
     if (!window.d3) {
       renderGraphEmpty("D3 failed to load from CDN.");
       return;
     }
-
-    const data = buildNeighborhoodData(note.note_id);
-    if (data.nodes.length === 0) {
-      renderGraphEmpty("No graphable neighborhood available.");
+    const data = buildGraphData();
+    if (
+      !data ||
+      ((!data.nodes || data.nodes.length === 0) &&
+        data.mode !== "cluster_matrix")
+    ) {
+      renderScoreHistogram([], 0, null);
+      renderGraphEmpty("No graphable data for current mode/filters.");
+      return;
+    }
+    els.graphSubtitle.textContent = data.subtitle;
+    renderScoreHistogram(
+      data.scoreValues || [],
+      data.thresholdRaw || 0,
+      data.scoreDomain || null,
+    );
+    if (data.mode === "cluster_matrix") {
+      renderClusterMatrix(data);
       return;
     }
 
@@ -666,15 +775,7 @@
     els.graphRoot.appendChild(hoverCard);
     const legend = document.createElement("div");
     legend.className = "graph-legend";
-    legend.innerHTML = `
-      <div class="legend-title">Legend</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#ff71cf"></span>Selected node</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#1cffd8"></span>Outbound / related out</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#62a8ff"></span>Inbound / related in</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#b066ff"></span>Expanded node</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#ffb347"></span>Long-range node</div>
-      <div class="legend-row"><span class="legend-swatch line" style="--swatch:#ff71cf"></span>Long-range link</div>
-    `;
+    legend.innerHTML = buildLegendHtml(data.mode);
     els.graphRoot.appendChild(legend);
 
     const svg = d3
@@ -710,9 +811,15 @@
     `);
 
     const scene = svg.append("g");
+    const minZoomScale =
+      data.mode === "cluster_map"
+        ? 0.05
+        : data.mode === "long_range"
+          ? 0.08
+          : 0.35;
     const zoomBehavior = d3
       .zoom()
-      .scaleExtent([0.35, 4])
+      .scaleExtent([minZoomScale, 4])
       .on("zoom", (event) => {
         scene.attr("transform", event.transform);
       });
@@ -729,6 +836,7 @@
       inbound: "#62a8ff",
       expanded: "#b066ff",
       long_range: "#ffb347",
+      cluster: "#7b8cff",
     };
 
     const scoredValues = data.links
@@ -779,7 +887,12 @@
       .data(data.nodes)
       .join("circle")
       .attr("r", (d) => (d.kind === "selected" ? 11 : 7.5))
-      .attr("fill", (d) => nodeColor[d.kind] || "#6a8")
+      .attr("fill", (d) => {
+        if (d.kind === "cluster") {
+          return clusterColor(d.clusterId);
+        }
+        return nodeColor[d.kind] || "#6a8";
+      })
       .attr("stroke", "#2a1749")
       .attr("stroke-width", 1.2)
       .attr("filter", "url(#node-neon-glow)")
@@ -840,7 +953,15 @@
       .attr("class", "graph-node-label")
       .attr("dx", 9)
       .attr("dy", 3)
-      .text((d) => `#${d.id}`);
+      .text((d) => {
+        if (d.kind === "selected") {
+          return `#${d.id}`;
+        }
+        if (data.nodes.length <= 220) {
+          return `#${d.id}`;
+        }
+        return "";
+      });
 
     const simulation = d3
       .forceSimulation(data.nodes)
@@ -863,11 +984,26 @@
             return base + n * extra;
           }),
       )
-      .force("charge", d3.forceManyBody().strength(-180))
+      .force(
+        "charge",
+        d3
+          .forceManyBody()
+          .strength(
+            data.mode === "cluster_map"
+              ? -105
+              : data.mode === "long_range"
+                ? -130
+                : -180,
+          ),
+      )
       .force("center", d3.forceCenter(width / 2, height / 2))
       .force(
         "collision",
-        d3.forceCollide().radius((d) => (d.kind === "selected" ? 14 : 10)),
+        d3
+          .forceCollide()
+          .radius((d) =>
+            d.kind === "selected" ? 14 : data.mode === "cluster_map" ? 8 : 10,
+          ),
       )
       .on("tick", ticked);
 
@@ -896,12 +1032,26 @@
 
     // Pre-settle briefly, then fit the full neighborhood in view.
     simulation.stop();
-    for (let i = 0; i < 80; i += 1) {
+    for (let i = 0; i < (data.mode === "cluster_map" ? 26 : 80); i += 1) {
       simulation.tick();
     }
     ticked();
-    zoomToFit(svg, zoomBehavior, data.nodes, width, height, 26);
-    simulation.alpha(0.35).restart();
+    zoomToFit(
+      svg,
+      zoomBehavior,
+      data.nodes,
+      width,
+      height,
+      data.mode === "cluster_map" ? 44 : data.mode === "long_range" ? 38 : 26,
+      data.mode === "cluster_map"
+        ? 0.05
+        : data.mode === "long_range"
+          ? 0.08
+          : 0.35,
+    );
+    if (data.mode === "neighborhood") {
+      simulation.alpha(0.35).restart();
+    }
 
     function ticked() {
       link
@@ -914,7 +1064,15 @@
     }
   }
 
-  function zoomToFit(svg, zoomBehavior, nodes, width, height, padding) {
+  function zoomToFit(
+    svg,
+    zoomBehavior,
+    nodes,
+    width,
+    height,
+    padding,
+    minScale = 0.35,
+  ) {
     if (!nodes.length) {
       return;
     }
@@ -942,7 +1100,7 @@
     const fitW = Math.max(1, width - padding * 2);
     const fitH = Math.max(1, height - padding * 2);
     const scale = Math.max(
-      0.35,
+      minScale,
       Math.min(4, Math.min(fitW / boxW, fitH / boxH)),
     );
     const centerX = (minX + maxX) / 2;
@@ -956,12 +1114,811 @@
     );
   }
 
+  function computeScoreDomain(scores) {
+    const clean = Array.isArray(scores)
+      ? scores.filter((v) => Number.isFinite(v))
+      : [];
+    if (clean.length === 0) {
+      return null;
+    }
+    let min = Infinity;
+    let max = -Infinity;
+    for (const v of clean) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    return { min, max };
+  }
+
+  function quantile(sortedValues, q) {
+    if (!Array.isArray(sortedValues) || sortedValues.length === 0) {
+      return 0;
+    }
+    const clampedQ = Math.max(0, Math.min(1, q));
+    if (sortedValues.length === 1) {
+      return sortedValues[0];
+    }
+    const pos = clampedQ * (sortedValues.length - 1);
+    const lo = Math.floor(pos);
+    const hi = Math.ceil(pos);
+    if (lo === hi) {
+      return sortedValues[lo];
+    }
+    const w = pos - lo;
+    return sortedValues[lo] * (1 - w) + sortedValues[hi] * w;
+  }
+
+  function computeDistribution(values, options = {}) {
+    const clean = Array.isArray(values)
+      ? values.filter((v) => Number.isFinite(v))
+      : [];
+    if (clean.length === 0) {
+      return null;
+    }
+    const useLog = options.log === true;
+    const transformed = clean
+      .map((v) => (useLog ? Math.log1p(Math.max(0, v)) : v))
+      .sort((a, b) => a - b);
+    const min = transformed[0];
+    const max = transformed[transformed.length - 1];
+    const p10 = quantile(transformed, 0.1);
+    const p90 = quantile(transformed, 0.9);
+    return {
+      useLog,
+      min,
+      max,
+      p10,
+      p90,
+    };
+  }
+
+  function normalizeByDistribution(value, distribution) {
+    if (!distribution || !Number.isFinite(value)) {
+      return 0;
+    }
+    const x = distribution.useLog ? Math.log1p(Math.max(0, value)) : value;
+    const lo = Number.isFinite(distribution.p10)
+      ? distribution.p10
+      : distribution.min;
+    const hi = Number.isFinite(distribution.p90)
+      ? distribution.p90
+      : distribution.max;
+    const span = hi - lo;
+    if (span > 1e-9) {
+      return Math.max(0, Math.min(1, (x - lo) / span));
+    }
+    const fallback = distribution.max - distribution.min;
+    if (fallback > 1e-9) {
+      return Math.max(
+        0,
+        Math.min(
+          1,
+          (x - distribution.min) / (distribution.max - distribution.min),
+        ),
+      );
+    }
+    return 1;
+  }
+
+  function normalizedToRawScore(normalized, domain) {
+    const norm = Math.max(
+      0,
+      Math.min(1, Number.isFinite(normalized) ? normalized : 0),
+    );
+    if (
+      !domain ||
+      !Number.isFinite(domain.min) ||
+      !Number.isFinite(domain.max)
+    ) {
+      return 0;
+    }
+    if (domain.max <= domain.min) {
+      return domain.min;
+    }
+    return domain.min + norm * (domain.max - domain.min);
+  }
+
+  function buildGraphData() {
+    const mode = state.graphControls.viewMode;
+    const selectedId =
+      typeof state.selectedNoteId === "number" ? state.selectedNoteId : null;
+
+    if (mode === "cluster_map") {
+      return buildClusterMapData(selectedId);
+    }
+    if (mode === "long_range") {
+      return buildLongRangeData(selectedId);
+    }
+    if (mode === "cluster_matrix") {
+      return buildClusterMatrixData(selectedId);
+    }
+    if (!state.notesById.has(selectedId)) {
+      return {
+        mode,
+        subtitle: "No selected note",
+        nodes: [],
+        links: [],
+        scoreValues: [],
+        scoreDomain: null,
+        thresholdRaw: 0,
+      };
+    }
+    const neighborhood = buildNeighborhoodData(selectedId);
+    return {
+      mode: "neighborhood",
+      subtitle: `Selected note neighborhood #${selectedId}`,
+      nodes: neighborhood.nodes,
+      links: neighborhood.links,
+      scoreValues: neighborhood.scoreValues,
+      scoreDomain: neighborhood.scoreDomain,
+      thresholdRaw: neighborhood.thresholdRaw,
+    };
+  }
+
+  function buildClusterMapData(selectedId) {
+    const notes = Array.isArray(state.graph?.notes) ? state.graph.notes : [];
+    const sortedIds = notes
+      .map((n) => n?.note_id)
+      .filter((id) => Number.isInteger(id))
+      .sort((a, b) => a - b);
+    if (sortedIds.length === 0) {
+      return {
+        mode: "cluster_map",
+        subtitle: "Cluster map",
+        nodes: [],
+        links: [],
+      };
+    }
+
+    const ordered = [];
+    const seen = new Set();
+    const pushOrdered = (id) => {
+      if (!Number.isInteger(id) || seen.has(id) || !state.notesById.has(id)) {
+        return;
+      }
+      if (ordered.length >= CLUSTER_MAP_NODE_CAP) {
+        return;
+      }
+      seen.add(id);
+      ordered.push(id);
+    };
+
+    if (Number.isInteger(selectedId)) {
+      pushOrdered(selectedId);
+    }
+
+    if (state.clusterCounts.size > 0) {
+      const clusterEntries = Array.from(state.clusterCounts.entries()).sort(
+        (a, b) => a[0] - b[0],
+      );
+      const perClusterCap = Math.max(
+        1,
+        Math.floor(CLUSTER_MAP_NODE_CAP / Math.max(1, clusterEntries.length)),
+      );
+      for (const [clusterId] of clusterEntries) {
+        const clusterIds = sortedIds.filter(
+          (id) => state.clusterById.get(id) === clusterId,
+        );
+        for (const id of clusterIds.slice(0, perClusterCap)) {
+          pushOrdered(id);
+        }
+      }
+    }
+
+    for (const id of sortedIds) {
+      if (ordered.length >= CLUSTER_MAP_NODE_CAP) {
+        break;
+      }
+      pushOrdered(id);
+    }
+    const allowed = new Set(ordered);
+    const nodes = ordered.map((id) => ({
+      id,
+      kind: id === selectedId ? "selected" : "cluster",
+      clusterId: state.clusterById.get(id),
+    }));
+
+    const scoreValues = [];
+    const perNodeBudget = Math.max(
+      1,
+      Math.min(3, state.graphControls.relatedLimit),
+    );
+    for (const srcId of ordered) {
+      const note = state.notesById.get(srcId);
+      if (!note || !Array.isArray(note.related_note_links)) {
+        continue;
+      }
+      const related = note.related_note_links
+        .filter(
+          (entry) =>
+            Array.isArray(entry) &&
+            entry.length === 2 &&
+            Number.isInteger(entry[0]) &&
+            Number.isFinite(entry[1]),
+        )
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, perNodeBudget);
+      for (const [, score] of related) {
+        scoreValues.push(score);
+      }
+    }
+    if (els.showLongRange.checked) {
+      const topK = Math.max(
+        1,
+        Math.min(220, state.graphControls.longRangeTopK),
+      );
+      const longLinks = Array.isArray(state.graph?.long_range_links)
+        ? state.graph.long_range_links
+        : [];
+      for (const entry of longLinks
+        .filter(
+          (e) =>
+            Array.isArray(e) &&
+            e.length === 3 &&
+            Number.isInteger(e[0]) &&
+            Number.isInteger(e[1]) &&
+            Number.isFinite(e[2]),
+        )
+        .sort((a, b) => b[2] - a[2])
+        .slice(0, topK)) {
+        scoreValues.push(entry[2]);
+      }
+    }
+    const scoreDomain = computeScoreDomain(scoreValues);
+    const minScore = normalizedToRawScore(
+      state.graphControls.minScore,
+      scoreDomain,
+    );
+    const edgeSet = new Set();
+    const links = [];
+
+    for (const srcId of ordered) {
+      const note = state.notesById.get(srcId);
+      if (!note || !Array.isArray(note.related_note_links)) {
+        continue;
+      }
+      const related = note.related_note_links
+        .filter(
+          (entry) =>
+            Array.isArray(entry) &&
+            entry.length === 2 &&
+            Number.isInteger(entry[0]) &&
+            Number.isFinite(entry[1]) &&
+            entry[1] >= minScore,
+        )
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, perNodeBudget);
+
+      for (const [dstId, score] of related) {
+        if (!allowed.has(dstId)) {
+          continue;
+        }
+        const a = Math.min(srcId, dstId);
+        const b = Math.max(srcId, dstId);
+        const edgeKey = `${a}:${b}:related`;
+        if (edgeSet.has(edgeKey)) {
+          continue;
+        }
+        edgeSet.add(edgeKey);
+        links.push({
+          source: srcId,
+          target: dstId,
+          kind: "related_out",
+          score,
+        });
+      }
+    }
+
+    if (els.showLongRange.checked) {
+      const topK = Math.max(
+        1,
+        Math.min(220, state.graphControls.longRangeTopK),
+      );
+      const longLinks = Array.isArray(state.graph?.long_range_links)
+        ? state.graph.long_range_links
+        : [];
+      const filteredLong = longLinks
+        .filter(
+          (entry) =>
+            Array.isArray(entry) &&
+            entry.length === 3 &&
+            Number.isInteger(entry[0]) &&
+            Number.isInteger(entry[1]) &&
+            Number.isFinite(entry[2]) &&
+            entry[2] >= minScore,
+        )
+        .sort((a, b) => b[2] - a[2])
+        .slice(0, topK);
+      for (const [a, b, score] of filteredLong) {
+        if (!allowed.has(a) || !allowed.has(b)) {
+          continue;
+        }
+        const edgeKey = `${Math.min(a, b)}:${Math.max(a, b)}:long`;
+        if (edgeSet.has(edgeKey)) {
+          continue;
+        }
+        edgeSet.add(edgeKey);
+        links.push({ source: a, target: b, kind: "long_range", score });
+      }
+    }
+
+    const suffix =
+      sortedIds.length > ordered.length
+        ? ` (showing ${ordered.length}/${sortedIds.length} nodes)`
+        : "";
+    return {
+      mode: "cluster_map",
+      subtitle: `Global cluster map${suffix}`,
+      nodes,
+      links,
+      scoreValues,
+      scoreDomain,
+      thresholdRaw: minScore,
+    };
+  }
+
+  function buildLongRangeData(selectedId) {
+    const topK = Math.max(1, state.graphControls.longRangeTopK);
+    const longLinks = Array.isArray(state.graph?.long_range_links)
+      ? state.graph.long_range_links
+      : [];
+    const scoreValues = longLinks
+      .filter(
+        (entry) =>
+          Array.isArray(entry) &&
+          entry.length === 3 &&
+          Number.isInteger(entry[0]) &&
+          Number.isInteger(entry[1]) &&
+          Number.isFinite(entry[2]),
+      )
+      .map((entry) => entry[2]);
+    const scoreDomain = computeScoreDomain(scoreValues);
+    const minScore = normalizedToRawScore(
+      state.graphControls.minScore,
+      scoreDomain,
+    );
+    const filtered = longLinks
+      .filter(
+        (entry) =>
+          Array.isArray(entry) &&
+          entry.length === 3 &&
+          Number.isInteger(entry[0]) &&
+          Number.isInteger(entry[1]) &&
+          Number.isFinite(entry[2]) &&
+          entry[2] >= minScore,
+      )
+      .sort((a, b) => b[2] - a[2])
+      .slice(0, topK);
+
+    const nodeKinds = new Map();
+    for (const [a, b] of filtered) {
+      if (state.notesById.has(a)) {
+        nodeKinds.set(a, "long_range");
+      }
+      if (state.notesById.has(b)) {
+        nodeKinds.set(b, "long_range");
+      }
+    }
+    if (Number.isInteger(selectedId) && nodeKinds.has(selectedId)) {
+      nodeKinds.set(selectedId, "selected");
+    }
+
+    const nodes = Array.from(nodeKinds.entries()).map(([id, kind]) => ({
+      id,
+      kind,
+      clusterId: state.clusterById.get(id),
+    }));
+    const links = filtered.map(([a, b, score]) => ({
+      source: a,
+      target: b,
+      kind: "long_range",
+      score,
+    }));
+
+    return {
+      mode: "long_range",
+      subtitle: `Long-range links (top ${topK})`,
+      nodes,
+      links,
+      scoreValues,
+      scoreDomain,
+      thresholdRaw: minScore,
+    };
+  }
+
+  function buildClusterMatrixData(selectedId) {
+    const clusters = Array.from(state.clusterCounts.keys()).sort(
+      (a, b) => a - b,
+    );
+    if (clusters.length === 0) {
+      return {
+        mode: "cluster_matrix",
+        subtitle: "Cluster matrix unavailable (missing cluster labels)",
+        clusters: [],
+        matrix: new Map(),
+        maxCount: 0,
+        maxMean: 0,
+        scoreValues: [],
+        scoreDomain: null,
+        thresholdRaw: 0,
+      };
+    }
+
+    const scoreValues = [];
+    const matrix = new Map();
+    const edgeSet = new Set();
+
+    const addClusterEdge = (srcId, dstId, score, relationKind) => {
+      if (!Number.isInteger(srcId) || !Number.isInteger(dstId)) {
+        return;
+      }
+      if (!Number.isFinite(score)) {
+        return;
+      }
+      const a = Math.min(srcId, dstId);
+      const b = Math.max(srcId, dstId);
+      const edgeKey = `${a}:${b}:${relationKind}`;
+      if (edgeSet.has(edgeKey)) {
+        return;
+      }
+      edgeSet.add(edgeKey);
+
+      const ca = state.clusterById.get(srcId);
+      const cb = state.clusterById.get(dstId);
+      if (!Number.isInteger(ca) || !Number.isInteger(cb)) {
+        return;
+      }
+      scoreValues.push(score);
+      const c0 = Math.min(ca, cb);
+      const c1 = Math.max(ca, cb);
+      const key = `${c0}:${c1}`;
+      if (!matrix.has(key)) {
+        matrix.set(key, {
+          count: 0,
+          sum: 0,
+          max: 0,
+          sampleSrc: srcId,
+          sampleDst: dstId,
+        });
+      }
+      const stat = matrix.get(key);
+      stat.count += 1;
+      stat.sum += score;
+      if (score > stat.max) {
+        stat.max = score;
+      }
+    };
+
+    for (const note of state.graph?.notes || []) {
+      const srcId = note?.note_id;
+      if (!Number.isInteger(srcId) || !Array.isArray(note.related_note_links)) {
+        continue;
+      }
+      for (const entry of note.related_note_links) {
+        if (
+          Array.isArray(entry) &&
+          entry.length === 2 &&
+          Number.isInteger(entry[0]) &&
+          Number.isFinite(entry[1])
+        ) {
+          addClusterEdge(srcId, entry[0], entry[1], "related");
+        }
+      }
+    }
+
+    if (
+      els.showLongRange.checked &&
+      Array.isArray(state.graph?.long_range_links)
+    ) {
+      const topK = Math.max(1, state.graphControls.longRangeTopK);
+      const longLinks = state.graph.long_range_links
+        .filter(
+          (entry) =>
+            Array.isArray(entry) &&
+            entry.length === 3 &&
+            Number.isInteger(entry[0]) &&
+            Number.isInteger(entry[1]) &&
+            Number.isFinite(entry[2]),
+        )
+        .sort((a, b) => b[2] - a[2])
+        .slice(0, topK);
+      for (const [a, b, score] of longLinks) {
+        addClusterEdge(a, b, score, "long");
+      }
+    }
+
+    const scoreDomain = computeScoreDomain(scoreValues);
+    const thresholdRaw = normalizedToRawScore(
+      state.graphControls.minScore,
+      scoreDomain,
+    );
+
+    let maxCount = 0;
+    let maxMean = 0;
+    const visibleCounts = [];
+    const visibleMeans = [];
+    for (const stat of matrix.values()) {
+      if (!stat || stat.max < thresholdRaw) {
+        continue;
+      }
+      if (stat.count > maxCount) {
+        maxCount = stat.count;
+      }
+      const mean = stat.sum / Math.max(1, stat.count);
+      visibleCounts.push(stat.count);
+      visibleMeans.push(mean);
+      if (mean > maxMean) {
+        maxMean = mean;
+      }
+    }
+    const countDistribution = computeDistribution(visibleCounts, { log: true });
+    const meanDistribution = computeDistribution(visibleMeans, { log: false });
+
+    const selectedCluster = Number.isInteger(selectedId)
+      ? state.clusterById.get(selectedId)
+      : null;
+    const suffix = els.showLongRange.checked
+      ? ` (related + long-range top ${state.graphControls.longRangeTopK})`
+      : " (related only)";
+    return {
+      mode: "cluster_matrix",
+      subtitle: `Cluster-to-cluster matrix${suffix}`,
+      clusters,
+      matrix,
+      maxCount,
+      maxMean,
+      countDistribution,
+      meanDistribution,
+      selectedCluster,
+      scoreValues,
+      scoreDomain,
+      thresholdRaw,
+    };
+  }
+
+  function renderClusterMatrix(data) {
+    els.graphRoot.innerHTML = "";
+
+    if (!Array.isArray(data.clusters) || data.clusters.length === 0) {
+      renderGraphEmpty("Cluster labels missing; cannot build cluster matrix.");
+      return;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "cluster-matrix-wrap";
+
+    const table = document.createElement("table");
+    table.className = "cluster-matrix";
+
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    const corner = document.createElement("th");
+    corner.className = "cluster-matrix-corner mono";
+    corner.textContent = "C↔C";
+    headRow.appendChild(corner);
+    for (const cid of data.clusters) {
+      const th = document.createElement("th");
+      th.className = "cluster-matrix-header mono";
+      th.textContent = `C${cid}`;
+      if (cid === data.selectedCluster) {
+        th.classList.add("selected");
+      }
+      headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    for (const r of data.clusters) {
+      const tr = document.createElement("tr");
+      const rowHead = document.createElement("th");
+      rowHead.className = "cluster-matrix-header mono";
+      rowHead.textContent = `C${r}`;
+      if (r === data.selectedCluster) {
+        rowHead.classList.add("selected");
+      }
+      tr.appendChild(rowHead);
+
+      for (const c of data.clusters) {
+        const key = `${Math.min(r, c)}:${Math.max(r, c)}`;
+        const stat = data.matrix.get(key);
+        const td = document.createElement("td");
+        td.className = "cluster-matrix-cell";
+        if (!stat || stat.max < data.thresholdRaw) {
+          td.classList.add("empty");
+          td.textContent = "·";
+          tr.appendChild(td);
+          continue;
+        }
+        const mean = stat.sum / Math.max(1, stat.count);
+        const countNorm = Math.pow(
+          normalizeByDistribution(stat.count, data.countDistribution),
+          0.8,
+        );
+        const meanNorm = Math.pow(
+          normalizeByDistribution(mean, data.meanDistribution),
+          0.8,
+        );
+        const strength = Math.max(
+          0,
+          Math.min(1, 0.65 * meanNorm + 0.35 * countNorm),
+        );
+        td.style.background = `linear-gradient(135deg, rgba(28,255,216,${
+          0.1 + 0.64 * meanNorm
+        }), rgba(98,168,255,${0.1 + 0.56 * countNorm}))`;
+        td.style.borderColor = `rgba(176, 102, 255, ${0.24 + 0.42 * strength})`;
+        td.style.boxShadow = `inset 0 0 ${Math.round(4 + 10 * strength)}px rgba(160,120,255,${
+          0.08 + 0.2 * strength
+        })`;
+        td.innerHTML = `<span class="mono">${stat.count}</span><small>${mean.toFixed(3)}</small>`;
+        td.title = `Clusters C${r} ↔ C${c}\nlinks=${stat.count}\nmean=${mean.toFixed(
+          4,
+        )}\nmax=${stat.max.toFixed(4)}\nintensity=${strength.toFixed(3)}`;
+        td.addEventListener("click", () => {
+          const candidate = Number.isInteger(stat.sampleSrc)
+            ? stat.sampleSrc
+            : stat.sampleDst;
+          if (Number.isInteger(candidate) && state.notesById.has(candidate)) {
+            state.selectedNoteId = candidate;
+            renderList();
+            renderEditor();
+          }
+        });
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+
+    const legend = document.createElement("div");
+    legend.className = "cluster-matrix-meta muted";
+    legend.textContent =
+      `Cells show link count and mean similarity. ` +
+      `Intensity uses normalized count/log-count and mean quantiles. ` +
+      `Threshold >= ${data.thresholdRaw.toFixed(3)}.`;
+
+    wrap.appendChild(table);
+    wrap.appendChild(legend);
+    els.graphRoot.appendChild(wrap);
+  }
+
+  function clusterColor(clusterId) {
+    const cid = Number.parseInt(clusterId, 10);
+    if (!Number.isInteger(cid) || cid < 0) {
+      return "#7b8cff";
+    }
+    return CLUSTER_PALETTE[cid % CLUSTER_PALETTE.length];
+  }
+
+  function buildLegendHtml(mode) {
+    if (mode === "cluster_map") {
+      const clusterRows = Array.from(state.clusterCounts.entries())
+        .sort((a, b) => a[0] - b[0])
+        .slice(0, 8)
+        .map(
+          ([clusterId, count]) =>
+            `<div class="legend-row"><span class="legend-swatch" style="--swatch:${clusterColor(clusterId)}"></span>Cluster ${clusterId} (${count})</div>`,
+        )
+        .join("");
+      return `
+        <div class="legend-title">Legend</div>
+        <div class="legend-row"><span class="legend-swatch" style="--swatch:#ff71cf"></span>Selected node</div>
+        <div class="legend-row"><span class="legend-swatch line" style="--swatch:#1cffd8"></span>Related links</div>
+        <div class="legend-row"><span class="legend-swatch line" style="--swatch:#ff71cf"></span>Long-range links</div>
+        ${clusterRows}
+      `;
+    }
+    if (mode === "long_range") {
+      return `
+        <div class="legend-title">Legend</div>
+        <div class="legend-row"><span class="legend-swatch" style="--swatch:#ff71cf"></span>Selected node</div>
+        <div class="legend-row"><span class="legend-swatch" style="--swatch:#ffb347"></span>Long-range node</div>
+        <div class="legend-row"><span class="legend-swatch line" style="--swatch:#ff71cf"></span>Long-range link</div>
+      `;
+    }
+    return `
+      <div class="legend-title">Legend</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#ff71cf"></span>Selected node</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#1cffd8"></span>Outbound / related out</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#62a8ff"></span>Inbound / related in</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#b066ff"></span>Expanded node</div>
+      <div class="legend-row"><span class="legend-swatch" style="--swatch:#ffb347"></span>Long-range node</div>
+      <div class="legend-row"><span class="legend-swatch line" style="--swatch:#ff71cf"></span>Long-range link</div>
+    `;
+  }
+
+  function renderScoreHistogram(values, thresholdRaw, scoreDomain) {
+    if (!els.scoreHistogram || !els.scoreMeta) {
+      return;
+    }
+    const scores = Array.isArray(values)
+      ? values.filter((v) => Number.isFinite(v))
+      : [];
+    if (scores.length === 0) {
+      els.scoreHistogram.innerHTML = "";
+      els.scoreMeta.textContent = "No edges";
+      return;
+    }
+    const domain = scoreDomain || computeScoreDomain(scores);
+    if (!domain) {
+      els.scoreHistogram.innerHTML = "";
+      els.scoreMeta.textContent = "No edges";
+      return;
+    }
+    const bins = new Array(20).fill(0);
+    const span = Math.max(1e-9, domain.max - domain.min);
+    const normThreshold = Math.max(
+      0,
+      Math.min(1, (thresholdRaw - domain.min) / span),
+    );
+    for (const score of scores) {
+      const normalized = Math.max(0, Math.min(1, (score - domain.min) / span));
+      const idx = Math.min(19, Math.floor(normalized * 20));
+      bins[idx] += 1;
+    }
+    const maxBin = Math.max(...bins, 1);
+    els.scoreHistogram.innerHTML = bins
+      .map((count, idx) => {
+        const x = idx / 20;
+        const h = Math.max(8, Math.round((count / maxBin) * 100));
+        const active = x + 1 / 20 >= normThreshold ? " active" : "";
+        return `<span class="score-bar${active}" style="height:${h}%"></span>`;
+      })
+      .join("");
+    const above = scores.filter((s) => s >= thresholdRaw).length;
+    els.scoreMeta.textContent =
+      `${scores.length} edges, ${above} >= ${thresholdRaw.toFixed(3)} ` +
+      `(range ${domain.min.toFixed(3)}-${domain.max.toFixed(3)})`;
+  }
+
   function buildNeighborhoodData(selectedId) {
     const nodes = [];
     const links = [];
     const nodeKinds = new Map([[selectedId, "selected"]]);
     const depth = Math.max(1, Math.min(3, state.graphControls.depth));
     const relatedLimit = Math.max(1, state.graphControls.relatedLimit);
+    const scoreValues = [];
+    const selectedNote = state.notesById.get(selectedId);
+    if (selectedNote && Array.isArray(selectedNote.related_note_links)) {
+      for (const entry of selectedNote.related_note_links.slice(
+        0,
+        relatedLimit,
+      )) {
+        if (
+          Array.isArray(entry) &&
+          entry.length === 2 &&
+          Number.isFinite(entry[1])
+        ) {
+          scoreValues.push(entry[1]);
+        }
+      }
+    }
+    const selectedInbound = Array.from(
+      state.reverseRelated.get(selectedId)?.entries() || [],
+    ).slice(0, relatedLimit);
+    for (const entry of selectedInbound) {
+      if (
+        Array.isArray(entry) &&
+        entry.length === 2 &&
+        Number.isFinite(entry[1])
+      ) {
+        scoreValues.push(entry[1]);
+      }
+    }
+    const selectedLongRange = (state.longRangeById.get(selectedId) || []).slice(
+      0,
+      Math.min(relatedLimit, state.graphControls.longRangeTopK, 50),
+    );
+    for (const entry of selectedLongRange) {
+      if (entry && Number.isFinite(entry.score)) {
+        scoreValues.push(entry.score);
+      }
+    }
+    const initialDomain = computeScoreDomain(scoreValues);
+    const thresholdRaw = normalizedToRawScore(
+      state.graphControls.minScore,
+      initialDomain,
+    );
     const visitedDepth = new Map([[selectedId, 0]]);
     const queue = [{ id: selectedId, depth: 0 }];
     const edgeSet = new Set();
@@ -1022,6 +1979,12 @@
       const budget = Math.max(0, relatedLimit);
       let used = 0;
 
+      for (const [, score] of outbound.slice(0, budget)) {
+        scoreValues.push(score);
+      }
+      for (const [, score] of inbound.slice(0, budget)) {
+        scoreValues.push(score);
+      }
       for (const [dstId, score] of outbound) {
         if (used >= budget) {
           break;
@@ -1030,6 +1993,9 @@
           continue;
         }
         used += 1;
+        if (score < thresholdRaw) {
+          continue;
+        }
         pushNode(dstId, current.depth === 0 ? "outbound" : "expanded");
         const edgeKey = `${srcId}->${dstId}:out`;
         if (!edgeSet.has(edgeKey)) {
@@ -1059,6 +2025,9 @@
           continue;
         }
         used += 1;
+        if (score < thresholdRaw) {
+          continue;
+        }
         pushNode(dstId, current.depth === 0 ? "inbound" : "expanded");
         const edgeKey = `${dstId}->${srcId}:in`;
         if (!edgeSet.has(edgeKey)) {
@@ -1082,9 +2051,21 @@
     }
 
     if (els.showLongRange.checked) {
-      const longRange = state.longRangeById.get(selectedId) || [];
-      const longRangeLimit = Math.min(relatedLimit, 50);
+      const longRange = (state.longRangeById.get(selectedId) || [])
+        .filter((entry) => Number.isFinite(entry.score))
+        .sort((a, b) => b.score - a.score);
+      const longRangeLimit = Math.min(
+        relatedLimit,
+        50,
+        state.graphControls.longRangeTopK,
+      );
       for (const entry of longRange.slice(0, longRangeLimit)) {
+        scoreValues.push(entry.score);
+      }
+      for (const entry of longRange.slice(0, longRangeLimit)) {
+        if (entry.score < thresholdRaw) {
+          continue;
+        }
         pushNode(entry.other, "long_range");
         links.push({
           source: selectedId,
@@ -1106,10 +2087,25 @@
       (l) => allowed.has(l.source) && allowed.has(l.target),
     );
 
-    return { nodes, links: filteredLinks };
+    const scoreDomain = computeScoreDomain(scoreValues);
+    const thresholdRawFinal = normalizedToRawScore(
+      state.graphControls.minScore,
+      scoreDomain,
+    );
+    return {
+      nodes,
+      links: filteredLinks,
+      scoreValues,
+      scoreDomain,
+      thresholdRaw: thresholdRawFinal,
+    };
   }
 
   function renderGraphEmpty(message) {
+    if (els.graphSubtitle) {
+      els.graphSubtitle.textContent = "No graph data";
+    }
+    renderScoreHistogram([], 0, null);
     els.graphRoot.innerHTML = `<div class="graph-empty">${message}</div>`;
   }
 
@@ -1142,7 +2138,6 @@
         <span>related: ${relatedCount}</span>
         <span>commits: ${commitText}</span>
         <span>times: ${timeText}</span>
-        <span>${isPinned ? "pinned (right-click node to unpin)" : "right-click to pin"}</span>
       </div>
     `;
   }
