@@ -24,22 +24,36 @@ Contents
 
 Quick start (developer)
 -----------------------
-Clone and build; the project bundles the MiniLM embedder so you can run locally:
+Clone and build:
 
 ```bash
 # Clone and build
-git clone https://github.com/your-org/spectral-memory-graph.git
-cd spectral-memory-graph/rust-version
+git clone https://github.com/mrorigo/spectral-cortex.git
+cd spectral-cortex
 cargo build --release
 ```
 
-Install from this repository:
+Install from this repository (single binary with CLI + MCP subcommand):
 
 ```bash
 cargo install --path crates/spectral-cortex-cli --force
 ```
 
-On macOS, install also provisions Torch runtime dylibs under `~/.cargo/bin/libtorch` so the installed binary can run directly.
+On macOS, build/install copies Torch runtime dylibs to a sibling `libtorch/` directory and embeds an rpath to `@executable_path/libtorch`.
+
+- `cargo install ...` installs:
+  - `~/.cargo/bin/spectral-cortex`
+  - `~/.cargo/bin/libtorch/*.dylib`
+- local `cargo build` places dylibs under:
+  - `target/<profile>/libtorch/*.dylib`
+
+Run with:
+
+```bash
+spectral-cortex --help
+```
+
+If you move/copy the binary manually on macOS, keep `libtorch/` beside it (same directory level) so dylib loading continues to work.
 
 Ingest a repository and build the SMG (recommended CLI flow):
 
@@ -158,22 +172,35 @@ Why this is suited to agents
 
 CLI reference (important flags)
 -------------------------------
-The CLI binary `spectral-cortex` exposes three primary flows: `ingest`, `update`, and `query`.
+The `spectral-cortex` binary exposes: `ingest`, `update`, `query`, `note`, and `mcp`.
 
 Ingest (collect commits -> SMG):
 ```bash
-cargo run -p spectral-cortex --features git2-backend -- ingest --repo /path/to/repo --out smg.json
+cargo run -p spectral-cortex --release -- ingest --repo /path/to/repo --out smg.json
 ```
 
 Update (incremental append ingest; only new commits are embedded):
 ```bash
-cargo run -p spectral-cortex --features git2-backend -- \
+cargo run -p spectral-cortex --release -- \
   update --repo /path/to/repo --out smg.json --git-filter-preset git-noise
 ```
 
 Query (default, temporal enabled):
 ```bash
-cargo run -p spectral-cortex -- query --query "refactor" --smg smg.json --json --top-k 10
+cargo run -p spectral-cortex --release -- \
+  query --query "refactor" --smg smg.json --json --top-k 10
+```
+
+Inspect one note:
+```bash
+cargo run -p spectral-cortex --release -- \
+  note --smg smg.json --note-id 42 --json
+```
+
+Run MCP server with preloaded SMG:
+```bash
+cargo run -p spectral-cortex --release -- \
+  mcp --smg smg.json
 ```
 
 Key query flags (agent-friendly):
@@ -189,6 +216,9 @@ Key ingest/update filtering flags:
 - `--git-filter-preset git-noise`: drop common metadata lines (e.g. `Co-authored-by`, `Signed-off-by`).
 - `--git-filter-drop <regex>`: repeatable custom line-drop regex.
 - `--git-filter-case-insensitive`: case-insensitive regex matching.
+- `--git-commit-split-mode <off|auto|strict>`: split multi-change commit messages into multiple notes.
+- `--git-commit-split-max-segments <n>`: cap segments per commit.
+- `--git-commit-split-min-confidence <0..1>`: confidence threshold for `auto`.
 
 Git hook automation (post-commit)
 ---------------------------------
@@ -226,6 +256,10 @@ Notes:
 - `--no-temporal` disables temporal scoring when you need canonical, time-agnostic retrieval.
 - `--min-score` is applied to `final_score`, so agent clients can filter noisy candidates consistently.
 
+Build behavior
+--------------
+`ingest` and `update` always rebuild spectral structures after ingesting turns.
+
 Library API & data model
 ------------------------
 Use the library if you embed the SMG directly inside an agent process.
@@ -258,6 +292,10 @@ Primary types:
     - `source_commit_ids: Vec<Option<String>>`
     - `source_timestamps: Vec<u64>`
     - `related_note_links: Vec<(u32, f32)>`
+
+Persistence format
+------------------
+The JSON format is strict and versioned (`metadata.format_version = "spectral-cortex-2"`).
 
 Persistence
 -----------
