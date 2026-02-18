@@ -13,7 +13,7 @@ Spectral Cortex turns commit history into a graph of semantically related notes.
 3. It can split multi-change commit messages into multiple note segments.
 4. It embeds each segment.
 5. It builds spectral structures and long-range links.
-6. It saves results to SMG JSON (`format_version: spectral-cortex-2`).
+6. It saves results to SMG JSON (`format_version: spectral-cortex-v1`).
 7. It supports query and note inspection from saved SMG files.
 
 ## Core Concepts
@@ -41,17 +41,33 @@ Spectral Cortex turns commit history into a graph of semantically related notes.
 
 ## Install and Build
 
-From repo root:
+From repo root, recommended:
+
+```bash
+cargo build --release
+```
+
+This builds all workspace members (`spectral-cortex-lib` and CLI).
+
+If you only want the CLI binary:
 
 ```bash
 cargo build --release -p spectral-cortex
 ```
 
-Binary path:
+Binary path (both commands):
 
 ```bash
 ./target/release/spectral-cortex
 ```
+
+Install just the CLI binary from this repo:
+
+```bash
+cargo install --path crates/spectral-cortex-cli --force
+```
+
+On macOS, install/build also places required Torch dylibs in a sibling `libtorch/` directory so the binary can load `libtorch_cpu.dylib` at runtime.
 
 ## Command Overview
 
@@ -78,6 +94,7 @@ Run MCP server over stdio using a preloaded graph:
 Options:
 
 1. `--smg <PATH>`: path to SMG JSON file to preload once at startup.
+2. `--smd <PATH>`: alias for `--smg`.
 
 MCP tool inputs (no `smg_path` required because graph is preloaded):
 
@@ -273,15 +290,18 @@ Update-specific notes:
 
 `--time-start <RFC3339>`
 
-1. Filter out notes earlier than this.
+1. Parsed for future query-time filtering support.
+2. Currently not applied to retrieval results.
 
 `--time-end <RFC3339>`
 
-1. Filter out notes later than this.
+1. Parsed for future query-time filtering support.
+2. Currently not applied to retrieval results.
 
 `--time-window-days <FLOAT>`
 
-1. Alternative rolling window filter.
+1. Parsed for future query-time filtering support.
+2. Currently not applied to retrieval results.
 
 `--workers <N>`
 
@@ -328,7 +348,7 @@ Options:
 
 Current format is strict and versioned:
 
-1. `metadata.format_version` must be `spectral-cortex-2`.
+1. `metadata.format_version` must be `spectral-cortex-v1`.
 2. Legacy formats are rejected.
 
 `notes[*]` includes:
@@ -512,6 +532,6 @@ smg.build_spectral_structure_with_config(None, &config)?;
 
 ## Compatibility and Stability Notes
 
-1. JSON format is strict (`spectral-cortex-2`).
+1. JSON format is strict (`spectral-cortex-v1`).
 2. `related_note_links` is the canonical per-note adjacency representation.
 3. `related_note_ids` has been removed from graph storage/output.

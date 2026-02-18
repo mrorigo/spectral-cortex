@@ -203,6 +203,8 @@ cargo run -p spectral-cortex --release -- \
   mcp --smg smg.json
 ```
 
+`mcp` also accepts `--smd` as an alias for `--smg`.
+
 Key query flags (agent-friendly):
 - `--top-k <n>`: how many final results to return (default 5).
 - `--candidate-k <n>`: how many candidates to retrieve from vector search before filtering (defaults to `top_k * 5`).
@@ -295,7 +297,7 @@ Primary types:
 
 Persistence format
 ------------------
-The JSON format is strict and versioned (`metadata.format_version = "spectral-cortex-2"`).
+The JSON format is strict and versioned (`metadata.format_version = "spectral-cortex-v1"`).
 
 Persistence
 -----------
@@ -313,7 +315,7 @@ The persisted structure stores notes in stable sorted order, optional cluster la
 
 Extensibility & agent hooks
 ---------------------------
-- Retrieval diagnostics: JSON output includes `raw_score`, `temporal_score`, `final_score`, `timestamp`, `commit_id` and `cluster_label` where available. Agents can use these fields to select evidence and explainability info for prompts.
+- Retrieval diagnostics: query JSON includes per-result `score`, `turn_id`, `note_id`, `related_notes`, and where available `commit_id` and `cluster_label`. Top-level JSON includes `temporal` settings used for the query.
 - Re-ranking: you can override the default re-ranker by calling `re_rank_with_temporal` with a custom `TemporalConfig` (weight, half-life, mode).
 - Incremental ingestion: `ingest_turn` appends turns — you can build an ingestion pipeline that streams new commits into a long-running agent process.
 - Feedback loop: collect agent judgments (useful/not useful) in a separate store and use those signals to adjust `temporal_weight` or to implement a learned ranker later.
