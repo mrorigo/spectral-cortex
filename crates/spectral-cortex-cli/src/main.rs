@@ -287,7 +287,7 @@ struct NoteArgs {
 #[derive(Args, Debug)]
 struct McpArgs {
     /// Path to the SMG JSON file to preload and serve.
-    #[arg(short = 's', long = "smg", alias = "smd", value_name = "PATH")]
+    #[arg(short = 's', long = "smg", value_name = "PATH")]
     smg: PathBuf,
 }
 

@@ -93,8 +93,7 @@ Run MCP server over stdio using a preloaded graph:
 
 Options:
 
-1. `--smg <PATH>`: path to SMG JSON file to preload once at startup.
-2. `--smd <PATH>`: alias for `--smg`.
+- `--smg <PATH>`: path to SMG JSON file to preload once at startup.
 
 MCP tool inputs (no `smg_path` required because graph is preloaded):
 
