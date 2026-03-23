@@ -71,7 +71,7 @@
     noteList: document.getElementById("note-list"),
     graphRoot: document.getElementById("graph-root"),
     selectedNoteMeta: document.getElementById("selected-note-meta"),
-    contextInput: document.getElementById("context-input"),
+    // Removed contextInput as it's now redundant
     rawInput: document.getElementById("raw-input"),
     relatedInput: document.getElementById("related-input"),
     readonlyMeta: document.getElementById("readonly-meta"),
@@ -480,16 +480,18 @@
     if (query) {
       filtered = notes.filter((note) => {
         const noteId = String(note.note_id ?? "").toLowerCase();
-        const context = String(note.context ?? "").toLowerCase();
         const raw = String(note.raw_content ?? "").toLowerCase();
         const commits = Array.isArray(note.source_commit_ids)
           ? note.source_commit_ids.join(" ").toLowerCase()
           : "";
+        const symbol = String(note.symbol_id ?? "").toLowerCase();
+        const fileMatch = String(note.file_path ?? "").toLowerCase();
         return (
           noteId.includes(query) ||
-          context.includes(query) ||
           raw.includes(query) ||
-          commits.includes(query)
+          commits.includes(query) ||
+          symbol.includes(query) ||
+          fileMatch.includes(query)
         );
       });
     }
@@ -552,7 +554,7 @@
       const snippet = document.createElement("span");
       snippet.className = "note-snippet";
       snippet.textContent = summarize(
-        note.context || note.raw_content || "",
+        note.raw_content || "",
         90,
       );
 
@@ -576,7 +578,6 @@
     setEditorEnabled(true);
 
     els.selectedNoteMeta.textContent = `note_id=${note.note_id}`;
-    els.contextInput.value = String(note.context ?? "");
     els.rawInput.value = String(note.raw_content ?? "");
     els.relatedInput.value = Array.isArray(note.related_note_links)
       ? note.related_note_links
@@ -602,6 +603,9 @@
 
     els.readonlyMeta.innerHTML = "";
     for (const [key, value] of [
+      ["Symbol ID", note.symbol_id || "none"],
+      ["Node Type", note.ast_node_type || "none"],
+      ["File Path", note.file_path || "none"],
       ["Embedding Dim", String(embedDim)],
       ["Norm", String(note.norm ?? "n/a")],
       ["Source Turns", String(sourceTurns)],
@@ -620,7 +624,6 @@
   }
 
   function setEditorEnabled(enabled) {
-    els.contextInput.disabled = !enabled;
     els.rawInput.disabled = !enabled;
     els.relatedInput.disabled = !enabled;
     els.applyBtn.disabled = !enabled;
@@ -649,7 +652,6 @@
       }
     }
 
-    note.context = els.contextInput.value;
     note.raw_content = els.rawInput.value;
     note.related_note_links = existing;
 
@@ -2168,13 +2170,18 @@
       sourceCommits.length > 0 ? summarizeList(sourceCommits, 3) : "none";
     const timeText =
       sourceTimes.length > 0 ? summarizeList(sourceTimes, 2) : "none";
+    const symText = note.symbol_id ? summarize(note.symbol_id, 32) : "none";
+    const fileText = note.file_path ? summarize(note.file_path, 32) : "none";
     return `
       <div class="hover-title">#${note.note_id} <span class="hover-kind">${kind}</span></div>
-      <p class="hover-snippet">${summarize(note.context || note.raw_content || "", 160)}</p>
+      <p class="hover-snippet">${summarize(note.raw_content || "", 160)}</p>
+      <div class="hover-meta">
+        <span>file: ${fileText}</span>
+        <span>symbol: ${symText}</span>
+      </div>
       <div class="hover-meta">
         <span>related: ${relatedCount}</span>
         <span>commits: ${commitText}</span>
-        <span>times: ${timeText}</span>
       </div>
     `;
   }
