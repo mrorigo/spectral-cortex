@@ -539,6 +539,11 @@ textarea {
     font-size: 0.83rem;
 }
 
+.meta-cell.full-width {
+    grid-column: 1 / -1;
+    word-break: break-all;
+}
+
 .meta-key {
     display: block;
     font-size: 0.72rem;

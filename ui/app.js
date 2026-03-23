@@ -602,10 +602,10 @@
     const embedDim = Array.isArray(note.embedding) ? note.embedding.length : 0;
 
     els.readonlyMeta.innerHTML = "";
-    for (const [key, value] of [
-      ["Symbol ID", note.symbol_id || "none"],
-      ["Node Type", note.ast_node_type || "none"],
-      ["File Path", note.file_path || "none"],
+    for (const [key, value, fullWidth] of [
+      ["Symbol ID", note.symbol_id || "none", true],
+      ["Node Type", note.ast_node_type || "none", true],
+      ["File Path", note.file_path || "none", true],
       ["Embedding Dim", String(embedDim)],
       ["Norm", String(note.norm ?? "n/a")],
       ["Source Turns", String(sourceTurns)],
@@ -618,6 +618,9 @@
     ]) {
       const cell = document.createElement("div");
       cell.className = "meta-cell";
+      if (fullWidth) {
+        cell.classList.add("full-width");
+      }
       cell.innerHTML = `<span class="meta-key">${key}</span>${value}`;
       els.readonlyMeta.appendChild(cell);
     }
