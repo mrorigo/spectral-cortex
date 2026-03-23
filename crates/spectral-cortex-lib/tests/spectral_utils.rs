@@ -23,6 +23,9 @@ fn test_assemble_and_cosine() {
             source_timestamps: vec![],
             spectral_coords: None,
             related_note_links: vec![],
+            symbol_id: None,
+            ast_node_type: None,
+            structural_links: vec![],
         },
     );
     notes.insert(
@@ -38,6 +41,9 @@ fn test_assemble_and_cosine() {
             source_timestamps: vec![],
             spectral_coords: None,
             related_note_links: vec![],
+            symbol_id: None,
+            ast_node_type: None,
+            structural_links: vec![],
         },
     );
 

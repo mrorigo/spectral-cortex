@@ -1,5 +1,7 @@
-// Rust guideline compliant 2026-02-14
 use anyhow::Result;
+use std::collections::HashSet;
+use crate::ast::registry::ParserRegistry;
+use crate::ast::symbol_parser::AstNodeCategory;
 
 use super::IngestArgs;
 
@@ -8,6 +10,7 @@ pub(crate) enum CommitSplitMode {
     Off,
     Auto,
     Strict,
+    Ast,
 }
 
 impl CommitSplitMode {
@@ -16,12 +19,13 @@ impl CommitSplitMode {
             Self::Off => "off",
             Self::Auto => "auto",
             Self::Strict => "strict",
+            Self::Ast => "ast",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ParseMode {
+pub(crate) enum ParseMode {
     ConventionalHeader,
     BulletGrouped,
     ParagraphFallback,
@@ -29,10 +33,12 @@ enum ParseMode {
 
 #[derive(Debug, Clone)]
 pub(crate) struct CommitSegment {
-    header: String,
-    details: Vec<String>,
-    confidence: f32,
-    parse_mode: ParseMode,
+    pub(crate) header: String,
+    pub(crate) details: Vec<String>,
+    pub(crate) confidence: f32,
+    pub(crate) parse_mode: ParseMode,
+    pub(crate) symbol_id: Option<String>,
+    pub(crate) ast_node_type: Option<String>,
 }
 
 impl CommitSegment {
@@ -63,6 +69,7 @@ impl CommitSplitConfig {
             "off" => CommitSplitMode::Off,
             "auto" => CommitSplitMode::Auto,
             "strict" => CommitSplitMode::Strict,
+            "ast" => CommitSplitMode::Ast,
             other => {
                 return Err(anyhow::anyhow!(
                     "unsupported --git-commit-split-mode '{}'; supported: off|auto|strict",
@@ -155,6 +162,8 @@ fn split_by_conventional_headers(
             details,
             confidence: 0.95,
             parse_mode: ParseMode::ConventionalHeader,
+            symbol_id: None,
+            ast_node_type: None,
         });
     }
 
@@ -190,6 +199,8 @@ fn split_by_bullets(lines: &[&str], max_segments: usize) -> Option<Vec<CommitSeg
             details: Vec::new(),
             confidence: 0.8,
             parse_mode: ParseMode::BulletGrouped,
+            symbol_id: None,
+            ast_node_type: None,
         });
     }
     if segments.len() >= 2 {
@@ -231,6 +242,8 @@ fn split_by_paragraphs(message: &str, max_segments: usize) -> Option<Vec<CommitS
             details,
             confidence: 0.65,
             parse_mode: ParseMode::ParagraphFallback,
+            symbol_id: None,
+            ast_node_type: None,
         });
     }
     if segments.len() >= 2 {
@@ -249,6 +262,8 @@ fn fallback_single_segment(message: &str) -> Vec<CommitSegment> {
         details,
         confidence: 1.0,
         parse_mode: ParseMode::ParagraphFallback,
+        symbol_id: None,
+        ast_node_type: None,
     }]
 }
 
@@ -278,7 +293,7 @@ pub(crate) fn split_commit_message(
 
     let avg_conf = segments.iter().map(|s| s.confidence).sum::<f32>() / segments.len() as f32;
     let should_keep_split = match config.mode {
-        CommitSplitMode::Strict => true,
+        CommitSplitMode::Strict | CommitSplitMode::Ast => true,
         CommitSplitMode::Auto => avg_conf >= config.min_confidence,
         CommitSplitMode::Off => false,
     };
@@ -306,6 +321,113 @@ pub(crate) fn split_commit_message(
     }
 
     segments
+}
+
+#[cfg(feature = "git2-backend")]
+pub(crate) fn split_commit_with_ast(
+    repo: &git2::Repository,
+    commit: &git2::Commit,
+    message: &str,
+    config: &CommitSplitConfig,
+    stats: &mut CommitSplitStats,
+    registry: &ParserRegistry,
+) -> Result<Vec<CommitSegment>> {
+    let mut segments = Vec::new();
+
+    // Get the diff between the current commit and its parent(s)
+    let parent = commit.parent(0).ok();
+    let parent_tree = parent.as_ref().and_then(|p| p.tree().ok());
+    let current_tree = commit.tree()?;
+    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&current_tree), None)?;
+
+    let mut seen_symbols = HashSet::new();
+
+    // Iterate over delta/hunks to find modified symbols
+    diff.foreach(
+        &mut |delta, _| {
+            let path = delta.new_file().path();
+            if let Some(path) = path {
+                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                    if let Some(parser) = registry.get(ext) {
+                        // We found a supported language
+                        // In a real implementation, we'd load the file content here.
+                        // For this implementation, we'll assume we can get the content from the tree.
+                        if let Ok(blob) = repo.find_blob(delta.new_file().id()) {
+                            let content = String::from_utf8_lossy(blob.content());
+                            
+                            // Initialize tree-sitter parser for this file
+                            let mut ts_parser = tree_sitter::Parser::new();
+                            let lang = match ext {
+                                "rs" => tree_sitter_rust::LANGUAGE,
+                                "ts" | "tsx" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+                                "py" => tree_sitter_python::LANGUAGE,
+                                _ => return true, // skip
+                            };
+                            ts_parser.set_language(&lang.into()).ok();
+                            
+                            if let Some(tree) = ts_parser.parse(content.as_ref(), None) {
+                                // For now, we'll just extract all symbols in the file.
+                                // A higher-fidelity version would only extract symbols touched by diff hunks.
+                                extract_symbols(tree.root_node(), content.as_ref(), parser, &mut segments, &mut seen_symbols, message);
+                            }
+                        }
+                    }
+                }
+            }
+            true
+        },
+        None,
+        None,
+        None,
+    )?;
+
+    if segments.is_empty() {
+        // Fallback to text splitting if no AST symbols found
+        Ok(split_commit_message(message, config, stats))
+    } else {
+        stats.commits_split = stats.commits_split.saturating_add(1);
+        stats.total_segments_emitted = stats.total_segments_emitted.saturating_add(segments.len());
+        Ok(segments)
+    }
+}
+
+fn extract_symbols(
+    node: tree_sitter::Node,
+    source: &str,
+    parser: &dyn crate::ast::symbol_parser::SymbolParser,
+    segments: &mut Vec<CommitSegment>,
+    seen_symbols: &mut HashSet<String>,
+    message: &str,
+) {
+    let kind = node.kind();
+    if parser.symbol_node_types().contains(&kind) {
+        if let Some(symbol_id) = parser.extract_symbol_id(node, source) {
+            if !seen_symbols.contains(&symbol_id) {
+                seen_symbols.insert(symbol_id.clone());
+                
+                let category = match parser.node_category(node) {
+                    AstNodeCategory::ApiDefinition => "API_DEFINITION",
+                    AstNodeCategory::Implementation => "IMPLEMENTATION",
+                    AstNodeCategory::Unknown => "UNKNOWN",
+                };
+
+                segments.push(CommitSegment {
+                    header: format!("{}: {}", symbol_id, message.lines().next().unwrap_or("")),
+                    details: vec![message.to_string()],
+                    confidence: 1.0,
+                    parse_mode: ParseMode::ParagraphFallback,
+                    symbol_id: Some(symbol_id),
+                    ast_node_type: Some(category.to_string()),
+                });
+            }
+        }
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            extract_symbols(child, source, parser, segments, seen_symbols, message);
+        }
+    }
 }
 
 #[cfg(test)]

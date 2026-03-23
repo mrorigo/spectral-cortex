@@ -35,6 +35,7 @@ use spectral_cortex::embed;
 
 mod git_commit_split;
 mod mcp_server;
+pub mod ast;
 
 use crate::git_commit_split::{split_commit_message, CommitSplitConfig, CommitSplitStats};
 use crate::mcp_server::run_mcp_server;
@@ -207,8 +208,8 @@ struct QueryArgs {
     candidate_k: Option<usize>,
 
     /// Minimum score threshold (inclusive). Results with score < min_score are filtered out.
-    /// Default: 0.7
-    #[arg(long, default_value_t = 0.7)]
+    /// Default: 0.6
+    #[arg(long, default_value_t = 0.6)]
     min_score: f32,
 
     /// Disable temporal re-ranking for this query (temporal is enabled by default).
@@ -358,9 +359,10 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
 
     let git_filters = GitFilterConfig::from_ingest_args(&args)?;
     let split_config = CommitSplitConfig::from_ingest_args(&args)?;
+    let registry = crate::ast::registry::ParserRegistry::new();
 
     // Collect commits into conversation turns.
-    let collected = collect_commits(&args.repo, args.max_commits, &git_filters, &split_config)
+    let collected = collect_commits(&args.repo, args.max_commits, &git_filters, &split_config, &registry)
         .with_context(|| format!("collecting commits from {}", args.repo.display()))?;
     let mut turns = collected.turns;
 
@@ -416,8 +418,11 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
             .as_ref()
             .expect("--out required when using --append/--incremental");
         if outp.exists() {
-            println!("Loading existing SMG from {}", outp.display());
-            load_smg_json(outp).with_context(|| format!("loading SMG from {}", outp.display()))?
+            let start_load = Instant::now();
+            println!("Loading existing SMG from {}...", outp.display());
+            let smg = load_smg_json(outp).with_context(|| format!("loading JSON SMG from {}", outp.display()))?;
+            println!("Loaded SMG from {} in {:?}", outp.display(), start_load.elapsed());
+            smg
         } else {
             println!(
                 "Output path {} does not exist, creating new SMG.",
@@ -504,6 +509,12 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     smg.ingest_turns_batch(&turns, Some(progress_cb))
         .with_context(|| "batch embedding turns")?;
 
+    // Post-ingestion: populate structural links based on symbol_id.
+    // notes where symbol_id is present are grouped, and we create links
+    // between implementation notes and their corresponding API_DEFINITION if they share the name,
+    // or simply link all notes with the same symbol_id.
+    smg.resolve_structural_links();
+
     ingest_bar.finish_with_message(format!("Ingested {} turns into the SMG.", smg.notes.len()));
 
     // Always rebuild spectral structures with progress bar.
@@ -531,8 +542,10 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
 
     // Optionally persist to JSON.
     if let Some(outp) = args.out {
+        let start_ser = Instant::now();
+        println!("Serializing SMG to {}...", outp.display());
         save_smg_json(&smg, &outp).with_context(|| format!("saving SMG to {}", outp.display()))?;
-        println!("Saved SMG to {}", outp.display());
+        println!("Saved SMG to {} in {:?}", outp.display(), start_ser.elapsed());
     }
 
     // Summary output: number of notes and some cluster info if present.
@@ -561,14 +574,15 @@ struct GitFilterStats {
     total_chars_after: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct GitFilterConfig {
     drop_patterns: Vec<Regex>,
+    html_comment_regex: Regex,
 }
 
 impl GitFilterConfig {
     fn enabled(&self) -> bool {
-        !self.drop_patterns.is_empty()
+        true // Always enabled now for HTML stripping
     }
 
     fn from_ingest_args(args: &IngestArgs) -> Result<Self> {
@@ -605,7 +619,13 @@ impl GitFilterConfig {
             drop_patterns.push(rx);
         }
 
-        Ok(Self { drop_patterns })
+        let html_comment_regex =
+            Regex::new(r"(?s)<!--.*?-->").expect("valid HTML comment regex");
+
+        Ok(Self {
+            drop_patterns,
+            html_comment_regex,
+        })
     }
 }
 
@@ -623,12 +643,15 @@ fn apply_git_line_filters(
     stats.total_commits_seen = stats.total_commits_seen.saturating_add(1);
     stats.total_chars_before = stats.total_chars_before.saturating_add(message.len());
 
+    // 1. Strip HTML comments (multi-line aware)
+    let message = filters.html_comment_regex.replace_all(message, "");
+
     if message.trim().is_empty() {
         stats.commits_skipped_empty = stats.commits_skipped_empty.saturating_add(1);
         return None;
     }
 
-    if !filters.enabled() {
+    if filters.drop_patterns.is_empty() {
         stats.commits_kept = stats.commits_kept.saturating_add(1);
         stats.total_chars_after = stats.total_chars_after.saturating_add(message.len());
         return Some(message.to_string());
@@ -1095,6 +1118,7 @@ fn collect_commits(
     max_commits: Option<usize>,
     filters: &GitFilterConfig,
     split_config: &CommitSplitConfig,
+    registry: &crate::ast::registry::ParserRegistry,
 ) -> Result<CollectCommitsOutput> {
     // The implementation uses git2 when compiled with the feature; otherwise, fail-fast.
     #[cfg(feature = "git2-backend")]
@@ -1114,6 +1138,23 @@ fn collect_commits(
         let mut filter_stats = GitFilterStats::default();
         let mut split_stats = CommitSplitStats::default();
         let mut idx: u64 = 1;
+
+        let pb = if let Some(limit) = max_commits {
+            let p = ProgressBar::new(limit as u64);
+            p.set_style(ProgressStyle::default_bar()
+                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+                .unwrap()
+                .progress_chars("#>-"));
+            p
+        } else {
+            let p = ProgressBar::new_spinner();
+            p.set_style(ProgressStyle::default_spinner()
+                .template("{spinner:.green} [{elapsed_precise}] {pos} {msg}")
+                .unwrap());
+            p
+        };
+        
+        pb.set_message("Scanning commits...");
 
         for (i, oid_result) in revwalk.enumerate() {
             if let Some(limit) = max_commits {
@@ -1139,7 +1180,13 @@ fn collect_commits(
             let timestamp = time.seconds() as u64;
 
             let commit_id = oid.to_string();
-            let segments = split_commit_message(&filtered_content, split_config, &mut split_stats);
+            pb.set_message(format!("Commit {}", &commit_id[..8]));
+            
+            let segments = if split_config.mode == crate::git_commit_split::CommitSplitMode::Ast {
+                crate::git_commit_split::split_commit_with_ast(&repo, &commit, &filtered_content, split_config, &mut split_stats, registry)?
+            } else {
+                split_commit_message(&filtered_content, split_config, &mut split_stats)
+            };
 
             for segment in segments {
                 // Construct ConversationTurn. The library expects turn_id:u64 and fields per README.
@@ -1152,12 +1199,16 @@ fn collect_commits(
                     // Record the originating commit id (hex) for easy lookup from query results.
                     commit_id: Some(commit_id.clone()),
                     timestamp,
+                    symbol_id: segment.symbol_id.clone(),
+                    ast_node_type: segment.ast_node_type.clone(),
                 };
 
                 turns.push(turn);
                 idx = idx.saturating_add(1);
             }
+            pb.inc(1);
         }
+        pb.finish_with_message("Ingestion scan complete");
 
         Ok(CollectCommitsOutput {
             turns,
@@ -1169,5 +1220,37 @@ fn collect_commits(
     #[cfg(not(feature = "git2-backend"))]
     {
         bail!("git2 backend feature is not enabled. Rebuild the CLI with '--features git2-backend' or enable the default features.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use regex::Regex;
+
+    #[test]
+    fn test_strip_html_comments() {
+        let message = "Summary <!-- comment --> and more";
+        let filters = GitFilterConfig {
+            drop_patterns: vec![],
+            html_comment_regex: Regex::new(r"(?s)<!--.*?-->").unwrap(),
+        };
+        let mut stats = GitFilterStats::default();
+        let stripped = apply_git_line_filters(message, &filters, &mut stats).unwrap();
+        assert_eq!(stripped.trim(), "Summary  and more");
+    }
+
+    #[test]
+    fn test_strip_multiline_html_comments() {
+        let message = "Start\n<!--\nmultiline\ncomment\n-->\nEnd";
+        let filters = GitFilterConfig {
+            drop_patterns: vec![],
+            html_comment_regex: Regex::new(r"(?s)<!--.*?-->").unwrap(),
+        };
+        let mut stats = GitFilterStats::default();
+        let stripped = apply_git_line_filters(message, &filters, &mut stats).unwrap();
+        assert!(stripped.contains("Start"));
+        assert!(stripped.contains("End"));
+        assert!(!stripped.contains("multiline"));
     }
 }

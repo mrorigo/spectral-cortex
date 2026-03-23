@@ -30,7 +30,7 @@ use std::fmt::Debug;
 
 mod hermitian;
 
-pub use hermitian::Hermitian;
+pub use hermitian::{Hermitian, SparseNormalizedLaplacian};
 use nalgebra::{ComplexField, DMatrix, DVector, Dyn, SymmetricEigen};
 
 #[derive(Copy, Clone)]

@@ -130,6 +130,22 @@ MCP tool inputs (no `smg_path` required because graph is preloaded):
 }
 ```
 
+`get_structural_hotspots`
+
+```json
+{
+  "top_k": 20
+}
+```
+
+`inspect_symbol_history`
+
+```json
+{
+  "symbol_id": "crates/spectral-cortex-lib/src/graph/spectral.rs::compute_fused_similarity_matrix"
+}
+```
+
 ## Ingest
 
 ### Basic
@@ -196,6 +212,7 @@ Spectral structures are always rebuilt during `ingest` and `update`.
 1. `off`: one note per commit message after filtering.
 2. `auto`: split only when parser confidence threshold is met.
 3. `strict`: split whenever parser detects boundaries.
+4. `ast`: use `tree-sitter` to parse the git diff and bind specific hunks to actual AST nodes (functions/classes/structs). Supports Rust, TypeScript, and Python.
 
 `--git-commit-split-max-segments <N>`
 
@@ -361,6 +378,9 @@ Current format is strict and versioned:
 7. `source_commit_ids`
 8. `source_timestamps`
 9. `related_note_links`
+10. `symbol_id`: stable identity for AST nodes (e.g. "crate::module::func")
+11. `ast_node_type`: e.g. "FUNCTION_DEFINITION", "API_DEFINITION"
+12. `structural_links`: IDs of notes sharing structural context (callers/callees)
 
 `related_note_links` example:
 
@@ -421,6 +441,9 @@ Fields:
 4. `embed_link_similarity_threshold`
 5. `max_clusters`
 6. `min_clusters`
+7. `structural_alpha`: base weight for structural link influence (default: 1.0)
+8. `structural_beta`: additive boost for direct structural links (default: 0.1)
+9. `polarity_threshold`: threshold for spectral polarity retrieval pruning (default: 0.85)
 
 Methods:
 

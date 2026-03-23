@@ -1,0 +1,874 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta
+            name="description"
+            content="Spectral Cortex: geometry-first memory for coding agents. High-recall retrieval over Git history with zero LLM calls in memory construction."
+        />
+        <title>Spectral Cortex | Geometry-First Memory for Coding Agents</title>
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;600&display=swap"
+            rel="stylesheet"
+        />
+        <style>
+            :root {
+                --bg: #f6f2e9;
+                --bg-2: #efe8d9;
+                --ink: #132326;
+                --ink-soft: #415559;
+                --brand: #0d7f70;
+                --brand-2: #1d5f9d;
+                --accent: #ef6c4d;
+                --card: #fffaf1;
+                --line: #d8ccbb;
+                --shadow: 0 12px 40px rgba(20, 40, 36, 0.12);
+                --radius: 18px;
+                --maxw: 1120px;
+            }
+
+            * {
+                box-sizing: border-box;
+            }
+
+            body {
+                margin: 0;
+                font-family:
+                    "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+                background:
+                    radial-gradient(
+                        circle at 8% 12%,
+                        rgba(239, 108, 77, 0.2),
+                        transparent 34%
+                    ),
+                    radial-gradient(
+                        circle at 92% 8%,
+                        rgba(29, 95, 157, 0.16),
+                        transparent 32%
+                    ),
+                    linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+                color: var(--ink);
+                line-height: 1.5;
+                min-height: 100vh;
+            }
+
+            .mesh {
+                position: fixed;
+                inset: 0;
+                z-index: -1;
+                pointer-events: none;
+                background-image:
+                    linear-gradient(
+                        rgba(19, 35, 38, 0.045) 1px,
+                        transparent 1px
+                    ),
+                    linear-gradient(
+                        90deg,
+                        rgba(19, 35, 38, 0.045) 1px,
+                        transparent 1px
+                    );
+                background-size: 42px 42px;
+                mask-image: radial-gradient(
+                    circle at center,
+                    black 45%,
+                    transparent 92%
+                );
+                opacity: 0.4;
+            }
+
+            .container {
+                width: min(var(--maxw), 92vw);
+                margin: 0 auto;
+            }
+
+            header {
+                position: sticky;
+                top: 0;
+                backdrop-filter: blur(8px);
+                background: rgba(246, 242, 233, 0.84);
+                border-bottom: 1px solid rgba(216, 204, 187, 0.8);
+                z-index: 30;
+            }
+
+            .nav {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0.95rem 0;
+                gap: 1rem;
+            }
+
+            .brand {
+                display: flex;
+                align-items: center;
+                gap: 0.75rem;
+                text-decoration: none;
+                color: inherit;
+                font-weight: 700;
+                letter-spacing: 0.01em;
+            }
+
+            .logo {
+                width: 34px;
+                height: 34px;
+                border-radius: 10px;
+                background: conic-gradient(
+                    from 210deg,
+                    var(--brand),
+                    var(--brand-2),
+                    var(--accent),
+                    var(--brand)
+                );
+                box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.45);
+            }
+
+            .nav-links {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                flex-wrap: wrap;
+                font-size: 0.94rem;
+            }
+
+            .nav-links a {
+                text-decoration: none;
+                color: var(--ink-soft);
+                font-weight: 500;
+            }
+
+            .btn {
+                border: 1px solid transparent;
+                border-radius: 999px;
+                padding: 0.62rem 1.05rem;
+                text-decoration: none;
+                font-weight: 700;
+                display: inline-flex;
+                align-items: center;
+                gap: 0.45rem;
+                font-size: 0.92rem;
+                transition:
+                    transform 140ms ease,
+                    box-shadow 140ms ease,
+                    background 140ms ease;
+                cursor: pointer;
+            }
+
+            .btn:active {
+                transform: translateY(1px);
+            }
+
+            .btn-primary {
+                color: #f9fffe;
+                background: linear-gradient(
+                    135deg,
+                    var(--brand),
+                    var(--brand-2)
+                );
+                box-shadow: 0 8px 26px rgba(13, 127, 112, 0.28);
+            }
+
+            .btn-primary:hover {
+                box-shadow: 0 12px 30px rgba(13, 127, 112, 0.36);
+            }
+
+            .btn-ghost {
+                color: var(--ink);
+                background: rgba(255, 250, 241, 0.75);
+                border-color: var(--line);
+            }
+
+            .hero {
+                padding: 5.5rem 0 2.8rem;
+                display: grid;
+                gap: 2.2rem;
+                grid-template-columns: 1.15fr 0.85fr;
+                align-items: stretch;
+            }
+
+            .eyebrow {
+                display: inline-flex;
+                gap: 0.5rem;
+                align-items: center;
+                border: 1px solid var(--line);
+                border-radius: 999px;
+                padding: 0.3rem 0.68rem;
+                font-size: 0.78rem;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                color: var(--ink-soft);
+                background: rgba(255, 250, 241, 0.8);
+            }
+
+            h1 {
+                margin: 0.95rem 0 0.85rem;
+                font-family: "Fraunces", Georgia, serif;
+                font-size: clamp(2rem, 6vw, 4.2rem);
+                line-height: 1.04;
+                max-width: 18ch;
+            }
+
+            .lead {
+                margin: 0;
+                color: var(--ink-soft);
+                font-size: clamp(1rem, 1.7vw, 1.2rem);
+                max-width: 52ch;
+            }
+
+            .hero-actions {
+                margin-top: 1.4rem;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 0.7rem;
+            }
+
+            .stat-grid {
+                display: grid;
+                gap: 0.8rem;
+                grid-template-columns: repeat(2, minmax(120px, 1fr));
+                margin-top: 1.35rem;
+            }
+
+            .stat {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 14px;
+                padding: 0.85rem 0.95rem;
+                box-shadow: var(--shadow);
+            }
+
+            .stat b {
+                font-size: 1.35rem;
+                display: block;
+                line-height: 1;
+                margin-bottom: 0.25rem;
+            }
+
+            .panel {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: var(--radius);
+                box-shadow: var(--shadow);
+                padding: 1rem;
+                display: flex;
+                flex-direction: column;
+                gap: 0.85rem;
+            }
+
+            .panel h3 {
+                margin: 0;
+                font-size: 1rem;
+                letter-spacing: 0.02em;
+            }
+
+            .quick-panel {
+                position: relative;
+                overflow: hidden;
+                background:
+                    radial-gradient(
+                        circle at 0% 0%,
+                        rgba(13, 127, 112, 0.16),
+                        transparent 32%
+                    ),
+                    radial-gradient(
+                        circle at 100% 12%,
+                        rgba(29, 95, 157, 0.12),
+                        transparent 36%
+                    ),
+                    linear-gradient(170deg, #fffaf1 0%, #f6f2e9 100%);
+                border: 1px solid #cfbeaa;
+                padding: 1.1rem;
+                gap: 1rem;
+            }
+
+            .quick-panel::after {
+                content: "";
+                position: absolute;
+                inset: 0;
+                background: linear-gradient(
+                    120deg,
+                    transparent 0%,
+                    rgba(255, 255, 255, 0.25) 48%,
+                    transparent 100%
+                );
+                transform: translateX(-120%);
+                animation: sweep 7.5s linear infinite;
+                pointer-events: none;
+            }
+
+            .quick-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 0.6rem;
+                position: relative;
+                z-index: 1;
+            }
+
+            .quick-head-left {
+                display: flex;
+                align-items: center;
+                gap: 0.55rem;
+            }
+
+            .pulse-dot {
+                width: 11px;
+                height: 11px;
+                border-radius: 50%;
+                background: var(--brand);
+                box-shadow: 0 0 0 rgba(13, 127, 112, 0.45);
+                animation: pulse 1.8s infinite;
+            }
+
+            .quick-tag {
+                font-size: 0.74rem;
+                text-transform: uppercase;
+                letter-spacing: 0.08em;
+                border: 1px solid #c8bba8;
+                border-radius: 999px;
+                padding: 0.2rem 0.5rem;
+                color: #4f615f;
+                background: rgba(255, 250, 241, 0.86);
+            }
+
+            .quick-shell {
+                margin-top: 0.2rem;
+                z-index: 1;
+            }
+
+            .quick-orbit {
+                position: absolute;
+                right: -24px;
+                top: -26px;
+                width: 138px;
+                height: 138px;
+                pointer-events: none;
+                opacity: 0.75;
+                z-index: 0;
+            }
+
+            .orbit-ring {
+                position: absolute;
+                inset: 0;
+                border-radius: 50%;
+                border: 1px dashed rgba(19, 35, 38, 0.22);
+                animation: spin 18s linear infinite;
+            }
+
+            .orbit-ring::before,
+            .orbit-ring::after {
+                content: "";
+                position: absolute;
+                border-radius: 50%;
+                background: var(--accent);
+            }
+
+            .orbit-ring::before {
+                width: 8px;
+                height: 8px;
+                top: 10px;
+                left: 64px;
+            }
+
+            .orbit-ring::after {
+                width: 6px;
+                height: 6px;
+                right: 14px;
+                bottom: 33px;
+                background: var(--brand-2);
+            }
+
+            .quick-steps {
+                z-index: 1;
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 0.45rem;
+            }
+
+            .quick-step {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+                background: rgba(255, 255, 255, 0.64);
+                border: 1px solid #d7c9b5;
+                border-radius: 10px;
+                padding: 0.45rem 0.55rem;
+                font-size: 0.82rem;
+                color: #3f5357;
+            }
+
+            .quick-step b {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 1.4rem;
+                height: 1.4rem;
+                border-radius: 7px;
+                background: #17363a;
+                color: #eaf8f4;
+                font-size: 0.72rem;
+            }
+
+            .quick-note {
+                margin: 0;
+                z-index: 1;
+                color: var(--ink-soft);
+                font-size: 0.88rem;
+            }
+
+            @keyframes pulse {
+                0% {
+                    box-shadow: 0 0 0 0 rgba(13, 127, 112, 0.45);
+                }
+                70% {
+                    box-shadow: 0 0 0 10px rgba(13, 127, 112, 0);
+                }
+                100% {
+                    box-shadow: 0 0 0 0 rgba(13, 127, 112, 0);
+                }
+            }
+
+            @keyframes spin {
+                from {
+                    transform: rotate(0deg);
+                }
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            @keyframes sweep {
+                from {
+                    transform: translateX(-120%);
+                }
+                to {
+                    transform: translateX(120%);
+                }
+            }
+
+            pre {
+                margin: 0;
+                white-space: pre-wrap;
+                overflow-wrap: anywhere;
+                background: #1d2328;
+                color: #ebf7f4;
+                border-radius: 12px;
+                padding: 0.95rem;
+                font:
+                    0.82rem/1.45 "IBM Plex Mono",
+                    ui-monospace,
+                    monospace;
+                border: 1px solid #2e3a44;
+                position: relative;
+            }
+
+            .copy-btn {
+                position: absolute;
+                right: 0.6rem;
+                top: 0.6rem;
+                font:
+                    0.69rem "Space Grotesk",
+                    sans-serif;
+                background: rgba(19, 35, 38, 0.75);
+                color: #f5f7f8;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 999px;
+                padding: 0.26rem 0.58rem;
+                cursor: pointer;
+            }
+
+            section {
+                padding: 1.2rem 0 1.8rem;
+            }
+
+            h2 {
+                font-family: "Fraunces", Georgia, serif;
+                font-size: clamp(1.45rem, 3vw, 2.2rem);
+                margin: 0 0 0.75rem;
+                line-height: 1.2;
+            }
+
+            .sub {
+                color: var(--ink-soft);
+                margin: 0 0 1.25rem;
+                max-width: 72ch;
+            }
+
+            .feature-grid {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 0.9rem;
+            }
+
+            .feature {
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 16px;
+                padding: 1rem;
+                box-shadow: var(--shadow);
+            }
+
+            .feature h3 {
+                margin: 0 0 0.45rem;
+                font-size: 1.05rem;
+            }
+
+            .feature p {
+                margin: 0;
+                color: var(--ink-soft);
+                font-size: 0.95rem;
+            }
+
+            .dual {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 0.9rem;
+            }
+
+            .list {
+                margin: 0;
+                padding-left: 1rem;
+                color: var(--ink-soft);
+            }
+
+            .list li {
+                margin-bottom: 0.4rem;
+            }
+
+            .cta {
+                margin-top: 1.2rem;
+                background: linear-gradient(135deg, #fff7e8, #edf7f7);
+                border: 1px solid var(--line);
+                border-radius: 18px;
+                padding: 1.15rem;
+                box-shadow: var(--shadow);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 1rem;
+                flex-wrap: wrap;
+            }
+
+            footer {
+                padding: 1.4rem 0 2.2rem;
+                color: var(--ink-soft);
+                font-size: 0.9rem;
+            }
+
+            .reveal {
+                opacity: 0;
+                transform: translateY(18px);
+                transition:
+                    opacity 560ms ease,
+                    transform 560ms ease;
+            }
+
+            .reveal.visible {
+                opacity: 1;
+                transform: translateY(0);
+            }
+
+            @media (max-width: 980px) {
+                .hero {
+                    grid-template-columns: 1fr;
+                    padding-top: 4rem;
+                }
+                .feature-grid {
+                    grid-template-columns: 1fr 1fr;
+                }
+                .dual {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            @media (max-width: 700px) {
+                .nav {
+                    align-items: flex-start;
+                }
+                .nav-links {
+                    width: 100%;
+                }
+                .feature-grid {
+                    grid-template-columns: 1fr;
+                }
+                .stat-grid {
+                    grid-template-columns: 1fr 1fr;
+                }
+                .cta {
+                    align-items: flex-start;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <div class="mesh"></div>
+
+        <header>
+            <div class="container nav">
+                <a class="brand" href="#top" aria-label="Spectral Cortex home">
+                    <span class="logo" aria-hidden="true"></span>
+                    <span>Spectral Cortex</span>
+                </a>
+                <nav class="nav-links">
+                    <a href="#why">Why</a>
+                    <a href="#features">Features</a>
+                    <a href="#mcp">MCP</a>
+                    <a
+                        class="btn btn-primary"
+                        href="https://github.com/mrorigo/spectral-cortex"
+                        target="_blank"
+                        rel="noreferrer"
+                        >View on GitHub</a
+                    >
+                </nav>
+            </div>
+        </header>
+
+        <main id="top" class="container">
+            <section class="hero">
+                <div class="reveal">
+                    <span class="eyebrow"
+                        >Geometry-first memory • Rust • Agent-ready</span
+                    >
+                    <h1>
+                        Give your coding agent long-term memory that is fast,
+                        local, and explainable.
+                    </h1>
+                    <p class="lead">
+                        Spectral Cortex turns Git history into a spectral memory
+                        graph: high-recall retrieval, low latency, and no LLM
+                        calls during memory construction.
+                    </p>
+                    <div class="hero-actions">
+                        <a
+                            class="btn btn-primary"
+                            href="https://github.com/mrorigo/spectral-cortex"
+                            target="_blank"
+                            rel="noreferrer"
+                            >Open Repository</a
+                        >
+                        <a class="btn btn-ghost" href="#quickstart"
+                            >Quick Start</a
+                        >
+                    </div>
+                    <div class="stat-grid">
+                        <article class="stat">
+                            <b>81%</b> Retrieval recall benchmarked (vs 47% for
+                            LLMs).
+                        </article>
+                        <article class="stat">
+                            <b>49x</b> Faster retrieval vs an LLM-heavy
+                            baseline.
+                        </article>
+                        <article class="stat">
+                            <b>0</b> LLM calls in graph construction pipeline.
+                        </article>
+                        <article class="stat">
+                            <b>MCP</b> Native markdown-first server tools
+                            included.
+                        </article>
+                    </div>
+                </div>
+
+                <aside class="panel reveal quick-panel" id="quickstart">
+                    <div class="quick-orbit" aria-hidden="true">
+                        <div class="orbit-ring"></div>
+                    </div>
+                    <div class="quick-head">
+                        <div class="quick-head-left">
+                            <span class="pulse-dot" aria-hidden="true"></span>
+                            <h3>Launch Sequence</h3>
+                        </div>
+                        <span class="quick-tag">~58s setup</span>
+                    </div>
+                    <pre
+                        class="quick-shell"
+                    ><button class="copy-btn" data-copy>Copy</button>cargo install spectral-cortex
+spectral-cortex ingest --repo . --out smg.json --rebuild
+spectral-cortex query --query "mcp" --smg smg.json --json
+</pre>
+                    <div class="quick-steps">
+                        <div class="quick-step">
+                            <b>1</b
+                            ><span
+                                >Install the CLI and ingest repo history.</span
+                            >
+                        </div>
+                        <div class="quick-step">
+                            <b>2</b
+                            ><span
+                                >Build spectral structure for retrieval +
+                                links.</span
+                            >
+                        </div>
+                        <div class="quick-step">
+                            <b>3</b
+                            ><span
+                                >Run query or wire MCP tools for agents.</span
+                            >
+                        </div>
+                    </div>
+                    <p class="quick-note">
+                        Auto-pilot loop:
+                        <code
+                            >spectral-cortex update --repo . --out smg.json
+                            --rebuild --git-filter-preset git-noise</code
+                        >
+                    </p>
+                </aside>
+            </section>
+
+            <section id="why" class="reveal">
+                <h2>Built for real agent workflows, not demo retrieval.</h2>
+                <p class="sub">
+                    Most memory systems summarize with LLMs and lose fidelity.
+                    Spectral Cortex keeps structure in math: embeddings, graph
+                    Laplacian, spectral neighborhoods, and explicit links
+                    between semantically distant but topologically connected
+                    changes.
+                </p>
+            </section>
+
+            <section id="features">
+                <h2 class="reveal">What you get</h2>
+                <div class="feature-grid">
+                    <article class="feature reveal">
+                        <h3>Semantic + temporal ranking</h3>
+                        <p>
+                            Retrieve by meaning, then re-rank by recency with
+                            configurable temporal weight and half-life.
+                        </p>
+                    </article>
+                    <article class="feature reveal">
+                        <h3>Incremental Git ingestion</h3>
+                        <p>
+                            Use <code>update</code> in post-commit hooks. Only
+                            unseen commits are embedded, then rebuild if needed.
+                        </p>
+                    </article>
+                    <article class="feature reveal">
+                        <h3>Long-range links</h3>
+                        <p>
+                            Expose spectrally related notes with similarity
+                            scores for cross-topic debugging and context jumps.
+                        </p>
+                    </article>
+                </div>
+            </section>
+
+            <section class="dual">
+                <article class="panel reveal">
+                    <h3>Command-line first</h3>
+                    <p class="sub" style="margin: 0 0 0.7rem">
+                        Production-friendly single binary: ingest, update,
+                        query, note inspection, MCP server.
+                    </p>
+                    <ul class="list">
+                        <li><code>ingest</code> for initial graph build</li>
+                        <li><code>update</code> for incremental maintenance</li>
+                        <li><code>query</code> for ranked retrieval</li>
+                        <li>
+                            <code>note</code> for per-note related-link
+                            inspection
+                        </li>
+                        <li><code>mcp</code> for stdio MCP tool serving</li>
+                    </ul>
+                </article>
+                <article id="mcp" class="panel reveal">
+                    <h3>MCP server, token-efficient by design</h3>
+                    <p class="sub" style="margin: 0 0 0.7rem">
+                        Responses are compact markdown (not bloated JSON dumps).
+                    </p>
+                    <pre><button class="copy-btn" data-copy>Copy</button>spectral-cortex mcp --smg smg.json
+# Tools:
+# - graph_summary
+# - query_graph
+# - inspect_note
+# - long_range_links
+</pre>
+                </article>
+            </section>
+
+            <section class="reveal">
+                <h2>Drop-in MCP client config</h2>
+                <pre><button class="copy-btn" data-copy>Copy</button>{
+  "mcpServers": {
+    "spectral-cortex": {
+      "command": "spectral-cortex",
+      "args": ["mcp", "--smg", "smg.json"]
+    }
+  }
+}
+</pre>
+                <div class="cta">
+                    <div>
+                        <h3 style="margin: 0 0 0.35rem; font-size: 1.15rem">
+                            Promote deterministic memory in your stack.
+                        </h3>
+                        <p style="margin: 0; color: var(--ink-soft)">
+                            Explore the repo, wire the MCP server, and stop
+                            losing architectural context between sessions.
+                        </p>
+                    </div>
+                    <a
+                        class="btn btn-primary"
+                        href="https://github.com/mrorigo/spectral-cortex"
+                        target="_blank"
+                        rel="noreferrer"
+                        >Star mrorigo/spectral-cortex</a
+                    >
+                </div>
+            </section>
+        </main>
+
+        <footer class="container">
+            Spectral Cortex • Rust SMG for AI-agent memory over Git history.
+        </footer>
+
+        <script>
+            (() => {
+                const revealEls = [...document.querySelectorAll(".reveal")];
+                const observer = new IntersectionObserver(
+                    (entries) => {
+                        entries.forEach((entry) => {
+                            if (entry.isIntersecting) {
+                                entry.target.classList.add("visible");
+                                observer.unobserve(entry.target);
+                            }
+                        });
+                    },
+                    { threshold: 0.18 },
+                );
+                revealEls.forEach((el, i) => {
+                    el.style.transitionDelay = `${Math.min(i * 45, 260)}ms`;
+                    observer.observe(el);
+                });
+
+                document.querySelectorAll("[data-copy]").forEach((btn) => {
+                    btn.addEventListener("click", async () => {
+                        const pre = btn.closest("pre");
+                        if (!pre) return;
+                        const text = pre.textContent
+                            .replace(/^Copy\s*/, "")
+                            .trim();
+                        try {
+                            await navigator.clipboard.writeText(text);
+                            const old = btn.textContent;
+                            btn.textContent = "Copied";
+                            setTimeout(() => {
+                                btn.textContent = old;
+                            }, 1300);
+                        } catch {
+                            btn.textContent = "No clipboard";
+                            setTimeout(() => {
+                                btn.textContent = "Copy";
+                            }, 1300);
+                        }
+                    });
+                });
+            })();
+        </script>
+    </body>
+</html>

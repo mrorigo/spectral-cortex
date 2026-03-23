@@ -41,6 +41,8 @@ fn integration_roundtrip() -> Result<()> {
             entities: Vec::new(),
             commit_id: Some(format!("synthetic-{}", i)),
             timestamp: (SystemTime::now().duration_since(UNIX_EPOCH)?).as_secs(),
+            symbol_id: None,
+            ast_node_type: None,
         };
         turns.push(t);
     }

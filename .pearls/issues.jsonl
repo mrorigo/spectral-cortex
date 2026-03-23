@@ -1,0 +1,1 @@
+{"id":"prl-a68d62","title":"Incremental ingest","description":"When using --max-commits and --incremental, it does not work as expected. We want --max-commits to mean \"the first X commits that are not already ingested\"","status":"open","priority":2,"created_at":1774185808,"updated_at":1774185808,"author":"mrorigo","labels":[],"deps":[],"metadata":{},"comments":[]}

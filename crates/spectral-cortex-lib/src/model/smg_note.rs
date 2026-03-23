@@ -27,6 +27,12 @@ pub struct SMGNote {
     /// Related notes with spectral similarity scores.
     /// Tuple shape: `(related_note_id, spectral_similarity)`.
     pub related_note_links: Vec<(u32, f32)>,
+    /// Stable AST symbol identifier (e.g., "fn:calculate_tax").
+    pub symbol_id: Option<String>,
+    /// Type of the AST node (e.g., "API_DEFINITION", "IMPLEMENTATION").
+    pub ast_node_type: Option<String>,
+    /// Structural link neighbors (note_ids).
+    pub structural_links: Vec<u32>,
 }
 
 impl SMGNote {

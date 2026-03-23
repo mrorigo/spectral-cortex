@@ -1,0 +1,28 @@
+model = "google/gemini-3.1-flash-lite-preview"
+model_reasoning_effort = "low"
+personality = "pragmatic"
+model_provider = "openrouter"
+
+[model_providers.openrouter]
+name = "openrouter"
+base_url="https://openrouter.ai/api/v1"
+env_key="OPENROUTER_API_KEY"
+
+openai_base_url = "https://openrouter.ai/api/v1"
+#model_name = "minimax/minimax-m2.7"
+
+#[mcp_servers.codesmart]
+#command = "/Users/origo/.local/bin/codesmart"
+#args = ["serve-mcp"]
+
+[mcp_servers.hashfile]
+command = "/Users/origo/src/hashfile-mcp/target/release/hashfile-mcp"
+args = []
+
+[projects."/Users/origo/src/c99-compiler"]
+trust_level = "trusted"
+
+
+[projects."/Users/origo/src/spectral-cortex"]
+trust_level = "trusted"
+

@@ -1,5 +1,6 @@
 // Rust guideline compliant 2026-02-15
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use serde::Deserialize;
 use spectral_cortex::{load_smg_json, SpectralMemoryGraph};
 
 const DEFAULT_TOP_K: usize = 5;
-const DEFAULT_LINKS_K: usize = 3;
+// const DEFAULT_LINKS_K: usize = 3;
 const DEFAULT_SNIPPET_CHARS: usize = 140;
 
 /// Input for querying the graph with a text query.
@@ -54,6 +55,20 @@ pub struct LongRangeLinksInput {
 /// Input for quick graph summary.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GraphSummaryInput {}
+
+/// Input for structural hotspots analysis.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct StructuralHotspotsInput {
+    #[schemars(description = "Number of hotspots to return (default: 10)")]
+    pub top_k: Option<usize>,
+}
+
+/// Input for inspecting symbol history.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SymbolHistoryInput {
+    #[schemars(description = "Stable symbol_id to inspect")]
+    pub symbol_id: String,
+}
 
 /// MCP server that provides compact tools for SMG query and inspection.
 #[derive(Clone)]
@@ -126,6 +141,24 @@ impl SpectralCortexMcpServer {
             Err(err) => format!("Error: {err}"),
         }
     }
+
+    /// Retrieve the most churn-heavy structural hotspots.
+    #[rmcp::tool(description = "Report top churn-heavy AST symbols")]
+    fn get_structural_hotspots(&self, Parameters(input): Parameters<StructuralHotspotsInput>) -> String {
+        match self.get_structural_hotspots_impl(input) {
+            Ok(output) => output,
+            Err(err) => format!("Error: {err}"),
+        }
+    }
+
+    /// Retrieve chronological change history for a single symbol.
+    #[rmcp::tool(description = "Retrieve timeline of a symbol's evolution")]
+    fn inspect_symbol_history(&self, Parameters(input): Parameters<SymbolHistoryInput>) -> String {
+        match self.inspect_symbol_history_impl(input) {
+            Ok(output) => output,
+            Err(err) => format!("Error: {err}"),
+        }
+    }
 }
 
 impl SpectralCortexMcpServer {
@@ -135,88 +168,43 @@ impl SpectralCortexMcpServer {
 
     fn compact_snippet(text: &str, max_chars: usize) -> String {
         let single_line = text.replace('\n', " ").replace("  ", " ");
-        if single_line.chars().count() <= max_chars {
-            single_line
+        if single_line.len() > max_chars {
+            format!("{}...", &single_line[..max_chars])
         } else {
-            let mut out = String::new();
-            for ch in single_line.chars().take(max_chars) {
-                out.push(ch);
-            }
-            out.push_str("...");
-            out
+            single_line
         }
-    }
-
-    fn find_note_by_turn_id(smg: &SpectralMemoryGraph, turn_id: u64) -> Option<u32> {
-        smg.notes.iter().find_map(|(nid, note)| {
-            if note.source_turn_ids.contains(&turn_id) {
-                Some(*nid)
-            } else {
-                None
-            }
-        })
     }
 
     fn query_graph_impl(&self, input: QueryGraphInput) -> Result<String> {
         let smg = &self.smg;
-        let top_k = Self::clamp_top_k(input.top_k, DEFAULT_TOP_K, 50);
-        let links_k = Self::clamp_top_k(input.links_k, DEFAULT_LINKS_K, 10);
+        let top_k = Self::clamp_top_k(input.top_k, DEFAULT_TOP_K, 20);
         let snippet_chars = input
             .snippet_chars
             .unwrap_or(DEFAULT_SNIPPET_CHARS)
             .clamp(40, 300);
 
-        let mut scored = smg
-            .retrieve_with_scores(&input.query, top_k.saturating_mul(4))
-            .map_err(|e| anyhow::anyhow!("query failed: {e}"))?;
-
-        if let Some(min_score) = input.min_score {
-            scored.retain(|(_, score)| *score >= min_score);
-        }
-
-        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-        scored.truncate(top_k);
-
+        let hits = smg.search(&input.query, top_k, input.min_score)?;
+        
         let mut out = String::new();
-        out.push_str(&format!("# Query: `{}`\n", input.query));
-        out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
-        out.push_str(&format!("- hits: {}\n\n", scored.len()));
+        out.push_str(&format!("# Query Result: `{}`\n", input.query));
+        out.push_str(&format!("- SMG: `{}`\n\n", self.smg_path));
 
-        out.push_str("| # | turn_id | note_id | score | snippet |\n");
-        out.push_str("|---|---------|---------|-------|---------|\n");
-
-        for (idx, (turn_id, score)) in scored.iter().enumerate() {
-            if let Some(note_id) = Self::find_note_by_turn_id(smg, *turn_id) {
-                if let Some(note) = smg.notes.get(&note_id) {
-                    let snip =
-                        Self::compact_snippet(&note.context, snippet_chars).replace('|', "\\|");
-                    out.push_str(&format!(
-                        "| {} | {} | {} | {:.4} | {} |\n",
-                        idx + 1,
-                        turn_id,
-                        note_id,
-                        score,
-                        snip
-                    ));
-                }
-            }
-        }
-
-        if !scored.is_empty() {
-            out.push_str("\n## Related Notes\n");
-            for (turn_id, _) in scored {
-                if let Some(note_id) = Self::find_note_by_turn_id(smg, turn_id) {
-                    let related = smg.get_related_note_links(note_id, Some(links_k));
-                    let compact = if related.is_empty() {
-                        String::from("none")
-                    } else {
+        for (score, note_id) in hits {
+            let note = &smg.notes[&note_id];
+            let snippet = Self::compact_snippet(&note.context, snippet_chars);
+            out.push_str(&format!("- **Score {:.3}** [Note {}]: {}\n", score, note_id, snippet));
+            
+            if let Some(links_k) = input.links_k {
+                let related = smg.get_related_note_links(note_id, Some(links_k));
+                if !related.is_empty() {
+                    let compact = {
                         related
                             .into_iter()
                             .map(|(nid, sim)| format!("{}({:.3})", nid, sim))
                             .collect::<Vec<_>>()
                             .join(", ")
                     };
-                    out.push_str(&format!("- note {}: {}\n", note_id, compact));
+                    out.push_str(&format!("    - related nodes: {}\n", compact));
                 }
             }
         }
@@ -240,15 +228,9 @@ impl SpectralCortexMcpServer {
         let mut out = String::new();
         out.push_str(&format!("# Note {}\n", note.note_id));
         out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
-        out.push_str(&format!("- source_turn_ids: {:?}\n", note.source_turn_ids));
-        out.push_str(&format!(
-            "- source_commit_ids: {:?}\n",
-            note.source_commit_ids
-        ));
-        out.push_str(&format!(
-            "- context: {}\n\n",
-            Self::compact_snippet(&note.context, snippet_chars)
-        ));
+        out.push_str(&format!("- symbol_id: {:?}\n", note.symbol_id));
+        out.push_str(&format!("- ast_node_type: {:?}\n", note.ast_node_type));
+        out.push_str(&format!("- context: {}\n\n", Self::compact_snippet(&note.context, snippet_chars)));
 
         let related = smg.get_related_note_links(note.note_id, Some(links_k));
         if related.is_empty() {
@@ -289,6 +271,68 @@ impl SpectralCortexMcpServer {
         Ok(out)
     }
 
+    fn get_structural_hotspots_impl(&self, input: StructuralHotspotsInput) -> Result<String> {
+        let smg = &self.smg;
+        let mut hotspots: HashMap<String, (usize, String)> = HashMap::new();
+
+        for note in smg.notes.values() {
+            if let (Some(sid), Some(typ)) = (&note.symbol_id, &note.ast_node_type) {
+                let entry = hotspots.entry(sid.clone()).or_insert((0, typ.clone()));
+                entry.0 += note.source_turn_ids.len();
+            }
+        }
+
+        let mut sorted: Vec<(String, usize, String)> = hotspots
+            .into_iter()
+            .map(|(sid, (count, typ))| (sid, count, typ))
+            .collect();
+        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let top_k = input.top_k.unwrap_or(10).min(50);
+        let results = sorted.into_iter().take(top_k);
+
+        let mut out = String::new();
+        out.push_str("# Structural Hotspots (Top Churn Symbols)\n");
+        out.push_str("| Symbol ID | Category | Churn Count |\n");
+        out.push_str("|-----------|----------|-------------|\n");
+        for (sid, count, typ) in results {
+            out.push_str(&format!("| `{}` | {} | {} |\n", sid, typ, count));
+        }
+
+        Ok(out)
+    }
+
+    fn inspect_symbol_history_impl(&self, input: SymbolHistoryInput) -> Result<String> {
+        let smg = &self.smg;
+        let mut history: Vec<(u64, u32, &str)> = Vec::new();
+
+        for note in smg.notes.values() {
+            if note.symbol_id.as_deref() == Some(&input.symbol_id) {
+                for &ts in &note.source_timestamps {
+                    history.push((ts, note.note_id, &note.context));
+                }
+            }
+        }
+
+        history.sort_by_key(|&(ts, _, _)| ts);
+
+        let mut out = String::new();
+        out.push_str(&format!("# Symbol History: `{}`\n", input.symbol_id));
+        if history.is_empty() {
+            out.push_str("No history found for this symbol.\n");
+            return Ok(out);
+        }
+
+        for (ts, nid, ctx) in history {
+            let date = chrono::DateTime::from_timestamp(ts as i64, 0)
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_else(|| ts.to_string());
+            out.push_str(&format!("- **{}** [Note {}]: {}\n", date, nid, Self::compact_snippet(ctx, 100)));
+        }
+
+        Ok(out)
+    }
+
     fn graph_summary_impl(&self, _input: GraphSummaryInput) -> Result<String> {
         let smg = &self.smg;
 
@@ -317,7 +361,6 @@ impl SpectralCortexMcpServer {
     }
 }
 
-/// Run the MCP server over stdio with a preloaded SMG graph.
 pub fn run_mcp_server(smg_path: &Path) -> Result<()> {
     let smg_path = smg_path
         .to_path_buf()

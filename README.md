@@ -6,9 +6,11 @@ This README is targeted at developers who want a local, explainable memory backi
 
 Highlights
 - Purpose-built for agent memory over git history (commits, PR messages, notes).
+- **AST-Aware Split Mode**: Use `tree-sitter` (Rust, TS, Python) to map commit messages directly to code symbols.
+- **Structural Fusion**: Fuses semantic similarity with the repo's call-graph and structural links.
 - Small, dependency-light Rust codebase with no heavy ML runtime at inference time.
 - Default-enabled temporal re-ranking to prefer recent, relevant items (opt-out available).
-- CLI workflows for ingesting repositories, persisting SMGs, and querying with JSON output for programmatic agents.
+- CLI workflows for ingesting repositories, persisting SMGs, and querying with JSON output.
 
 Contents
 - Quick start
@@ -81,6 +83,8 @@ Available tools:
 - `query_graph`: semantic query with markdown tables and compact related-note summaries
 - `inspect_note`: inspect one note and related notes with spectral similarity
 - `long_range_links`: list top long-range links in markdown table format
+- `get_structural_hotspots`: find the most frequently modified AST symbols (the "brittle" parts)
+- `inspect_symbol_history`: deep dive into the chronological evolution of a specific structural symbol (class/function)
 
 MCP client wiring example (recommended):
 ```json
@@ -218,7 +222,7 @@ Key ingest/update filtering flags:
 - `--git-filter-preset git-noise`: drop common metadata lines (e.g. `Co-authored-by`, `Signed-off-by`).
 - `--git-filter-drop <regex>`: repeatable custom line-drop regex.
 - `--git-filter-case-insensitive`: case-insensitive regex matching.
-- `--git-commit-split-mode <off|auto|strict>`: split multi-change commit messages into multiple notes.
+- `--git-commit-split-mode <off|auto|strict|ast>`: split multi-change commit messages. `ast` uses tree-sitter.
 - `--git-commit-split-max-segments <n>`: cap segments per commit.
 - `--git-commit-split-min-confidence <0..1>`: confidence threshold for `auto`.
 

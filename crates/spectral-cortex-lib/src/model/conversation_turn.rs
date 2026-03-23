@@ -15,6 +15,8 @@ pub struct ConversationTurn {
     /// Stored as `Option<String>` so synthetic or non-git turns can omit it.
     pub commit_id: Option<String>,
     pub timestamp: u64,
+    pub symbol_id: Option<String>,
+    pub ast_node_type: Option<String>,
 }
 
 impl ConversationTurn {

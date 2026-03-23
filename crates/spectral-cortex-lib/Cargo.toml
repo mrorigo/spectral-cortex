@@ -16,7 +16,7 @@ anyhow = "1.0"
 # The real embedding runtime is enabled by default so the CLI and library use the
 # real MiniLM embedder without requiring an explicit feature flag.
 rust_embed = { git = "https://github.com/mrorigo/rust-embed.git", branch = "bugfix/infinite-recursion" }
-ndarray = "0.16.1"
+ndarray = { version = "0.16.1", features = ["rayon"] }
 nalgebra = "0.34.1"
 linfa = { version = "0.8.1", default-features = false }
 linfa-clustering = { version = "0.8.1", default-features = false }
