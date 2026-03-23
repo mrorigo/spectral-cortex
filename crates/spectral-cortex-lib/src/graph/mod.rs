@@ -205,7 +205,6 @@ impl SpectralMemoryGraph {
         let note = SMGNote {
             note_id: self.next_id,
             raw_content: turn.content.clone(),
-            context: turn.clean_context(),
             embedding: emb,
             norm,
             source_turn_ids: vec![turn.turn_id],
@@ -215,6 +214,7 @@ impl SpectralMemoryGraph {
             related_note_links: Vec::new(),
             symbol_id: turn.symbol_id.clone(),
             ast_node_type: turn.ast_node_type.clone(),
+            file_path: turn.file_path.clone(),
             structural_links: Vec::new(),
         };
         self.notes.insert(self.next_id, note);
@@ -244,25 +244,36 @@ impl SpectralMemoryGraph {
             return Ok(());
         }
 
-        // Extract all texts for batch embedding (parallel processing)
-        let texts: Vec<String> = turns.iter().map(|turn| turn.content.clone()).collect();
+        // Extract unique texts for batch embedding (avoid redundant calls for AST symbols in same commit)
+        let mut unique_texts = Vec::new();
+        let mut text_to_idx = std::collections::HashMap::new();
+        let mut turn_to_unique_idx = Vec::with_capacity(turns.len());
 
-        // Batch embed all texts in parallel using the worker pool
+        for turn in turns {
+            let idx = *text_to_idx.entry(turn.content.clone()).or_insert_with(|| {
+                let i = unique_texts.len();
+                unique_texts.push(turn.content.clone());
+                i
+            });
+            turn_to_unique_idx.push(idx);
+        }
+
+        // Batch embed unique texts in parallel
         let embedding_progress: Option<ProgressCallback> = progress.clone().map(|cb| {
             Arc::new(move |msg: String, fraction: f32| {
                 cb(msg, fraction);
             }) as ProgressCallback
         });
-        let embeddings = embed::get_embeddings(&texts, embedding_progress)
-            .with_context(|| "batch embedding turns")?;
+        let unique_embeddings = embed::get_embeddings(&unique_texts, embedding_progress)
+            .with_context(|| "batch embedding unique turns")?;
 
-        // Reconstruct notes with embeddings in correct order
-        for (turn, emb) in turns.iter().zip(embeddings.iter()) {
+        // Reconstruct notes with shared embeddings where possible
+        for (turn, &u_idx) in turns.iter().zip(turn_to_unique_idx.iter()) {
+            let emb = &unique_embeddings[u_idx];
             let norm: f32 = emb.iter().map(|x: &f32| x * x).sum::<f32>().sqrt();
             let note = SMGNote {
                 note_id: self.next_id,
                 raw_content: turn.content.clone(),
-                context: turn.clean_context(),
                 embedding: emb.clone(),
                 norm,
                 source_turn_ids: vec![turn.turn_id],
@@ -272,6 +283,7 @@ impl SpectralMemoryGraph {
                 related_note_links: Vec::new(),
                 symbol_id: turn.symbol_id.clone(),
                 ast_node_type: turn.ast_node_type.clone(),
+                file_path: turn.file_path.clone(),
                 structural_links: Vec::new(),
             };
             self.notes.insert(self.next_id, note);
@@ -492,6 +504,9 @@ impl SpectralMemoryGraph {
         &self,
         query: &str,
         candidate_note_k: usize,
+        file_filter: Option<&str>,
+        symbol_filter: Option<&str>,
+        keyword_weight: f32,
     ) -> Result<Vec<crate::temporal::Candidate>> {
         use rayon::prelude::*;
 
@@ -523,7 +538,38 @@ impl SpectralMemoryGraph {
                 } else {
                     dot / (note.norm * norm_q)
                 };
-                (i, raw_sim)
+
+                // Hybrid scoring: boost based on symbol/file metadata if query matches
+                let mut score = raw_sim;
+                if keyword_weight > 0.0 {
+                    let mut boost = 1.0;
+                    let q_lower = query.to_lowercase();
+                    if let Some(sid) = &note.symbol_id {
+                        if sid.to_lowercase().contains(&q_lower) {
+                            boost += keyword_weight;
+                        }
+                    }
+                    if let Some(fp) = &note.file_path {
+                        if fp.to_lowercase().contains(&q_lower) {
+                            boost += keyword_weight;
+                        }
+                    }
+                    score *= boost;
+                }
+
+                // Hard filters for file/symbol
+                if let Some(ff) = file_filter {
+                    if !note.file_path.as_deref().unwrap_or("").contains(ff) {
+                        score = 0.0;
+                    }
+                }
+                if let Some(sf) = symbol_filter {
+                    if !note.symbol_id.as_deref().unwrap_or("").contains(sf) {
+                        score = 0.0;
+                    }
+                }
+
+                (i, score)
             })
             .collect();
 
@@ -594,7 +640,7 @@ impl SpectralMemoryGraph {
     }
     /// Search the graph using a text query, retrieving top results with scores.
     pub fn search(&self, query: &str, top_k: usize, min_score: Option<f32>) -> Result<Vec<(f32, u32)>> {
-        let results = self.retrieve_with_scores_config(query, top_k, None)?;
+        let results = self.retrieve_with_scores_config(query, top_k, None, None, None, 0.3)?;
         let mut searched: Vec<(f32, u32)> = Vec::new();
 
         let min_s = min_score.unwrap_or(0.0);
@@ -634,6 +680,9 @@ impl SpectralMemoryGraph {
         query: &str,
         candidate_note_k: usize,
         filtered_note_ids: &[u32],
+        file_filter: Option<&str>,
+        symbol_filter: Option<&str>,
+        keyword_weight: f32,
     ) -> Result<Vec<crate::temporal::Candidate>> {
         use rayon::prelude::*;
 
@@ -661,7 +710,38 @@ impl SpectralMemoryGraph {
                 } else {
                     dot / (note.norm * norm_q)
                 };
-                (i, raw_sim)
+
+                // Hybrid scoring: boost based on symbol/file metadata if query matches
+                let mut score = raw_sim;
+                if keyword_weight > 0.0 {
+                    let mut boost = 1.0;
+                    let q_lower = query.to_lowercase();
+                    if let Some(sid) = &note.symbol_id {
+                        if sid.to_lowercase().contains(&q_lower) {
+                            boost += keyword_weight;
+                        }
+                    }
+                    if let Some(fp) = &note.file_path {
+                        if fp.to_lowercase().contains(&q_lower) {
+                            boost += keyword_weight;
+                        }
+                    }
+                    score *= boost;
+                }
+
+                // Hard filters for file/symbol
+                if let Some(ff) = file_filter {
+                    if !note.file_path.as_deref().unwrap_or("").contains(ff) {
+                        score = 0.0;
+                    }
+                }
+                if let Some(sf) = symbol_filter {
+                    if !note.symbol_id.as_deref().unwrap_or("").contains(sf) {
+                        score = 0.0;
+                    }
+                }
+
+                (i, score)
             })
             .collect();
 
@@ -737,7 +817,7 @@ impl SpectralMemoryGraph {
     /// combined with a temporal recency signal). This method applies default temporal
     /// re-ranking.
     pub fn retrieve_with_scores(&self, query: &str, top_k: usize) -> Result<Vec<(u64, f32)>> {
-        self.retrieve_with_scores_config(query, top_k, None)
+        self.retrieve_with_scores_config(query, top_k, None, None, None, 0.3)
     }
 
     /// Retrieve with a specific temporal configuration.
@@ -746,8 +826,11 @@ impl SpectralMemoryGraph {
         query: &str,
         top_k: usize,
         temporal_cfg: Option<crate::temporal::TemporalConfig>,
+        file_filter: Option<&str>,
+        symbol_filter: Option<&str>,
+        keyword_weight: f32,
     ) -> Result<Vec<(u64, f32)>> {
-        let candidates = self.retrieve_candidates(query, top_k * 4)?;
+        let candidates = self.retrieve_candidates(query, top_k * 4, file_filter, symbol_filter, keyword_weight)?;
         let cfg = temporal_cfg.unwrap_or_default();
         
         // --- Spectral Polarity Filtering ---
@@ -804,11 +887,14 @@ impl SpectralMemoryGraph {
         temporal_cfg: Option<crate::temporal::TemporalConfig>,
         time_start: Option<u64>,
         time_end: Option<u64>,
+        file_filter: Option<&str>,
+        symbol_filter: Option<&str>,
+        keyword_weight: f32,
     ) -> Result<Vec<(u64, f32)>> {
         let start_filter = Instant::now();
         // If no time filters are specified, use the standard unfiltered path
         if time_start.is_none() && time_end.is_none() {
-            return self.retrieve_with_scores_config(query, top_k, temporal_cfg);
+            return self.retrieve_with_scores_config(query, top_k, temporal_cfg, file_filter, symbol_filter, keyword_weight);
         }
 
         // Filter notes by time range before computing similarity
@@ -853,7 +939,14 @@ impl SpectralMemoryGraph {
         );
 
         // Use the filtered note set for retrieval
-        let candidates = self.retrieve_candidates_filtered(query, top_k, &filtered_note_ids)?;
+        let candidates = self.retrieve_candidates_filtered(
+            query,
+            top_k,
+            &filtered_note_ids,
+            file_filter,
+            symbol_filter,
+            keyword_weight,
+        )?;
         let cfg = temporal_cfg.unwrap_or_default();
         let re_ranked = crate::temporal::re_rank_with_temporal(candidates, &cfg, None);
 

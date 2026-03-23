@@ -6,11 +6,10 @@ This README is targeted at developers who want a local, explainable memory backi
 
 Highlights
 - Purpose-built for agent memory over git history (commits, PR messages, notes).
-- **AST-Aware Split Mode**: Use `tree-sitter` (Rust, TS, Python) to map commit messages directly to code symbols.
+- **AST-Aware Split Mode**: Use `tree-sitter` (Rust, TS, JS, Python) to map commit messages directly to code symbols.
 - **Structural Fusion**: Fuses semantic similarity with the repo's call-graph and structural links.
-- Small, dependency-light Rust codebase with no heavy ML runtime at inference time.
-- Default-enabled temporal re-ranking to prefer recent, relevant items (opt-out available).
-- CLI workflows for ingesting repositories, persisting SMGs, and querying with JSON output.
+- **Embedding Deduplication**: Batch-level de-duplication of identical content (e.g., multiple AST symbols in one commit) to drastically reduce embedding costs.
+- **Hybrid Search**: Combines vector similarity with keyword-based metadata boosting for symbols and file paths.
 
 Contents
 - Quick start
@@ -216,6 +215,9 @@ Key query flags (agent-friendly):
 - `--no-temporal`: disable temporal re-ranking for this query (temporal is enabled by default).
 - `--temporal-weight <0..1>`: control recency influence (default 0.20).
 - `--temporal-half-life-days <float>`: half-life for exponential decay (default 14.0).
+- `--file <string>`: filter results by file path (substring match).
+- `--symbol <string>`: filter results by symbol ID (substring match).
+- `--keyword-weight <float>`: weight for hybrid metadata boosting (default 0.3).
 - `--json`: emit machine-readable JSON (recommended for agents).
 
 Key ingest/update filtering flags:
@@ -287,16 +289,22 @@ Primary types:
       pub entities: Vec<String>,
       pub commit_id: Option<String>,
       pub timestamp: u64, // unix epoch seconds
+      pub symbol_id: Option<String>,
+      pub ast_node_type: Option<String>,
+      pub file_path: Option<String>,
   }
   ```
 
 - `SMGNote`
   - Internal note stored per embedded turn; includes:
-    - `raw_content`, `context`
+    - `raw_content`
     - `embedding: Vec<f32>`
     - `source_turn_ids: Vec<u64>`
     - `source_commit_ids: Vec<Option<String>>`
     - `source_timestamps: Vec<u64>`
+    - `symbol_id: Option<String>`
+    - `ast_node_type: Option<String>`
+    - `file_path: Option<String>`
     - `related_note_links: Vec<(u32, f32)>`
 
 Persistence format

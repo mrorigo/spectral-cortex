@@ -2,6 +2,7 @@ use super::symbol_parser::SymbolParser;
 use super::rust::RustSymbolParser;
 use super::typescript::TypescriptSymbolParser;
 use super::python::PythonSymbolParser;
+use super::javascript::JavascriptSymbolParser;
 use std::collections::HashMap;
 
 pub struct ParserRegistry {
@@ -16,6 +17,8 @@ impl ParserRegistry {
         registry.register("rs", Box::new(RustSymbolParser));
         registry.register("ts", Box::new(TypescriptSymbolParser));
         registry.register("tsx", Box::new(TypescriptSymbolParser));
+        registry.register("js", Box::new(JavascriptSymbolParser));
+        registry.register("jsx", Box::new(JavascriptSymbolParser));
         registry.register("py", Box::new(PythonSymbolParser));
         registry
     }

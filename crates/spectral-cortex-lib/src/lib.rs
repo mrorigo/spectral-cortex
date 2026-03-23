@@ -43,7 +43,6 @@ use std::path::Path;
 pub struct SerializableNote {
     pub note_id: u32,
     pub raw_content: String,
-    pub context: String,
     pub embedding: Vec<f32>,
     /// Precomputed L2 norm of the embedding for fast cosine similarity computation.
     pub norm: f32,
@@ -60,6 +59,7 @@ pub struct SerializableNote {
     pub symbol_id: Option<String>,
     /// Type of the AST node (e.g., "API_DEFINITION", "IMPLEMENTATION").
     pub ast_node_type: Option<String>,
+    pub file_path: Option<String>,
     /// Structural link neighbors (note_ids).
     pub structural_links: Vec<u32>,
 }
@@ -116,7 +116,6 @@ impl From<&SMGNote> for SerializableNote {
         SerializableNote {
             note_id: n.note_id,
             raw_content: n.raw_content.clone(),
-            context: n.context.clone(),
             embedding: n.embedding.clone(),
             norm: n.norm,
             source_turn_ids: n.source_turn_ids.clone(),
@@ -125,6 +124,7 @@ impl From<&SMGNote> for SerializableNote {
             related_note_links: n.related_note_links.clone(),
             symbol_id: n.symbol_id.clone(),
             ast_node_type: n.ast_node_type.clone(),
+            file_path: n.file_path.clone(),
             structural_links: n.structural_links.clone(),
         }
     }
@@ -169,7 +169,6 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
         let note = SMGNote {
             note_id: nid,
             raw_content: sn.raw_content,
-            context: sn.context,
             embedding: sn.embedding,
             norm: sn.norm,
             source_turn_ids: sn.source_turn_ids,
@@ -179,6 +178,7 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
             related_note_links: sn.related_note_links,
             symbol_id: sn.symbol_id,
             ast_node_type: sn.ast_node_type,
+            file_path: sn.file_path,
             structural_links: sn.structural_links,
         };
         smg.notes.insert(nid, note);

@@ -39,22 +39,10 @@ pub(crate) struct CommitSegment {
     pub(crate) parse_mode: ParseMode,
     pub(crate) symbol_id: Option<String>,
     pub(crate) ast_node_type: Option<String>,
+    pub(crate) file_path: Option<String>,
 }
 
-impl CommitSegment {
-    pub(crate) fn to_content(&self) -> String {
-        let mut out = String::new();
-        out.push_str(self.header.trim());
-        for detail in &self.details {
-            let trimmed = detail.trim();
-            if !trimmed.is_empty() {
-                out.push('\n');
-                out.push_str(trimmed);
-            }
-        }
-        out
-    }
-}
+
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CommitSplitConfig {
@@ -164,6 +152,7 @@ fn split_by_conventional_headers(
             parse_mode: ParseMode::ConventionalHeader,
             symbol_id: None,
             ast_node_type: None,
+            file_path: None,
         });
     }
 
@@ -201,6 +190,7 @@ fn split_by_bullets(lines: &[&str], max_segments: usize) -> Option<Vec<CommitSeg
             parse_mode: ParseMode::BulletGrouped,
             symbol_id: None,
             ast_node_type: None,
+            file_path: None,
         });
     }
     if segments.len() >= 2 {
@@ -244,6 +234,7 @@ fn split_by_paragraphs(message: &str, max_segments: usize) -> Option<Vec<CommitS
             parse_mode: ParseMode::ParagraphFallback,
             symbol_id: None,
             ast_node_type: None,
+            file_path: None,
         });
     }
     if segments.len() >= 2 {
@@ -264,6 +255,7 @@ fn fallback_single_segment(message: &str) -> Vec<CommitSegment> {
         parse_mode: ParseMode::ParagraphFallback,
         symbol_id: None,
         ast_node_type: None,
+        file_path: None,
     }]
 }
 
@@ -360,6 +352,7 @@ pub(crate) fn split_commit_with_ast(
                             let lang = match ext {
                                 "rs" => tree_sitter_rust::LANGUAGE,
                                 "ts" | "tsx" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+                                "js" | "jsx" => tree_sitter_javascript::LANGUAGE,
                                 "py" => tree_sitter_python::LANGUAGE,
                                 _ => return true, // skip
                             };
@@ -368,7 +361,8 @@ pub(crate) fn split_commit_with_ast(
                             if let Some(tree) = ts_parser.parse(content.as_ref(), None) {
                                 // For now, we'll just extract all symbols in the file.
                                 // A higher-fidelity version would only extract symbols touched by diff hunks.
-                                extract_symbols(tree.root_node(), content.as_ref(), parser, &mut segments, &mut seen_symbols, message);
+                                let path_str = path.to_string_lossy();
+                                extract_symbols(tree.root_node(), content.as_ref(), parser, &mut segments, &mut seen_symbols, &path_str, message);
                             }
                         }
                     }
@@ -397,6 +391,7 @@ fn extract_symbols(
     parser: &dyn crate::ast::symbol_parser::SymbolParser,
     segments: &mut Vec<CommitSegment>,
     seen_symbols: &mut HashSet<String>,
+    path: &str,
     message: &str,
 ) {
     let kind = node.kind();
@@ -412,12 +407,13 @@ fn extract_symbols(
                 };
 
                 segments.push(CommitSegment {
-                    header: format!("{}: {}", symbol_id, message.lines().next().unwrap_or("")),
+                    header: message.lines().next().unwrap_or("").to_string(),
                     details: vec![message.to_string()],
                     confidence: 1.0,
                     parse_mode: ParseMode::ParagraphFallback,
                     symbol_id: Some(symbol_id),
                     ast_node_type: Some(category.to_string()),
+                    file_path: Some(path.to_string()),
                 });
             }
         }
@@ -425,7 +421,7 @@ fn extract_symbols(
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            extract_symbols(child, source, parser, segments, seen_symbols, message);
+            extract_symbols(child, source, parser, segments, seen_symbols, path, message);
         }
     }
 }

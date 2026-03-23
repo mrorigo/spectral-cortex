@@ -262,6 +262,18 @@ struct QueryArgs {
     /// Number of long-range links to return (default: all).
     #[arg(long)]
     links_k: Option<usize>,
+
+    /// Filter results by file path (substring match).
+    #[arg(long)]
+    file: Option<String>,
+
+    /// Filter results by symbol ID (substring match).
+    #[arg(long)]
+    symbol: Option<String>,
+
+    /// Weight for keyword boosting (0.0..1.0). Default: 0.3
+    #[arg(long, default_value_t = 0.3)]
+    keyword_weight: f32,
 }
 
 /// Arguments for the `note` subcommand.
@@ -793,7 +805,13 @@ fn run_query(args: QueryArgs) -> Result<()> {
     // Retrieve candidates (this includes embedding the query internally)
     let start_candidates = Instant::now();
     let candidates = smg
-        .retrieve_candidates(&q, candidate_k)
+        .retrieve_candidates(
+            &q,
+            candidate_k,
+            args.file.as_deref(),
+            args.symbol.as_deref(),
+            args.keyword_weight,
+        )
         .with_context(|| "retrieving candidates")?;
     eprintln!(
         "Retrieved {} candidates in {:?}",
@@ -867,8 +885,12 @@ fn run_query(args: QueryArgs) -> Result<()> {
                     "turn_id": tid,
                     "note_id": nid,
                     "score": score,
+                    "commit_id": commit_id_for_turn,
+                    "symbol_id": note.symbol_id,
+                    "ast_node_type": note.ast_node_type,
+                    "file_path": note.file_path,
                     "raw_content": note.raw_content,
-                    "context": note.context,
+                    "context": note.context(),
                     "source_turn_ids": note.source_turn_ids,
                     "related_notes": related_notes,
                     "commit_id": commit_id_for_turn,
@@ -1032,7 +1054,7 @@ fn run_note(args: NoteArgs) -> Result<()> {
                     serde_json::json!({
                         "note_id": related_id,
                         "spectral_similarity": sim,
-                        "context": rnote.context,
+                        "context": rnote.context(),
                         "source_turn_ids": rnote.source_turn_ids,
                     })
                 } else {
@@ -1048,7 +1070,7 @@ fn run_note(args: NoteArgs) -> Result<()> {
             "smg": args.smg.to_string_lossy().to_string(),
             "note": {
                 "note_id": note.note_id,
-                "context": note.context,
+                "context": note.context(),
                 "raw_content": note.raw_content,
                 "source_turn_ids": note.source_turn_ids,
                 "source_commit_ids": note.source_commit_ids,
@@ -1064,7 +1086,7 @@ fn run_note(args: NoteArgs) -> Result<()> {
             println!("cluster_label={}", lbl);
         }
         println!("source_turn_ids={:?}", note.source_turn_ids);
-        println!("context: {}", note.context);
+        println!("context: {}", note.context());
         let snippet = if note.raw_content.len() > 200 {
             format!("{}...", &note.raw_content[..200])
         } else {
@@ -1193,7 +1215,7 @@ fn collect_commits(
                 let turn = ConversationTurn {
                     turn_id: idx,
                     speaker: author_name.clone(),
-                    content: segment.to_content(),
+                    content: segment.details.first().cloned().unwrap_or_else(|| segment.header.clone()),
                     topic: "git".to_string(),
                     entities: Vec::new(),
                     // Record the originating commit id (hex) for easy lookup from query results.
@@ -1201,6 +1223,7 @@ fn collect_commits(
                     timestamp,
                     symbol_id: segment.symbol_id.clone(),
                     ast_node_type: segment.ast_node_type.clone(),
+                    file_path: segment.file_path.clone(),
                 };
 
                 turns.push(turn);

@@ -17,6 +17,7 @@ pub struct ConversationTurn {
     pub timestamp: u64,
     pub symbol_id: Option<String>,
     pub ast_node_type: Option<String>,
+    pub file_path: Option<String>,
 }
 
 impl ConversationTurn {

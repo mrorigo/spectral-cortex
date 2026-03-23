@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 pub struct SMGNote {
     pub note_id: u32,
     pub raw_content: String,
-    pub context: String,
     pub embedding: Vec<f32>,
     /// Precomputed L2 norm of the embedding for fast cosine similarity computation.
     /// This is computed once during ingestion and reused during queries.
@@ -31,6 +30,8 @@ pub struct SMGNote {
     pub symbol_id: Option<String>,
     /// Type of the AST node (e.g., "API_DEFINITION", "IMPLEMENTATION").
     pub ast_node_type: Option<String>,
+    /// Relative path to the file containing this symbol or change.
+    pub file_path: Option<String>,
     /// Structural link neighbors (note_ids).
     pub structural_links: Vec<u32>,
 }
@@ -42,11 +43,9 @@ impl SMGNote {
         turn: &crate::model::conversation_turn::ConversationTurn,
         new_emb: &[f32],
     ) {
-        // Concatenate raw content and context.
+        // Update raw content.
         self.raw_content.push_str(" | ");
         self.raw_content.push_str(&turn.content);
-        self.context.push(' ');
-        self.context.push_str(&turn.clean_context());
 
         // Weighted average of embeddings (element‑wise).
         let n = self.source_turn_ids.len() as f32;
@@ -65,5 +64,18 @@ impl SMGNote {
 
         // Record the timestamp (unix epoch seconds) in parallel with the turn id.
         self.source_timestamps.push(turn.timestamp);
+
+        // Set file_path if not already set (primary file for this note).
+        if self.file_path.is_none() {
+            self.file_path = turn.file_path.clone();
+        }
+    }
+
+    /// Returns a whitespace-collapsed version of `raw_content` for indexing/display.
+    pub fn context(&self) -> String {
+        self.raw_content
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 }

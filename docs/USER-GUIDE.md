@@ -212,7 +212,7 @@ Spectral structures are always rebuilt during `ingest` and `update`.
 1. `off`: one note per commit message after filtering.
 2. `auto`: split only when parser confidence threshold is met.
 3. `strict`: split whenever parser detects boundaries.
-4. `ast`: use `tree-sitter` to parse the git diff and bind specific hunks to actual AST nodes (functions/classes/structs). Supports Rust, TypeScript, and Python.
+4. `ast`: use `tree-sitter` to parse the git diff and bind specific hunks to actual AST nodes (functions/classes/structs). Supports Rust, TypeScript/JS, and Python.
 
 `--git-commit-split-max-segments <N>`
 
@@ -304,6 +304,18 @@ Update-specific notes:
 
 1. Override current time for reproducible experiments/tests.
 
+`--file <STRING>`
+
+1. Filter results by file path (substring match).
+
+`--symbol <STRING>`
+
+1. Filter results by symbol ID (substring match).
+
+`--keyword-weight <FLOAT>`
+
+1. Weight for hybrid metadata boosting (default 0.3).
+
 `--time-start <RFC3339>`
 
 1. Parsed for future query-time filtering support.
@@ -371,16 +383,16 @@ Current format is strict and versioned:
 
 1. `note_id`
 2. `raw_content`
-3. `context`
-4. `embedding`
-5. `norm`
-6. `source_turn_ids`
-7. `source_commit_ids`
-8. `source_timestamps`
-9. `related_note_links`
-10. `symbol_id`: stable identity for AST nodes (e.g. "crate::module::func")
-11. `ast_node_type`: e.g. "FUNCTION_DEFINITION", "API_DEFINITION"
-12. `structural_links`: IDs of notes sharing structural context (callers/callees)
+3. `embedding`
+4. `norm`
+5. `source_turn_ids`
+6. `source_commit_ids`
+7. `source_timestamps`
+8. `symbol_id`: stable identity for AST nodes (e.g. "crate::module::func")
+9. `ast_node_type`: e.g. "FUNCTION_DEFINITION", "API_DEFINITION"
+10. `file_path`: the path of the source file (from AST or metadata)
+11. `structural_links`: IDs of notes sharing structural context (callers/callees)
+12. `related_note_links`: per-note adjacency list with scores
 
 `related_note_links` example:
 

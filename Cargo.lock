@@ -3171,6 +3171,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tree-sitter",
+ "tree-sitter-javascript",
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -3592,6 +3593,16 @@ dependencies = [
  "regex",
  "regex-syntax 0.8.9",
  "streaming-iterator",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-javascript"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf40bf599e0416c16c125c3cec10ee5ddc7d1bb8b0c60fa5c4de249ad34dc1b1"
+dependencies = [
+ "cc",
  "tree-sitter-language",
 ]
 

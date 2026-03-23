@@ -191,7 +191,7 @@ impl SpectralCortexMcpServer {
 
         for (score, note_id) in hits {
             let note = &smg.notes[&note_id];
-            let snippet = Self::compact_snippet(&note.context, snippet_chars);
+            let snippet = Self::compact_snippet(&note.context(), snippet_chars);
             out.push_str(&format!("- **Score {:.3}** [Note {}]: {}\n", score, note_id, snippet));
             
             if let Some(links_k) = input.links_k {
@@ -230,7 +230,7 @@ impl SpectralCortexMcpServer {
         out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
         out.push_str(&format!("- symbol_id: {:?}\n", note.symbol_id));
         out.push_str(&format!("- ast_node_type: {:?}\n", note.ast_node_type));
-        out.push_str(&format!("- context: {}\n\n", Self::compact_snippet(&note.context, snippet_chars)));
+        out.push_str(&format!("- context: {}\n\n", Self::compact_snippet(&note.context(), snippet_chars)));
 
         let related = smg.get_related_note_links(note.note_id, Some(links_k));
         if related.is_empty() {
@@ -244,7 +244,7 @@ impl SpectralCortexMcpServer {
             let snippet = smg
                 .notes
                 .get(&related_id)
-                .map(|n| Self::compact_snippet(&n.context, snippet_chars).replace('|', "\\|"))
+                .map(|n| Self::compact_snippet(&n.context(), snippet_chars).replace('|', "\\|"))
                 .unwrap_or_else(|| String::from("<missing note payload>"));
             out.push_str(&format!("| {} | {:.4} | {} |\n", related_id, sim, snippet));
         }
@@ -304,12 +304,12 @@ impl SpectralCortexMcpServer {
 
     fn inspect_symbol_history_impl(&self, input: SymbolHistoryInput) -> Result<String> {
         let smg = &self.smg;
-        let mut history: Vec<(u64, u32, &str)> = Vec::new();
+        let mut history: Vec<(u64, u32, String)> = Vec::new();
 
         for note in smg.notes.values() {
             if note.symbol_id.as_deref() == Some(&input.symbol_id) {
                 for &ts in &note.source_timestamps {
-                    history.push((ts, note.note_id, &note.context));
+                    history.push((ts, note.note_id, note.context()));
                 }
             }
         }
@@ -327,7 +327,7 @@ impl SpectralCortexMcpServer {
             let date = chrono::DateTime::from_timestamp(ts as i64, 0)
                 .map(|dt| dt.to_rfc3339())
                 .unwrap_or_else(|| ts.to_string());
-            out.push_str(&format!("- **{}** [Note {}]: {}\n", date, nid, Self::compact_snippet(ctx, 100)));
+            out.push_str(&format!("- **{}** [Note {}]: {}\n", date, nid, Self::compact_snippet(&ctx, 100)));
         }
 
         Ok(out)
