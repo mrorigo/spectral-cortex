@@ -433,9 +433,13 @@ fn extract_symbols(
                     AstNodeCategory::Unknown => "UNKNOWN",
                 };
 
+                let mut commit_lines = message.lines().map(str::trim).filter(|l| !l.is_empty());
+                let header = commit_lines.next().unwrap_or("").to_string();
+                let details: Vec<String> = commit_lines.map(ToString::to_string).collect();
+
                 segments.push(CommitSegment {
-                    header: message.lines().next().unwrap_or("").to_string(),
-                    details: vec![message.to_string()],
+                    header,
+                    details,
                     confidence: 1.0,
                     parse_mode: ParseMode::ParagraphFallback,
                     symbol_id: Some(symbol_id),
