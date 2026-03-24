@@ -43,6 +43,7 @@ fn integration_roundtrip() -> Result<()> {
             timestamp: (SystemTime::now().duration_since(UNIX_EPOCH)?).as_secs(),
             symbol_id: None,
             ast_node_type: None,
+            file_path: None,
         };
         turns.push(t);
     }

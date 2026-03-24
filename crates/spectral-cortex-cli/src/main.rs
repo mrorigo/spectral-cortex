@@ -683,6 +683,7 @@ fn apply_git_line_filters(
     for line in lines.iter().skip(1) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
+            out_lines.push("".to_string());
             continue;
         }
 
@@ -1211,11 +1212,16 @@ fn collect_commits(
             };
 
             for segment in segments {
-                // Construct ConversationTurn. The library expects turn_id:u64 and fields per README.
+                let mut full_content = segment.header.clone();
+                if !segment.details.is_empty() {
+                    full_content.push('\n');
+                    full_content.push_str(&segment.details.join("\n"));
+                }
+
                 let turn = ConversationTurn {
                     turn_id: idx,
                     speaker: author_name.clone(),
-                    content: segment.details.first().cloned().unwrap_or_else(|| segment.header.clone()),
+                    content: full_content,
                     topic: "git".to_string(),
                     entities: Vec::new(),
                     // Record the originating commit id (hex) for easy lookup from query results.

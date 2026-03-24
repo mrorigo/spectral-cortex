@@ -169,30 +169,37 @@ fn is_bullet_line(line: &str) -> bool {
 }
 
 fn split_by_bullets(lines: &[&str], max_segments: usize) -> Option<Vec<CommitSegment>> {
-    let bullets: Vec<String> = lines
-        .iter()
-        .map(|line| line.trim())
-        .filter(|line| is_bullet_line(line))
-        .map(|line| line[2..].trim().to_string())
-        .filter(|line| line.len() >= 8)
-        .collect();
-
-    if bullets.len() < 2 {
-        return None;
-    }
-
     let mut segments = Vec::new();
-    for bullet in bullets.into_iter().take(max_segments) {
-        segments.push(CommitSegment {
-            header: bullet,
-            details: Vec::new(),
-            confidence: 0.8,
-            parse_mode: ParseMode::BulletGrouped,
-            symbol_id: None,
-            ast_node_type: None,
-            file_path: None,
-        });
+    let mut current_segment: Option<CommitSegment> = None;
+
+    for line in lines {
+        if is_bullet_line(line) {
+            if let Some(seg) = current_segment.take() {
+                segments.push(seg);
+            }
+            if segments.len() >= max_segments {
+                break;
+            }
+            let trimmed = line.trim();
+            segments.push(CommitSegment {
+                header: trimmed[2..].trim().to_string(),
+                details: Vec::new(),
+                confidence: 0.8,
+                parse_mode: ParseMode::BulletGrouped,
+                symbol_id: None,
+                ast_node_type: None,
+                file_path: None,
+            });
+            // current_segment is None because we already pushed it
+        } else if let Some(last) = segments.last_mut() {
+            // Note: split_by_bullets only operates on lines. We can look at the last segment.
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                last.details.push(trimmed.to_string());
+            }
+        }
     }
+
     if segments.len() >= 2 {
         Some(segments)
     } else {
@@ -201,27 +208,46 @@ fn split_by_bullets(lines: &[&str], max_segments: usize) -> Option<Vec<CommitSeg
 }
 
 fn split_by_paragraphs(message: &str, max_segments: usize) -> Option<Vec<CommitSegment>> {
-    let paras: Vec<String> = message
+    let raw_paras: Vec<String> = message
         .split("\n\n")
         .map(str::trim)
         .filter(|p| !p.is_empty())
         .map(ToString::to_string)
         .collect();
 
-    if paras.len() < 2 {
+    if raw_paras.len() < 2 {
         return None;
     }
 
-    let substantial = paras
+    // Heuristic: If we have very short paragraphs that look like fragments (e.g. HTML tags), 
+    // merge them.
+    let mut merged_paras: Vec<String> = Vec::new();
+    for p in raw_paras {
+        if let Some(prev) = merged_paras.last_mut() {
+            let prev_words = prev.split_whitespace().count();
+            let curr_words = p.split_whitespace().count();
+            // If previous or current is very tiny, or looks like HTML fragment
+            let is_fragment = p.starts_with('<') || p.ends_with('>') || curr_words < 5;
+            if is_fragment || (prev_words < 5) {
+                prev.push_str("\n\n");
+                prev.push_str(&p);
+                continue;
+            }
+        }
+        merged_paras.push(p);
+    }
+
+    let substantial = merged_paras
         .iter()
-        .filter(|p| p.split_whitespace().count() >= 4)
+        .filter(|p| p.split_whitespace().count() >= 5)
         .count();
+    
     if substantial < 2 {
         return None;
     }
 
     let mut segments = Vec::new();
-    for para in paras.into_iter().take(max_segments) {
+    for para in merged_paras.into_iter().take(max_segments) {
         let mut lines = para.lines().map(str::trim).filter(|l| !l.is_empty());
         let Some(header) = lines.next() else {
             continue;
@@ -237,6 +263,7 @@ fn split_by_paragraphs(message: &str, max_segments: usize) -> Option<Vec<CommitS
             file_path: None,
         });
     }
+    
     if segments.len() >= 2 {
         Some(segments)
     } else {
@@ -497,5 +524,23 @@ mod tests {
         let parts = split_commit_message(message, &limited, &mut stats);
         assert_eq!(parts.len(), 2);
         assert_eq!(stats.total_segments_emitted, 2);
+    }
+
+    #[test]
+    fn split_prevents_html_fragmentation() {
+        let mut stats = CommitSplitStats::default();
+        let message = "<li><a\nhref=\"test\">#123</a>\n\nsubstantial text paragraph for context here\n\nexhaustion</li>";
+        let parts = split_commit_message(message, &cfg(CommitSplitMode::Strict), &mut stats);
+        assert_eq!(parts.len(), 1); 
+    }
+
+    #[test]
+    fn split_handles_multiline_bullets() {
+        let mut stats = CommitSplitStats::default();
+        let message = "- first bullet\n  continued on next line\n- second bullet";
+        let parts = split_commit_message(message, &cfg(CommitSplitMode::Strict), &mut stats);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].header, "first bullet");
+        assert_eq!(parts[0].details, vec!["continued on next line"]);
     }
 }
