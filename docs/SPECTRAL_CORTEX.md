@@ -38,31 +38,35 @@ Spectral Cortex addresses this by building a structured, queryable graph from re
 ## Core Capabilities
 
 1. Git ingestion with configurable filtering for noisy lines.
-2. Commit message segmentation (`off`, `auto`, `strict`) for multi-change commits.
-3. Embedding-backed semantic indexing.
-4. Spectral graph construction with tunable build parameters.
-5. Related-note links with similarity scores.
-6. Long-range links for topological but semantically distant connections.
-7. Temporal re-ranking to favor fresh context when needed.
-8. Query and note inspection via CLI (`ingest`, `update`, `query`, `note`).
-9. Built-in MCP server mode via `spectral-cortex mcp --smg <path>`.
+2. Commit message segmentation (`off`, `auto`, `strict`, `ast`) for multi-change commits.
+3. **AST-Aware Splitting**: Use `tree-sitter` to bind commit segments to specific functions, classes, and structs (Rust, TS, JS, Python).
+4. Embedding-backed semantic indexing with de-duplication.
+5. Spectral graph construction with tunable build parameters (stickiness).
+6. Related-note links with similarity scores.
+7. Long-range links for topological but semantically distant connections.
+8. Temporal re-ranking to favor fresh context when needed.
+9. Query and note inspection via CLI (`ingest`, `update`, `query`, `note`).
+10. Built-in MCP server mode with 6 dedicated tools.
 
 ## Key Differentiators
 
 ### 1) Graph-Centric Memory, Not Flat Search
 Spectral Cortex uses graph relationships and spectral structure, not only nearest-neighbor matching.
 
-### 2) Commit-Aware Segmentation
-It handles real-world commit message quality by splitting multi-topic commits into separate notes when confident.
+### 2) AST-Aware Symbol Binding
+In `ast` split mode, the system parses repository code to link commit hunks directly to language-level symbols (functions, classes), enabling "structural" retrieval.
 
-### 3) Scored Relationships in Storage
+### 3) Commit-Aware Segmentation
+It handles real-world commit message quality by splitting multi-topic commits into separate notes when confident or when structural boundaries are detected.
+
+### 4) Scored Relationships in Storage
 Per-note related links store similarity values, enabling score-based filtering and visualization.
 
-### 4) Local-First and Explainable
-Outputs include note IDs, source commits, timestamps, and scoring metadata for grounded reasoning.
+### 5) Local-First and Explainable
+Outputs include note IDs, source commits, timestamps, symbol IDs, and scoring metadata for grounded reasoning.
 
-### 5) Agent Integration Through MCP
-The same binary can run an MCP server with markdown-first, token-efficient tools.
+### 6) Agent Integration Through MCP
+The same binary can run an MCP server with markdown-first, token-efficient tools designed for agent grounding.
 
 ## Architecture Summary
 
@@ -71,18 +75,22 @@ At a high level:
 1. Collect commits from a target repository.
 2. Apply optional line-level filtering.
 3. Split commit messages into segments (based on configured mode).
-4. Convert segments to embeddings.
-5. Build spectral structures and cluster organization.
-6. Compute related-note links and long-range links.
-7. Persist as versioned SMG JSON.
-8. Retrieve through CLI or MCP tools.
+4. **AST Binding (if using `ast` mode)**: Parse the commit diff and use `tree-sitter` to map hunks to specific logical symbols.
+5. Convert segments to embeddings (with batch de-duplication).
+6. Build spectral structures and cluster organization.
+7. Compute related-note links and long-range links.
+8. Persist as versioned SMG JSON (metadata stores build config for stickiness).
+9. Retrieve through CLI or MCP tools.
 
 ### Main Data Concepts
 
 1. `Note`: normalized semantic unit in the graph.
-2. `related_note_links`: adjacency list with `(note_id, spectral_similarity)`.
-3. `long_range_links`: cross-graph links `(note_a, note_b, spectral_similarity)`.
-4. Source provenance: turn IDs, commit IDs, timestamps.
+2. `symbol_id`: stable identity for AST nodes (e.g. `crate::module::func`).
+3. `file_path`: the path of the source file where the change occurred.
+4. `ast_node_type`: e.g. `FUNCTION_DEFINITION`, `CLASS_DEFINITION`.
+5. `related_note_links`: adjacency list with `(note_id, spectral_similarity)`.
+6. `long_range_links`: cross-graph links `(note_a, note_b, spectral_similarity)`.
+7. Source provenance: turn IDs, commit IDs, timestamps.
 
 ## MCP Integration
 
@@ -94,10 +102,12 @@ spectral-cortex mcp --smg smg.json
 
 MCP tools:
 
-1. `graph_summary`
-2. `query_graph`
-3. `inspect_note`
-4. `long_range_links`
+1. `graph_summary`: compact graph metadata.
+2. `query_graph`: semantic query with markdown tables.
+3. `inspect_note`: inspect one note and its spectral neighborhood.
+4. `long_range_links`: list top long-range links.
+5. `get_structural_hotspots`: find the most frequently modified symbols (brittle code).
+6. `inspect_symbol_history`: chronological evolution of a specific structural symbol.
 
 The graph is preloaded once at startup, and tool inputs no longer require per-request `smg_path`.
 
@@ -173,12 +183,13 @@ Spectral Cortex turns Git history into a spectral memory graph for AI agents: se
 ## Technical Fact Sheet
 
 1. Language: Rust
-2. Storage format: versioned JSON SMG
-3. Retrieval modes: semantic + temporal re-ranking
-4. Graph relationships: related links with similarity scores, long-range links
+2. Storage format: versioned JSON SMG (`spectral-cortex-v1`)
+3. Retrieval modes: hybrid (semantic + keyword boosting) + temporal re-ranking
+4. Graph relationships: related links with similarity scores, long-range links, structural links
 5. Interfaces: CLI and MCP (`mcp` subcommand)
 6. Update model: full ingest and incremental update flows
-7. Commit handling: configurable split modes for multi-topic messages
+7. Commit handling: symbol-aware segmentation (`ast` mode) using `tree-sitter` (Rust, TS/JS, Python)
+8. Performance: batch embedding de-duplication, parallel spectral operations
 
 ## Reliability and Operational Notes
 
@@ -211,7 +222,7 @@ Spectral Cortex turns Git history into a spectral memory graph for AI agents: se
 No. The model is designed for commit-centric workflows today, but the graph format can represent other short project text sources.
 
 ### Why split commit messages?
-Many commits contain multiple unrelated changes. Splitting improves semantic precision and graph quality.
+Many commits contain multiple unrelated changes. Splitting improves semantic precision. Using `ast` mode further improves this by binding changes to identifiable code symbols.
 
 ### Can I run it locally?
 Yes. Spectral Cortex is intended for local and self-managed environments.
@@ -224,7 +235,7 @@ spectral-cortex mcp --smg smg.json
 ```
 
 ### Does it support time-aware retrieval?
-Yes. Temporal re-ranking can be configured or disabled per query.
+Yes. Hybrid retrieval combines semantic similarity with temporal re-ranking (recency bias).
 
 ## Boilerplate
 
