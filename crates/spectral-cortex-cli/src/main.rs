@@ -76,6 +76,12 @@ enum Commands {
 
     /// Run an MCP stdio server using a preloaded SMG file.
     Mcp(McpArgs),
+
+    /// Retrieve the most churn-heavy structural hotspots.
+    Hotspots(HotspotsArgs),
+
+    /// Retrieve chronological change history for a single symbol.
+    History(HistoryArgs),
 }
 
 /// Arguments for the `ingest` subcommand.
@@ -304,6 +310,30 @@ struct McpArgs {
     smg: PathBuf,
 }
 
+/// Arguments for the `hotspots` subcommand.
+#[derive(Args, Debug)]
+struct HotspotsArgs {
+    /// Path to the SMG JSON file to load.
+    #[arg(short = 's', long = "smg", value_name = "PATH")]
+    smg: PathBuf,
+
+    /// Number of hotspots to return (default: 10).
+    #[arg(long, default_value_t = 10)]
+    top_k: usize,
+}
+
+/// Arguments for the `history` subcommand.
+#[derive(Args, Debug)]
+struct HistoryArgs {
+    /// Path to the SMG JSON file to load.
+    #[arg(short = 's', long = "smg", value_name = "PATH")]
+    smg: PathBuf,
+
+    /// Stable symbol_id to inspect.
+    #[arg(short, long)]
+    symbol: String,
+}
+
 /// Application entry point.
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -314,12 +344,54 @@ fn main() -> Result<()> {
         Commands::Query(args) => run_query(args),
         Commands::Note(args) => run_note(args),
         Commands::Mcp(args) => run_mcp(args),
+        Commands::Hotspots(args) => run_hotspots(args),
+        Commands::History(args) => run_history(args),
     }
 }
 
 /// Run the `mcp` subcommand.
 fn run_mcp(args: McpArgs) -> Result<()> {
     run_mcp_server(&args.smg)
+}
+
+/// Run the `hotspots` subcommand.
+fn run_hotspots(args: HotspotsArgs) -> Result<()> {
+    let smg = load_smg_json(&args.smg)
+        .with_context(|| format!("loading SMG from {}", args.smg.display()))?;
+
+    let server = crate::mcp_server::SpectralCortexMcpServer::new(
+        args.smg.display().to_string(),
+        smg,
+    );
+
+    let input = crate::mcp_server::StructuralHotspotsInput {
+        top_k: Some(args.top_k),
+    };
+
+    let output = server.get_structural_hotspots_impl(input)?;
+    println!("{}", output);
+
+    Ok(())
+}
+
+/// Run the `history` subcommand.
+fn run_history(args: HistoryArgs) -> Result<()> {
+    let smg = load_smg_json(&args.smg)
+        .with_context(|| format!("loading SMG from {}", args.smg.display()))?;
+
+    let server = crate::mcp_server::SpectralCortexMcpServer::new(
+        args.smg.display().to_string(),
+        smg,
+    );
+
+    let input = crate::mcp_server::SymbolHistoryInput {
+        symbol_id: args.symbol,
+    };
+
+    let output = server.inspect_symbol_history_impl(input)?;
+    println!("{}", output);
+
+    Ok(())
 }
 
 /// Run the `update` subcommand as an alias for incremental append ingestion.

@@ -271,7 +271,7 @@ impl SpectralCortexMcpServer {
         Ok(out)
     }
 
-    fn get_structural_hotspots_impl(&self, input: StructuralHotspotsInput) -> Result<String> {
+    pub fn get_structural_hotspots_impl(&self, input: StructuralHotspotsInput) -> Result<String> {
         let smg = &self.smg;
         let mut hotspots: HashMap<String, (usize, String)> = HashMap::new();
 
@@ -302,7 +302,7 @@ impl SpectralCortexMcpServer {
         Ok(out)
     }
 
-    fn inspect_symbol_history_impl(&self, input: SymbolHistoryInput) -> Result<String> {
+    pub fn inspect_symbol_history_impl(&self, input: SymbolHistoryInput) -> Result<String> {
         let smg = &self.smg;
         let mut history: Vec<(u64, u32, String)> = Vec::new();
 
