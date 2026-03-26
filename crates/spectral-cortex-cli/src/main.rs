@@ -143,6 +143,18 @@ struct IngestArgs {
     /// Minimum parser confidence for emitting split segments in auto mode (0.0..1.0).
     #[arg(long = "git-commit-split-min-confidence", default_value_t = 0.75)]
     git_commit_split_min_confidence: f32,
+
+    /// Number of spectral embedding dimensions to compute.
+    #[arg(long = "num-spectral-dims")]
+    num_spectral_dims: Option<usize>,
+
+    /// Minimum cluster count allowed by eigengap selection.
+    #[arg(long = "min-clusters")]
+    min_clusters: Option<usize>,
+
+    /// Maximum cluster count allowed by eigengap selection.
+    #[arg(long = "max-clusters")]
+    max_clusters: Option<usize>,
 }
 
 /// Arguments for the `update` subcommand.
@@ -191,6 +203,18 @@ struct UpdateArgs {
     /// Minimum parser confidence for emitting split segments in auto mode (0.0..1.0).
     #[arg(long = "git-commit-split-min-confidence", default_value_t = 0.75)]
     git_commit_split_min_confidence: f32,
+
+    /// Number of spectral embedding dimensions to compute.
+    #[arg(long = "num-spectral-dims")]
+    num_spectral_dims: Option<usize>,
+
+    /// Minimum cluster count allowed by eigengap selection.
+    #[arg(long = "min-clusters")]
+    min_clusters: Option<usize>,
+
+    /// Maximum cluster count allowed by eigengap selection.
+    #[arg(long = "max-clusters")]
+    max_clusters: Option<usize>,
 }
 
 /// Arguments for the `query` subcommand (skeleton).
@@ -331,7 +355,11 @@ struct HistoryArgs {
 
     /// Stable symbol_id to inspect.
     #[arg(short, long)]
-    symbol: String,
+    pub symbol: String,
+
+    /// Maximum number of history entries to return.
+    #[arg(short, long)]
+    pub limit: Option<usize>,
 }
 
 /// Application entry point.
@@ -386,6 +414,7 @@ fn run_history(args: HistoryArgs) -> Result<()> {
 
     let input = crate::mcp_server::SymbolHistoryInput {
         symbol_id: args.symbol,
+        limit: args.limit,
     };
 
     let output = server.inspect_symbol_history_impl(input)?;
@@ -411,6 +440,9 @@ fn run_update(args: UpdateArgs) -> Result<()> {
         git_commit_split_mode: args.git_commit_split_mode,
         git_commit_split_max_segments: args.git_commit_split_max_segments,
         git_commit_split_min_confidence: args.git_commit_split_min_confidence,
+        num_spectral_dims: args.num_spectral_dims,
+        min_clusters: args.min_clusters,
+        max_clusters: args.max_clusters,
     };
     run_ingest(ingest_args)
 }
@@ -620,7 +652,13 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
         }
     });
 
-    smg.build_spectral_structure(Some(progress_cb))
+    // Final configuration: prioritize CLI overrides, then sticky SMG config, then library defaults.
+    let mut config = smg.last_build_config.clone().unwrap_or_else(spectral_cortex::SpectralBuildConfig::default);
+    if let Some(n) = args.num_spectral_dims { config.num_spectral_dims = n; }
+    if let Some(n) = args.min_clusters { config.min_clusters = n; }
+    if let Some(n) = args.max_clusters { config.max_clusters = n; }
+
+    smg.build_spectral_structure_with_config(Some(progress_cb), &config)
         .context("building spectral structures")?;
     spectral_bar.finish_with_message("Spectral build complete.");
 

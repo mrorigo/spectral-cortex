@@ -199,27 +199,6 @@ pub fn boost_with_structural_links(
         }
     }
 }
-// pub fn cosine_similarity_matrix(x: &Array2<f32>) -> Array2<f32> {
-//     let n = x.nrows();
-//     let mut sim = Array2::<f32>::zeros((n, n));
-//     for i in 0..n {
-//         let vi = x.slice(s![i, ..]);
-//         let norm_i = vi.iter().map(|v| v * v).sum::<f32>().sqrt();
-//         for j in i..n {
-//             let vj = x.slice(s![j, ..]);
-//             let dot: f32 = vi.iter().zip(vj.iter()).map(|(a, b)| a * b).sum();
-//             let norm_j = vj.iter().map(|v| v * v).sum::<f32>().sqrt();
-//             let cosine = if norm_i == 0.0 || norm_j == 0.0 {
-//                 0.0
-//             } else {
-//                 dot / (norm_i * norm_j)
-//             };
-//             sim[(i, j)] = cosine;
-//             sim[(j, i)] = cosine;
-//         }
-//     }
-//     sim
-// }
 
 /// Sparsify adjacency matrix in-place by zeroing entries below `threshold` and forcing diagonal zero.
 ///

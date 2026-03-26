@@ -68,6 +68,8 @@ pub struct StructuralHotspotsInput {
 pub struct SymbolHistoryInput {
     #[schemars(description = "Stable symbol_id to inspect")]
     pub symbol_id: String,
+    #[schemars(description = "Maximum number of history entries to return (default: all)")]
+    pub limit: Option<usize>,
 }
 
 /// MCP server that provides compact tools for SMG query and inspection.
@@ -315,9 +317,23 @@ impl SpectralCortexMcpServer {
         }
 
         history.sort_by_key(|&(ts, _, _)| ts);
+        
+        // Reverse so that we show most recent first if we are limiting
+        history.reverse();
+        
+        let total_found = history.len();
+        if let Some(limit) = input.limit {
+            if history.len() > limit {
+                history.truncate(limit);
+            }
+        }
 
         let mut out = String::new();
         out.push_str(&format!("# Symbol History: `{}`\n", input.symbol_id));
+        if let Some(limit) = input.limit {
+             out.push_str(&format!("- showing last {} of {} entries\n", history.len(), total_found));
+        }
+
         if history.is_empty() {
             out.push_str("No history found for this symbol.\n");
             return Ok(out);

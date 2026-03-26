@@ -99,6 +99,12 @@ impl SerializableSMG {
             "spectral-cortex-v1".to_string(),
         );
 
+        if let Some(config) = &smg.last_build_config {
+            metadata.insert("num_spectral_dims".to_string(), config.num_spectral_dims.to_string());
+            metadata.insert("min_clusters".to_string(), config.min_clusters.to_string());
+            metadata.insert("max_clusters".to_string(), config.max_clusters.to_string());
+        }
+
         Self {
             metadata,
             notes,
@@ -161,6 +167,31 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
 
     // Create a fresh graph (this also initialises logging/embedder per existing API).
     let mut smg = SpectralMemoryGraph::new()?;
+
+    // Restore last build config if present in metadata
+    let mut config = SpectralBuildConfig::default();
+    let mut has_config = false;
+    if let Some(val) = serial.metadata.get("num_spectral_dims") {
+        if let Ok(n) = val.parse::<usize>() {
+            config.num_spectral_dims = n;
+            has_config = true;
+        }
+    }
+    if let Some(val) = serial.metadata.get("min_clusters") {
+        if let Ok(n) = val.parse::<usize>() {
+            config.min_clusters = n;
+            has_config = true;
+        }
+    }
+    if let Some(val) = serial.metadata.get("max_clusters") {
+        if let Ok(n) = val.parse::<usize>() {
+            config.max_clusters = n;
+            has_config = true;
+        }
+    }
+    if has_config {
+        smg.last_build_config = Some(config);
+    }
 
     // Insert notes back into the graph.
     for sn in serial.notes.into_iter() {

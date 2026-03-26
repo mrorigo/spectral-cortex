@@ -15,7 +15,6 @@ fn test_assemble_and_cosine() {
         SMGNote {
             note_id: 1,
             raw_content: "a".to_string(),
-            context: "".to_string(),
             embedding: vec![1.0_f32, 0.0, 0.0],
             norm: 1.0,
             source_turn_ids: vec![],
@@ -26,6 +25,7 @@ fn test_assemble_and_cosine() {
             symbol_id: None,
             ast_node_type: None,
             structural_links: vec![],
+            file_path: Some("file1.rs".to_string())
         },
     );
     notes.insert(
@@ -33,7 +33,6 @@ fn test_assemble_and_cosine() {
         SMGNote {
             note_id: 2,
             raw_content: "b".to_string(),
-            context: "".to_string(),
             embedding: vec![0.0_f32, 1.0, 0.0],
             norm: 1.0,
             source_turn_ids: vec![],
@@ -44,6 +43,7 @@ fn test_assemble_and_cosine() {
             symbol_id: None,
             ast_node_type: None,
             structural_links: vec![],
+            file_path: Some("file1.rs".to_string())
         },
     );
 

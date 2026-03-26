@@ -42,6 +42,8 @@ pub struct SpectralMemoryGraph {
     pub cluster_centroids: Option<HashMap<usize, Vec<f32>>>, // optional mean embeddings per cluster
     pub cluster_centroid_norms: Option<HashMap<usize, f32>>, // precomputed L2 norms of centroids for fast cosine similarity
     pub long_range_links: Option<Vec<(u32, u32, f32)>>, // (note_id_a, note_id_b, spectral_similarity)
+    /// The configuration used during the last spectral build.
+    pub last_build_config: Option<SpectralBuildConfig>,
 }
 
 /// Configurable parameters for spectral-structure construction.
@@ -128,6 +130,7 @@ impl SpectralMemoryGraph {
             cluster_centroids: None,
             cluster_centroid_norms: None,
             long_range_links: None,
+            last_build_config: None,
         })
     }
 
@@ -354,6 +357,8 @@ impl SpectralMemoryGraph {
             eigengap_heuristic, normalized_laplacian_sparse, run_kmeans_on_spectral, sparsify_adj,
             spectral_decomposition_sparse, to_sparse,
         };
+        
+        self.last_build_config = Some(config.clone());
 
         config.validate()?;
 
