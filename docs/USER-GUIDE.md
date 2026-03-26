@@ -223,6 +223,21 @@ Spectral structures are always rebuilt during `ingest` and `update`.
 
 1. Confidence threshold used in `auto` mode.
 
+`--num-spectral-dims <N>`
+
+1. Number of spectral embedding dimensions to compute.
+2. Default `8`.
+
+`--min-clusters <N>`
+
+1. Minimum cluster count allowed by eigengap selection.
+2. Default `2`.
+
+`--max-clusters <N>`
+
+1. Maximum cluster count allowed by eigengap selection.
+2. Default `8`.
+
 ### Ingest Output You’ll See
 
 Typical output includes:
@@ -485,8 +500,10 @@ smg.build_spectral_structure_with_config(None, &config)?;
 
 `num_spectral_dims`
 
-1. Higher can capture more structure but may increase noise/cost.
-2. Start around `8-16`.
+1. This is the "spectral resolution" or degrees of freedom used for clustering.
+2. Values should typically be greater than or equal to `max_clusters`.
+3. If set too low, distinct modules may be merged; if set too high, notice increases and small partitions become unstable.
+4. Start around `8–16`.
 
 `adj_sparse_threshold`
 
@@ -504,7 +521,10 @@ smg.build_spectral_structure_with_config(None, &config)?;
 `min_clusters` and `max_clusters`
 
 1. Bounds around eigengap-selected cluster count.
-2. Use narrower bounds for more stable cluster cardinality across runs.
+2. **Architectural Match**: `max_clusters` should roughly match the number of high-level modules or logical "areas" in the codebase.
+3. For small projects, `2-5` is plenty; for large monolithic systems, `15+` may be useful.
+4. The internal eigengap heuristic chooses the most natural jump between eigenvalues within these bounds to decide the final cluster count.
+5. Use narrower bounds for more stable cluster cardinality across runs.
 
 ## Recommended Workflows
 

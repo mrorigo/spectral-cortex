@@ -227,6 +227,9 @@ Key ingest/update filtering flags:
 - `--git-commit-split-mode <off|auto|strict|ast>`: split multi-change commit messages. `ast` uses tree-sitter.
 - `--git-commit-split-max-segments <n>`: cap segments per commit.
 - `--git-commit-split-min-confidence <0..1>`: confidence threshold for `auto`.
+- `--num-spectral-dims <n>`: number of spectral dimensions (k) to compute (default 8).
+- `--min-clusters <n>`: minimum clusters allowed (default 2).
+- `--max-clusters <n>`: maximum clusters allowed (default 8).
 
 Git hook automation (post-commit)
 ---------------------------------
@@ -264,9 +267,16 @@ Notes:
 - `--no-temporal` disables temporal scoring when you need canonical, time-agnostic retrieval.
 - `--min-score` is applied to `final_score`, so agent clients can filter noisy candidates consistently.
 
-Build behavior
---------------
 `ingest` and `update` always rebuild spectral structures after ingesting turns.
+
+Spectral Building Intuition
+---------------------------
+When tuning the spectral structure (clusters and dimensions), consider the following:
+
+- **Architectural Match**: `max_clusters` should roughly correspond to the number of top-level modules or logical "areas" in your codebase. For a medium-sized project, 5–15 clusters is usually a good starting point.
+- **Spectral Resolution**: `num_spectral_dims` (k) defines the dimensionality of the spectral embedding before clustering. It should typically be greater than or equal to `max_clusters`. Higher values capture more structural nuance but can introduce noise.
+- **Eigengap Heuristic**: The internal algorithm uses the "eigengap" (the largest jump between sorted eigenvalues) to choose the optimal cluster count within your `min`/`max` bounds. A strong gap indicates a "natural" partition in the semantic/structural graph.
+- **Stickiness**: Settings used during `ingest` are stored in the SMG JSON metadata and automatically reused during `update` unless overridden by CLI flags.
 
 Library API & data model
 ------------------------
