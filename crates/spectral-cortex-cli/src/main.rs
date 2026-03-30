@@ -463,12 +463,16 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 fn run_ingest(args: IngestArgs) -> Result<()> {
     println!("Starting ingest for repo: {}", args.repo.display());
 
-    // Initialize embedding pool with CLI parameters
+    // Initialize embedding pool asynchronously to overlap with commit collection
     println!(
-        "Initializing embedding pool with {} workers...",
+        "Initializing embedding pool with {} workers (background)...",
         args.workers
     );
-    embed::init(args.workers, args.cache_size).with_context(|| "initializing embedding pool")?;
+    let workers = args.workers;
+    let cache_size = args.cache_size;
+    let init_handle = std::thread::spawn(move || {
+        embed::init(workers, cache_size)
+    });
 
     // Ensure pool is shut down even if ingestion fails
     let _guard = scopeguard::guard((), |_| {
@@ -623,6 +627,11 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
             bar.set_position((fraction * total_turns as f32).floor() as u64);
         }
     });
+
+    // Synchronize with background embedding pool initialization
+    init_handle.join()
+        .map_err(|_| anyhow::anyhow!("embedding pool initialization thread panicked"))?
+        .with_context(|| "initializing embedding pool (background join)")?;
 
     smg.ingest_turns_batch(&turns, Some(progress_cb))
         .with_context(|| "batch embedding turns")?;
