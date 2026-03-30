@@ -26,6 +26,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use rayon::prelude::*;
+
 use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -696,6 +698,18 @@ struct GitFilterStats {
     total_chars_after: usize,
 }
 
+impl GitFilterStats {
+    fn merge(&mut self, other: Self) {
+        self.total_commits_seen = self.total_commits_seen.saturating_add(other.total_commits_seen);
+        self.commits_kept = self.commits_kept.saturating_add(other.commits_kept);
+        self.commits_skipped_empty =
+            self.commits_skipped_empty.saturating_add(other.commits_skipped_empty);
+        self.lines_dropped = self.lines_dropped.saturating_add(other.lines_dropped);
+        self.total_chars_before = self.total_chars_before.saturating_add(other.total_chars_before);
+        self.total_chars_after = self.total_chars_after.saturating_add(other.total_chars_after);
+    }
+}
+
 #[derive(Debug)]
 struct GitFilterConfig {
     drop_patterns: Vec<Regex>,
@@ -1295,10 +1309,16 @@ fn collect_commits(
         revwalk.push_head()?;
         revwalk.set_sorting(Sort::TIME)?;
 
-        let mut turns: Vec<ConversationTurn> = Vec::new();
-        let mut filter_stats = GitFilterStats::default();
-        let mut split_stats = CommitSplitStats::default();
-        let mut idx: u64 = 1;
+        // 1. Collect OIDs sequentially (this is fast metadata walk)
+        let mut oids = Vec::new();
+        for oid_result in revwalk {
+            if let Some(limit) = max_commits {
+                if oids.len() >= limit {
+                    break;
+                }
+            }
+            oids.push(oid_result?);
+        }
 
         let pb = if let Some(limit) = max_commits {
             let p = ProgressBar::new(limit as u64);
@@ -1314,73 +1334,114 @@ fn collect_commits(
                 .unwrap());
             p
         };
-        
+
         pb.set_message("Scanning commits...");
 
-        for (i, oid_result) in revwalk.enumerate() {
-            if let Some(limit) = max_commits {
-                if i >= limit {
-                    break;
-                }
-            }
-            let oid = oid_result?;
-            let commit = repo.find_commit(oid)?;
-
-            // Extract commit data.
-            let author = commit.author();
-            let author_name = author.name().unwrap_or("unknown").to_string();
-            let message = commit.message().unwrap_or("").to_string();
-            let filtered_content =
-                match apply_git_line_filters(&message, filters, &mut filter_stats) {
-                    Some(content) => content,
-                    None => continue,
-                };
-
-            // Timestamp seconds -> u64
-            let time = commit.time();
-            let timestamp = time.seconds() as u64;
-
-            let commit_id = oid.to_string();
-            pb.set_message(format!("Commit {}", &commit_id[..8]));
-            
-            let segments = if split_config.mode == crate::git_commit_split::CommitSplitMode::Ast {
-                crate::git_commit_split::split_commit_with_ast(&repo, &commit, &filtered_content, split_config, &mut split_stats, registry)?
-            } else {
-                split_commit_message(&filtered_content, split_config, &mut split_stats)
-            };
-
-            for segment in segments {
-                let mut full_content = segment.header.clone();
-                if !segment.details.is_empty() {
-                    full_content.push('\n');
-                    full_content.push_str(&segment.details.join("\n"));
-                }
-
-                let turn = ConversationTurn {
-                    turn_id: idx,
-                    speaker: author_name.clone(),
-                    content: full_content,
-                    topic: "git".to_string(),
-                    entities: Vec::new(),
-                    // Record the originating commit id (hex) for easy lookup from query results.
-                    commit_id: Some(commit_id.clone()),
-                    timestamp,
-                    symbol_id: segment.symbol_id.clone(),
-                    ast_node_type: segment.ast_node_type.clone(),
-                    file_path: segment.file_path.clone(),
-                };
-
-                turns.push(turn);
-                idx = idx.saturating_add(1);
-            }
-            pb.inc(1);
+        // Define a container for parallel results
+        struct ParallelBatch {
+            turns: Vec<ConversationTurn>,
+            filter_stats: GitFilterStats,
+            split_stats: CommitSplitStats,
         }
+
+        // 2. Process commits in parallel
+        let results: Result<Vec<ParallelBatch>> = oids
+            .par_iter()
+            .map(|&oid| {
+                let local_repo = git2::Repository::open(repo_path)
+                    .with_context(|| "opening local repository handle for thread")?;
+                let commit = local_repo.find_commit(oid)?;
+
+                let mut local_filter_stats = GitFilterStats::default();
+                let mut local_split_stats = CommitSplitStats::default();
+
+                let author = commit.author();
+                let author_name = author.name().unwrap_or("unknown").to_string();
+                let message = commit.message().unwrap_or("").to_string();
+                let filtered_content =
+                    match apply_git_line_filters(&message, filters, &mut local_filter_stats) {
+                        Some(content) => content,
+                        None => {
+                            pb.inc(1);
+                            return Ok(ParallelBatch {
+                                turns: Vec::new(),
+                                filter_stats: local_filter_stats,
+                                split_stats: local_split_stats,
+                            });
+                        }
+                    };
+
+                let time = commit.time();
+                let timestamp = time.seconds() as u64;
+                let commit_id = oid.to_string();
+
+                let segments = if split_config.mode == crate::git_commit_split::CommitSplitMode::Ast {
+                    crate::git_commit_split::split_commit_with_ast(
+                        &local_repo,
+                        &commit,
+                        &filtered_content,
+                        split_config,
+                        &mut local_split_stats,
+                        registry,
+                    )?
+                } else {
+                    split_commit_message(&filtered_content, split_config, &mut local_split_stats)
+                };
+
+                let mut local_turns = Vec::with_capacity(segments.len());
+                for segment in segments {
+                    let mut full_content = segment.header.clone();
+                    if !segment.details.is_empty() {
+                        full_content.push('\n');
+                        full_content.push_str(&segment.details.join("\n"));
+                    }
+
+                    local_turns.push(ConversationTurn {
+                        turn_id: 0, // Placeholder, will be set during reduction
+                        speaker: author_name.clone(),
+                        content: full_content,
+                        topic: "git".to_string(),
+                        entities: Vec::new(),
+                        commit_id: Some(commit_id.clone()),
+                        timestamp,
+                        symbol_id: segment.symbol_id.clone(),
+                        ast_node_type: segment.ast_node_type.clone(),
+                        file_path: segment.file_path.clone(),
+                    });
+                }
+
+                pb.inc(1);
+                Ok(ParallelBatch {
+                    turns: local_turns,
+                    filter_stats: local_filter_stats,
+                    split_stats: local_split_stats,
+                })
+            })
+            .collect();
+
         pb.finish_with_message("Ingestion scan complete");
 
+        // 3. Reduction phase: combine everything back together
+        let batches = results?;
+        let mut final_turns = Vec::new();
+        let mut final_filter_stats = GitFilterStats::default();
+        let mut final_split_stats = CommitSplitStats::default();
+
+        for batch in batches {
+            final_turns.extend(batch.turns);
+            final_filter_stats.merge(batch.filter_stats);
+            final_split_stats.merge(batch.split_stats);
+        }
+
+        // Re-assign turn IDs sequentially for consistency (though they are overwritten later)
+        for (i, turn) in final_turns.iter_mut().enumerate() {
+            turn.turn_id = (i + 1) as u64;
+        }
+
         Ok(CollectCommitsOutput {
-            turns,
-            filter_stats,
-            split_stats,
+            turns: final_turns,
+            filter_stats: final_filter_stats,
+            split_stats: final_split_stats,
         })
     }
 

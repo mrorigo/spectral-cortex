@@ -3162,6 +3162,7 @@ dependencies = [
  "git2",
  "indicatif 0.17.11",
  "num",
+ "rayon",
  "regex",
  "rmcp",
  "scopeguard",

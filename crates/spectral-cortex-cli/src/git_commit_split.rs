@@ -75,7 +75,7 @@ impl CommitSplitConfig {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct CommitSplitStats {
     pub(crate) commits_seen: usize,
     pub(crate) commits_split: usize,
@@ -84,6 +84,23 @@ pub(crate) struct CommitSplitStats {
     pub(crate) segments_from_headers: usize,
     pub(crate) segments_from_bullets: usize,
     pub(crate) segments_from_paragraphs: usize,
+}
+
+impl CommitSplitStats {
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.commits_seen = self.commits_seen.saturating_add(other.commits_seen);
+        self.commits_split = self.commits_split.saturating_add(other.commits_split);
+        self.total_segments_emitted =
+            self.total_segments_emitted.saturating_add(other.total_segments_emitted);
+        self.fallback_to_single =
+            self.fallback_to_single.saturating_add(other.fallback_to_single);
+        self.segments_from_headers =
+            self.segments_from_headers.saturating_add(other.segments_from_headers);
+        self.segments_from_bullets =
+            self.segments_from_bullets.saturating_add(other.segments_from_bullets);
+        self.segments_from_paragraphs =
+            self.segments_from_paragraphs.saturating_add(other.segments_from_paragraphs);
+    }
 }
 
 fn is_conventional_header(line: &str) -> bool {
