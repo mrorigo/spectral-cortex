@@ -958,10 +958,15 @@ fn run_query(args: QueryArgs) -> Result<()> {
 
     if args.json {
         // Produce a JSON payload including note content, metadata and score for each returned turn.
-        let mut results: Vec<serde_json::Value> = Vec::with_capacity(final_results.len());
+        // Prepare grouped results by commit
+        let mut primary_results: Vec<(String, serde_json::Value)> = Vec::new();
+        let mut fallback_results: Vec<serde_json::Value> = Vec::new();
+        let mut seen_commits: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         // Prepare a deterministic ordering of notes to map cluster labels (if present).
         let mut note_ids: Vec<u32> = smg.notes.keys().cloned().collect();
         note_ids.sort_unstable();
+
         for (tid, score) in final_results.iter() {
             // Find a note that contains this turn id.
             let mut found: Option<(u32, &spectral_cortex::model::smg_note::SMGNote)> = None;
@@ -983,7 +988,7 @@ fn run_query(args: QueryArgs) -> Result<()> {
 
                 // Base object for the note (include score and commit id).
                 let related_notes: Vec<serde_json::Value> = smg
-                    .get_related_note_links(nid, args.links_k)
+                    .get_related_note_links(nid, args.links_k.or(Some(5)))
                     .into_iter()
                     .map(|(related_nid, sim)| {
                         serde_json::json!({
@@ -1004,8 +1009,8 @@ fn run_query(args: QueryArgs) -> Result<()> {
                     "context": note.context(),
                     "source_turn_ids": note.source_turn_ids,
                     "related_notes": related_notes,
-                    "commit_id": commit_id_for_turn,
                 });
+                
                 // If cluster labels are present, map the note id to its label using the sorted ordering.
                 if let Some(labels) = smg.cluster_labels.as_ref() {
                     if let Some(idx) = note_ids.iter().position(|x| x == &nid) {
@@ -1020,12 +1025,35 @@ fn run_query(args: QueryArgs) -> Result<()> {
                         }
                     }
                 }
-                results.push(obj);
+
+                // Group by commit ID if present
+                if let Some(ref cid) = commit_id_for_turn {
+                    if !seen_commits.contains(cid) {
+                        seen_commits.insert(cid.clone());
+                        // Initialize contextual hits array
+                        if let Some(map) = obj.as_object_mut() {
+                            map.insert("contextual_hits".to_string(), serde_json::json!([]));
+                        }
+                        primary_results.push((cid.clone(), obj));
+                    } else {
+                        // Push to the primary result's contextual_hits array
+                        if let Some((_, primary_obj)) = primary_results.iter_mut().find(|(c, _)| c == cid) {
+                            if let Some(hits) = primary_obj.get_mut("contextual_hits").and_then(|h| h.as_array_mut()) {
+                                hits.push(obj);
+                            }
+                        }
+                    }
+                } else {
+                    fallback_results.push(obj);
+                }
             } else {
                 // No associated note found; include the turn id and score only.
-                results.push(serde_json::json!({ "turn_id": tid, "score": score }));
+                fallback_results.push(serde_json::json!({ "turn_id": tid, "score": score }));
             }
         }
+        
+        let mut results: Vec<serde_json::Value> = primary_results.into_iter().map(|(_, obj)| obj).collect();
+        results.extend(fallback_results);
         // Echo the effective temporal configuration in the JSON output.
         let temporal_info = json!({
             "enabled": !args.no_temporal,
@@ -1037,7 +1065,7 @@ fn run_query(args: QueryArgs) -> Result<()> {
 
         // Get long-range links if requested
         let long_range_links: Vec<serde_json::Value> = smg
-            .get_long_range_links(args.links_k)
+            .get_long_range_links(args.links_k.or(Some(5)))
             .into_iter()
             .map(|(a, b, score)| {
                 serde_json::json!({

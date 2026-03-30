@@ -330,7 +330,7 @@ impl SpectralCortexMcpServer {
 
         let mut out = String::new();
         out.push_str(&format!("# Symbol History: `{}`\n", input.symbol_id));
-        if let Some(limit) = input.limit {
+        if let Some(_limit) = input.limit {
              out.push_str(&format!("- showing last {} of {} entries\n", history.len(), total_found));
         }
 

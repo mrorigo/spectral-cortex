@@ -361,35 +361,63 @@ pub(crate) fn split_commit_with_ast(
 
     let mut seen_symbols = HashSet::new();
 
-    // Iterate over delta/hunks to find modified symbols
+    // 1. Collect modified line ranges per file
+    let mut modified_lines_per_file: std::collections::HashMap<String, Vec<std::ops::Range<u32>>> = std::collections::HashMap::new();
+
+    diff.foreach(
+        &mut |_, _| true, // file_cb
+        None, // binary_cb
+        Some(&mut |delta, hunk| {
+            if let Some(path) = delta.new_file().path() {
+                let path_str = path.to_string_lossy().to_string();
+                // hunk.new_start() is 1-indexed. Tree-sitter is 0-indexed.
+                // We use 0-indexed values for tree-sitter line checks.
+                let start_line = hunk.new_start().saturating_sub(1);
+                let end_line = start_line + hunk.new_lines();
+                modified_lines_per_file.entry(path_str).or_default().push(start_line..end_line);
+            }
+            true
+        }),
+        None, // line_cb
+    )?;
+
+    // 2. Iterate over the files we know were modified
     diff.foreach(
         &mut |delta, _| {
             let path = delta.new_file().path();
             if let Some(path) = path {
-                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                    if let Some(parser) = registry.get(ext) {
-                        // We found a supported language
-                        // In a real implementation, we'd load the file content here.
-                        // For this implementation, we'll assume we can get the content from the tree.
-                        if let Ok(blob) = repo.find_blob(delta.new_file().id()) {
-                            let content = String::from_utf8_lossy(blob.content());
-                            
-                            // Initialize tree-sitter parser for this file
-                            let mut ts_parser = tree_sitter::Parser::new();
-                            let lang = match ext {
-                                "rs" => tree_sitter_rust::LANGUAGE,
-                                "ts" | "tsx" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
-                                "js" | "jsx" => tree_sitter_javascript::LANGUAGE,
-                                "py" => tree_sitter_python::LANGUAGE,
-                                _ => return true, // skip
-                            };
-                            ts_parser.set_language(&lang.into()).ok();
-                            
-                            if let Some(tree) = ts_parser.parse(content.as_ref(), None) {
-                                // For now, we'll just extract all symbols in the file.
-                                // A higher-fidelity version would only extract symbols touched by diff hunks.
-                                let path_str = path.to_string_lossy();
-                                extract_symbols(tree.root_node(), content.as_ref(), parser, &mut segments, &mut seen_symbols, &path_str, message);
+                let path_str = path.to_string_lossy().to_string();
+                if let Some(modified_ranges) = modified_lines_per_file.get(&path_str) {
+                    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+                        if let Some(parser) = registry.get(ext) {
+                            // We found a supported language
+                            if let Ok(blob) = repo.find_blob(delta.new_file().id()) {
+                                let content = String::from_utf8_lossy(blob.content());
+                                
+                                // Initialize tree-sitter parser for this file
+                                let mut ts_parser = tree_sitter::Parser::new();
+                                let lang = match ext {
+                                    "rs" => tree_sitter_rust::LANGUAGE,
+                                    "ts" | "tsx" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
+                                    "js" | "jsx" => tree_sitter_javascript::LANGUAGE,
+                                    "py" => tree_sitter_python::LANGUAGE,
+                                    _ => return true, // skip
+                                };
+                                ts_parser.set_language(&lang.into()).ok();
+                                
+                                if let Some(tree) = ts_parser.parse(content.as_ref(), None) {
+                                    // Extract only symbols touched by diff hunks
+                                    extract_symbols(
+                                        tree.root_node(), 
+                                        content.as_ref(), 
+                                        parser, 
+                                        &mut segments, 
+                                        &mut seen_symbols, 
+                                        &path_str, 
+                                        message,
+                                        modified_ranges
+                                    );
+                                }
                             }
                         }
                     }
@@ -420,7 +448,21 @@ fn extract_symbols(
     seen_symbols: &mut HashSet<String>,
     path: &str,
     message: &str,
+    modified_ranges: &[std::ops::Range<u32>],
 ) {
+    let start_row = node.start_position().row as u32;
+    let end_row = node.end_position().row as u32;
+    
+    // Check if node intersects with any modified hunks
+    let is_modified = modified_ranges.iter().any(|range| {
+        start_row < range.end && end_row >= range.start
+    });
+
+    // If this node (and therefore all its children) does not overlap with any modified lines, skip it.
+    if !is_modified {
+        return;
+    }
+
     let kind = node.kind();
     if parser.symbol_node_types().contains(&kind) {
         if let Some(symbol_id) = parser.extract_symbol_id(node, source) {
@@ -452,7 +494,7 @@ fn extract_symbols(
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            extract_symbols(child, source, parser, segments, seen_symbols, path, message);
+            extract_symbols(child, source, parser, segments, seen_symbols, path, message, modified_ranges);
         }
     }
 }
