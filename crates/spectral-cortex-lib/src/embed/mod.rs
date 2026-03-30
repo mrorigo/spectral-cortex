@@ -22,11 +22,11 @@ mod real {
     use anyhow::Result;
     use once_cell::sync::Lazy;
     use rust_embed::pool::{EmbeddingPool, ModelType, PoolConfig};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
     /// Global embedding pool guarded by a mutex for thread‑safety.
-    static POOL: Lazy<Mutex<Option<EmbeddingPool>>> = Lazy::new(|| Mutex::new(None));
+    static POOL: Lazy<Mutex<Option<Arc<EmbeddingPool>>>> = Lazy::new(|| Mutex::new(None));
 
     /// Initialize the embedding pool with specified configuration.
     /// Must be called before any embedding operations.
@@ -49,7 +49,7 @@ mod real {
         let pool = EmbeddingPool::new(config)?;
 
         let mut guard = POOL.lock().unwrap();
-        *guard = Some(pool);
+        *guard = Some(Arc::new(pool));
 
         eprintln!(
             "Embedding pool initialized with {} workers in {:?}",
@@ -61,10 +61,13 @@ mod real {
 
     /// Embed a single piece of text, returning a plain `Vec<f32>`.
     pub fn get_embedding(text: &str) -> Result<Vec<f32>> {
-        let guard = POOL.lock().unwrap();
-        let pool = guard
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Pool not initialized. Call init() first."))?;
+        let pool: Arc<EmbeddingPool> = {
+            let guard = POOL.lock().unwrap();
+            guard
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Pool not initialized. Call init() first."))?
+        };
 
         let results = pool.embed_batch(vec![text.to_string()])?;
         Ok(results.into_iter().next().unwrap().to_vec())
@@ -85,52 +88,71 @@ mod real {
             return Ok(vec![]);
         }
 
-        let guard = POOL.lock().unwrap();
-        let pool = guard
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Pool not initialized. Call init() first."))?;
+        let pool: Arc<EmbeddingPool> = {
+            let guard = POOL.lock().unwrap();
+            guard
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Pool not initialized. Call init() first."))?
+        };
 
-        // Process in chunks to provide progress updates
-        // Use an atomic counter to track completed items for thread-safe progress
-        let mut completed = 0; // Arc::new(AtomicUsize::new(0));
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Use a smaller chunk size for more frequent progress updates.
+        // Concurrency from rayon and the underlying pool will still ensure high throughput.
         let total = texts.len();
+        let chunk_size = 32; 
+        let chunks: Vec<_> = texts.chunks(chunk_size).collect();
+        
+        let completed = Arc::new(AtomicUsize::new(0));
+        let progress_cb = progress.clone();
 
-        // Clone the progress callback for use in parallel context
-        let progress_clone = progress.clone();
-
-        // Use Rayon to process chunks in parallel for progress tracking
-        // The pool handles the actual embedding parallelism internally
-        let results: Vec<Vec<Vec<f32>>> = texts
-            .chunks(32)
+        let results: Result<Vec<Vec<Vec<f32>>>> = chunks
+            .into_par_iter()
             .map(|chunk| {
-                // Embed this chunk using the pool (which has its own worker threads)
+                let pool = pool.clone();
+                // Embed this chunk using the pool (which has its own internal worker threads)
                 let chunk_results = pool.embed_batch(chunk.to_vec())?;
 
-                if let Some(ref cb) = progress_clone {
-                    let chunk_len = chunk.len();
-                    completed += chunk_len;
-                    let fraction = (completed.min(total) as f32) / (total as f32);
+                let converted: Vec<Vec<f32>> = chunk_results
+                    .into_iter()
+                    .map(|arr| arr.iter().copied().collect::<Vec<f32>>())
+                    .collect();
+
+                if let Some(ref cb) = progress_cb {
+                    let current = completed.fetch_add(chunk.len(), Ordering::SeqCst) + chunk.len();
+                    let fraction = (current as f32) / (total as f32);
                     cb("Embedding".to_string(), fraction);
                 }
 
-                Ok(chunk_results.into_iter().map(|arr| arr.to_vec()).collect())
+                Ok(converted)
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect();
 
-        // Flatten the chunk results into a single vector
-        let mut flattened = Vec::with_capacity(total);
-        for chunk_results in results {
-            flattened.extend(chunk_results);
+        let mut all_results = Vec::with_capacity(total);
+        for chunk_res in results? {
+            all_results.extend(chunk_res);
         }
 
-        Ok(flattened)
+        Ok(all_results)
     }
 
     /// Shutdown the pool gracefully.
     pub fn shutdown() -> Result<()> {
         let mut guard = POOL.lock().unwrap();
-        if let Some(pool) = guard.take() {
-            pool.shutdown()?;
+        if let Some(arc_pool) = guard.take() {
+            // Attempt to gain ownership of the pool to call its `shutdown(self)` method.
+            // If other Arcs still exist, we can't call `shutdown(self)` directly, 
+            // but in the context of this CLI, we shouldn't have leaked other Arcs.
+            match Arc::try_unwrap(arc_pool) {
+                Ok(pool) => pool.shutdown()?,
+                Err(_) => {
+                    // Fallback: If for some reason other references exist, we can't 
+                    // call the ownership-taking shutdown. 
+                    anyhow::bail!("Cannot shutdown EmbeddingPool: other references still exist.");
+                }
+            }
         }
         Ok(())
     }
