@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spectral Cortex — Git History as Cognitive Memory for AI Agents</title>
+  <meta name="description"
+    content="Spectral Cortex is an open-source Rust engine that converts Git history into a Spectral Memory Graph (SMG), giving AI agents structured, traceable, temporal-aware retrieval over your codebase's evolution." />
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+
+  <!-- Background layers -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow bg-glow--top" aria-hidden="true"></div>
+  <div class="bg-glow bg-glow--bottom" aria-hidden="true"></div>
+
+  <div class="page-wrapper">
+
+    <!-- ═══════════════════ HEADER ═══════════════════ -->
+    <header class="site-header" id="top">
+      <div class="container">
+        <a href="#top" class="logo">
+          <div class="logo-icon"><span class="material-symbols-outlined">neurology</span></div>
+          Spectral Cortex
+        </a>
+        <nav class="nav-links" aria-label="Primary navigation">
+          <a href="#problem">Why</a>
+          <a href="#how">How It Works</a>
+          <a href="#features">Capabilities</a>
+          <a href="#mcp">MCP Tools</a>
+          <a href="#usecases">Use Cases</a>
+          <a href="https://github.com/mrorigo/spectral-cortex" target="_blank" rel="noopener" class="nav-cta">
+            <span class="material-symbols-outlined" style="font-size:1rem">code</span>
+            GitHub
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <!-- ═══════════════════ HERO ═══════════════════ -->
+    <section class="hero" id="hero">
+      <div class="container">
+        <div class="hero-badge">
+          <span class="pulse"></span>
+          Open-Source &middot; Local-First &middot; Rust
+        </div>
+
+        <h1>Git History, as Cognitive Memory</h1>
+
+        <p class="hero-sub">
+          Spectral Cortex converts your repository's commit history into a
+          <strong>Spectral Memory Graph</strong> — a structured, queryable memory
+          layer that lets AI agents retrieve <em>why</em> code changed, not just what.
+        </p>
+
+        <div class="hero-actions">
+          <a href="https://github.com/mrorigo/spectral-cortex" target="_blank" rel="noopener" class="btn btn--primary">
+            <span class="material-symbols-outlined">rocket_launch</span>
+            View on GitHub
+          </a>
+          <a href="#how" class="btn btn--ghost">
+            <span class="material-symbols-outlined">school</span>
+            How It Works
+          </a>
+        </div>
+
+        <code class="hero-install"><span>$</span> cargo install --path crates/spectral-cortex-cli</code>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ PROBLEM ═══════════════════ -->
+    <section class="problem" id="problem">
+      <div class="container">
+        <span class="section-label">The Problem</span>
+        <h2 class="section-title">Your codebase knows why it changed. <br />But nobody can find the answer.</h2>
+        <p class="section-desc">
+          Developers spend an average of 1.4 hours per incident performing "git archaeology"
+          — tracing blame through refactors, sifting through noisy logs, piecing together intent
+          from squashed diffs. AI agents hit the same wall: context windows can't hold a monorepo.
+        </p>
+
+        <div class="pain-grid">
+          <div class="pain-card">
+            <div class="icon icon--violet"><span class="material-symbols-outlined">search_off</span></div>
+            <h3>Blame Dead-Ends</h3>
+            <p><code>git blame</code> surfaces cosmetic refactors and reformats, forcing engineers to peel back layers
+              of history to find the real decision commit.</p>
+          </div>
+          <div class="pain-card">
+            <div class="icon icon--fuchsia"><span class="material-symbols-outlined">merge_type</span></div>
+            <h3>Multi-Topic Commits</h3>
+            <p>Real-world commits often pack unrelated changes into a single message. Keyword search treats them as one
+              unit, polluting retrieval results.</p>
+          </div>
+          <div class="pain-card">
+            <div class="icon icon--blue"><span class="material-symbols-outlined">token</span></div>
+            <h3>Context Window Limits</h3>
+            <p>Enterprise monorepos span millions of tokens. Stuffing raw history into an LLM prompt is fragile,
+              expensive, and loses structural relationships.</p>
+          </div>
+          <div class="pain-card">
+            <div class="icon icon--cyan"><span class="material-symbols-outlined">question_mark</span></div>
+            <h3>Lost "Why"</h3>
+            <p>Original developers leave, documentation rots, and tribal knowledge evaporates. Git history is the last
+              record of intent — but it's unindexed.</p>
+          </div>
+          <div class="pain-card">
+            <div class="icon icon--green"><span class="material-symbols-outlined">group_off</span></div>
+            <h3>Tribal Knowledge Drain</h3>
+            <p>The engineer who built the subsystem left two years ago. Nobody remembers why that check exists. You're
+              forced to ping repo owners for context that should be discoverable.</p>
+          </div>
+          <div class="pain-card">
+            <div class="icon icon--white"><span class="material-symbols-outlined">search</span></div>
+            <h3>Keyword Search Falls Short</h3>
+            <p>Lexical search can't connect a refactor in module A to the regression fix it caused in module B. Semantic
+              relationships across time are invisible to <code>grep</code>.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ HOW IT WORKS ═══════════════════ -->
+    <section class="how" id="how">
+      <div class="container">
+        <span class="section-label">How It Works</span>
+        <h2 class="section-title">From raw commits to queryable memory in three stages</h2>
+        <p class="section-desc">
+          Spectral Cortex is a single Rust binary. Ingest your repo, build the graph, and query it
+          via CLI or serve it as an MCP server for AI agent integration.
+        </p>
+
+        <div class="how-grid">
+          <div class="pipeline-steps">
+            <div class="step">
+              <div class="step-num" style="background:var(--c-purple)">1</div>
+              <div>
+                <h4>Ingest &amp; Filter</h4>
+                <p>High-speed Rust parsers walk your git history. Configurable filters strip noise —
+                  <code>Co-authored-by</code>, merge lines, CI metadata. The <code>ast</code> split mode
+                  uses tree-sitter to bind commit hunks to language-level symbols (functions, classes, structs)
+                  in Rust, TypeScript, JavaScript, and Python.
+                </p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-num" style="background:var(--c-violet)">2</div>
+              <div>
+                <h4>Embed &amp; Cluster</h4>
+                <p>Each segment is embedded with a local MiniLM model (no API calls, no network).
+                  Identical content is batch-deduplicated. Spectral graph construction clusters related notes
+                  and computes scored adjacency links and long-range cross-cluster connections.</p>
+              </div>
+            </div>
+            <div class="step">
+              <div class="step-num" style="background:var(--c-fuchsia)">3</div>
+              <div>
+                <h4>Retrieve &amp; Serve</h4>
+                <p>Query via CLI for JSON output, or launch the built-in MCP server. Hybrid retrieval
+                  combines vector similarity with keyword-based metadata boosting and temporal re-ranking
+                  to surface the most actionable context. Every result carries full provenance — commit IDs,
+                  timestamps, scores, and related notes.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="terminal">
+            <div class="terminal-bar">
+              <div class="terminal-dot terminal-dot--r"></div>
+              <div class="terminal-dot terminal-dot--y"></div>
+              <div class="terminal-dot terminal-dot--g"></div>
+              <span class="terminal-label">spectral-cortex</span>
+            </div>
+            <div class="terminal-body">
+              <div><span class="comment"># Ingest with AST-aware splitting</span></div>
+              <div style="margin-top:.5rem">
+                <span class="cmd">spectral-cortex</span> ingest \<br />
+                &nbsp;&nbsp;<span class="flag">--repo</span> <span class="path">/my/project</span> \<br />
+                &nbsp;&nbsp;<span class="flag">--out</span> <span class="path">smg.json</span> \<br />
+                &nbsp;&nbsp;<span class="flag">--git-commit-split-mode</span> ast \<br />
+                &nbsp;&nbsp;<span class="flag">--git-filter-preset</span> git-noise
+              </div>
+
+              <div class="terminal-status">
+                <p><span class="ok">✓</span> <span class="dim">Scanned 2,847 commits · Kept 2,614</span></p>
+                <p><span class="ok">✓</span> <span class="dim">Split into 5,071 semantic notes</span></p>
+                <p><span class="ok">✓</span> <span class="dim">Built 6 spectral clusters · 14,392 links</span></p>
+                <p><span class="ok">✓</span> <span class="dim">Saved → smg.json (spectral-cortex-v1)</span></p>
+              </div>
+
+              <div style="margin-top:1.5rem"><span class="comment"># Run MCP server for agent integration</span></div>
+              <div style="margin-top:.5rem">
+                <span class="cmd">spectral-cortex</span> mcp <span class="flag">--smg</span> <span
+                  class="path">smg.json</span>
+              </div>
+
+              <div class="terminal-status">
+                <p><span class="ok">●</span> <span class="ok">MCP server listening on stdio</span></p>
+                <p><span class="dim">Graph loaded · 5,071 notes · 6 tools available</span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ FEATURES ═══════════════════ -->
+    <section class="features" id="features">
+      <div class="container">
+        <div class="features-header">
+          <span class="section-label">Core Capabilities</span>
+          <h2 class="section-title">Engineered for<br />precision retrieval</h2>
+        </div>
+
+        <div class="feat-grid">
+          <div class="feat-card">
+            <div class="icon icon--violet"><span class="material-symbols-outlined">account_tree</span></div>
+            <h3>AST-Aware Splitting</h3>
+            <p>Tree-sitter parses diffs and binds each hunk to the nearest enclosing function, class, or struct.
+              Multi-change commits become multiple semantically focused notes.</p>
+          </div>
+
+          <div class="feat-card">
+            <div class="icon icon--fuchsia"><span class="material-symbols-outlined">bubble_chart</span></div>
+            <h3>Spectral Graph Topology</h3>
+            <p>Eigengap-driven clustering organizes notes into logical neighborhoods. Tunable
+              <code>num_spectral_dims</code>, <code>min_clusters</code>, and <code>max_clusters</code> let you match
+              your architecture.
+            </p>
+          </div>
+
+          <div class="feat-card">
+            <div class="icon icon--blue"><span class="material-symbols-outlined">link</span></div>
+            <h3>Long-Range Links</h3>
+            <p>Discovers connections between spectrally similar but embedding-distant notes — revealing architectural
+              relationships that keyword search will never find.</p>
+          </div>
+
+          <div class="feat-card">
+            <div class="icon icon--cyan"><span class="material-symbols-outlined">schedule</span></div>
+            <h3>Temporal Re-Ranking</h3>
+            <p>Exponential-decay recency scoring biases results toward fresh context. Configure weight, half-life, and
+              mode — or disable entirely for time-agnostic retrieval.</p>
+          </div>
+
+          <div class="feat-card">
+            <div class="icon icon--green"><span class="material-symbols-outlined">find_replace</span></div>
+            <h3>Hybrid Search</h3>
+            <p>Combines embedding-based semantic similarity with keyword boosting on symbol IDs, file paths, and
+              metadata. Filter results by <code>--file</code> or <code>--symbol</code> for surgical queries.</p>
+          </div>
+
+          <div class="feat-card">
+            <div class="icon icon--white"><span class="material-symbols-outlined">verified</span></div>
+            <h3>Full Provenance</h3>
+            <p>Every retrieved note carries source commit IDs, timestamps, scores, cluster labels, and related-note
+              links. Agents can cite evidence directly. Nothing is opaque.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ MCP ═══════════════════ -->
+    <section class="mcp" id="mcp">
+      <div class="container">
+        <div class="mcp-grid">
+          <div>
+            <span class="section-label">Agent Integration</span>
+            <h2 class="section-title">Six highly focused<br /> MCP tools</h2>
+            <p class="section-desc" style="margin-bottom:0">
+              Run <code>spectral-cortex mcp --smg smg.json</code> and your AI agent gains
+              structured, markdown-first access to the entire graph. Designed for token
+              efficiency — compact outputs that reduce prompt bloat.
+            </p>
+          </div>
+
+          <div class="mcp-tools">
+            <div class="tool-item">
+              <div>
+                <div class="tool-name">graph_summary</div>
+                <div class="tool-desc">Get compact metadata about the loaded graph — note count, clusters, link stats.
+                </div>
+              </div>
+            </div>
+            <div class="tool-item">
+              <div>
+                <div class="tool-name">query_graph</div>
+                <div class="tool-desc">Semantic query with markdown tables, scored results, and related-note summaries.
+                </div>
+              </div>
+            </div>
+            <div class="tool-item">
+              <div>
+                <div class="tool-name">inspect_note</div>
+                <div class="tool-desc">Deep-dive into a single note — its content, provenance, and spectral
+                  neighborhood.</div>
+              </div>
+            </div>
+            <div class="tool-item">
+              <div>
+                <div class="tool-name">long_range_links</div>
+                <div class="tool-desc">Discover cross-cluster connections missed by embedding similarity alone.</div>
+              </div>
+            </div>
+            <div class="tool-item">
+              <div>
+                <div class="tool-name">get_structural_hotspots</div>
+                <div class="tool-desc">Find the most frequently modified AST symbols — the brittle parts of your system.
+                </div>
+              </div>
+            </div>
+            <div class="tool-item">
+              <div>
+                <div class="tool-name">inspect_symbol_history</div>
+                <div class="tool-desc">Chronological evolution of a specific function or class across all commits.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ USE CASES ═══════════════════ -->
+    <section class="usecases" id="usecases">
+      <div class="container">
+        <div class="usecases-header">
+          <span class="section-label">Use Cases</span>
+          <h2 class="section-title">Built for real<br />engineering workflows</h2>
+        </div>
+
+        <div class="uc-grid">
+          <div class="uc-card">
+            <div class="emoji">🔍</div>
+            <h3>Regression Investigation</h3>
+            <p>Ask "why was this behavior introduced?" and get commit-grounded evidence with semantic connections to
+              related changes — no manual blame digging required.</p>
+          </div>
+          <div class="uc-card">
+            <div class="emoji">🏗️</div>
+            <h3>Refactor Archaeology</h3>
+            <p>Trace the history of a specific function across all refactors. Understand structural decisions made
+              months or years ago, even when the original authors are gone.</p>
+          </div>
+          <div class="uc-card">
+            <div class="emoji">🧭</div>
+            <h3>Codebase Onboarding</h3>
+            <p>New to a 50k-commit monorepo? Query for how a subsystem evolved instead of reading files one by one. The
+              graph surfaces the important architecture decisions.</p>
+          </div>
+          <div class="uc-card">
+            <div class="emoji">🤖</div>
+            <h3>Agent Grounding</h3>
+            <p>Wire the MCP server into Claude, Gemini, or any MCP-compatible agent. Every tool response includes
+              verifiable commit evidence — no hallucinated history.</p>
+          </div>
+          <div class="uc-card">
+            <div class="emoji">🔥</div>
+            <h3>Hotspot Detection</h3>
+            <p>The <code>get_structural_hotspots</code> tool surfaces the most frequently modified symbols. Find the
+              brittle code that keeps breaking before it breaks again.</p>
+          </div>
+          <div class="uc-card">
+            <div class="emoji">🔄</div>
+            <h3>Continuous Memory</h3>
+            <p>Wire <code>spectral-cortex update</code> into a post-commit hook. The graph stays fresh automatically —
+              incremental ingestion only embeds new commits.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ TECH SPECS ═══════════════════ -->
+    <section class="specs" id="specs">
+      <div class="container">
+        <div class="specs-header">
+          <span class="section-label">Technical Facts</span>
+          <h2 class="section-title">What's under the hood</h2>
+        </div>
+
+        <div class="specs-grid">
+          <div class="spec-card">
+            <div class="value" style="color:var(--c-violet)">Rust</div>
+            <div class="label">Core language — safe, fast, single binary</div>
+          </div>
+          <div class="spec-card">
+            <div class="value" style="color:var(--c-fuchsia)">MiniLM</div>
+            <div class="label">Local embeddings — no API, no network</div>
+          </div>
+          <div class="spec-card">
+            <div class="value" style="color:var(--c-blue)">JSON</div>
+            <div class="label">Versioned SMG format (spectral-cortex-v1)</div>
+          </div>
+          <div class="spec-card">
+            <div class="value" style="color:var(--c-cyan)">MCP</div>
+            <div class="label">Native Model Context Protocol server</div>
+          </div>
+          <div class="spec-card">
+            <div class="value" style="color:var(--c-green)">4</div>
+            <div class="label">Languages — Rust, TS/JS, Python (AST)</div>
+          </div>
+          <div class="spec-card">
+            <div class="value" style="color:var(--c-violet)">6</div>
+            <div class="label">Built-in MCP tools for agents</div>
+          </div>
+          <div class="spec-card">
+            <div class="value" style="color:var(--c-fuchsia)">MIT</div>
+            <div class="label">Open-source license</div>
+          </div>
+          <div class="spec-card">
+            <div class="value" style="color:var(--c-blue)">0</div>
+            <div class="label">External API calls required</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ CTA ═══════════════════ -->
+    <section class="cta" id="cta">
+      <div class="container">
+        <div class="cta-inner">
+          <h2>Stop digging. <br /><span class="gradient">Start remembering.</span></h2>
+          <div class="hero-actions">
+            <a href="https://github.com/mrorigo/spectral-cortex" target="_blank" rel="noopener"
+              class="btn btn--primary">
+              <span class="material-symbols-outlined">rocket_launch</span>
+              Get Started on GitHub
+            </a>
+          </div>
+          <code class="hero-install"><span>$</span> cargo install --path crates/spectral-cortex-cli</code>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════ FOOTER ═══════════════════ -->
+    <footer class="site-footer">
+      <div class="container">
+        <div class="footer-inner">
+          <div class="footer-brand">
+            <div class="logo-icon"><span class="material-symbols-outlined" style="font-size:.9rem">neurology</span>
+            </div>
+            <span>Spectral Cortex</span>
+          </div>
+          <div class="footer-links">
+            <a href="https://github.com/mrorigo/spectral-cortex" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://github.com/mrorigo/spectral-cortex/blob/main/README.md" target="_blank"
+              rel="noopener">Documentation</a>
+            <a href="https://github.com/mrorigo/spectral-cortex/blob/main/LICENSE" target="_blank" rel="noopener">MIT
+              License</a>
+          </div>
+        </div>
+        <div class="footer-copy">
+          &copy; 2025 mrorigo/spectral-cortex &middot; Open-source agent memory infrastructure.
+        </div>
+      </div>
+    </footer>
+
+  </div><!-- /.page-wrapper -->
+
+  <script src="main.js"></script>
+</body>
+
+</html>

@@ -57,6 +57,19 @@ spectral-cortex ingest \
 ## 🏁 Conclusion
 By anchoring semantic commit notes to structural AST symbols, Spectral Cortex mapped the "why" of the failure path (Hydration interruption leading to incomplete context unwinding) with high precision. This "Baptism by Fire" confirms that Spectral Cortex is a viable product for resolving deep, multi-module architectural bugs that standard search fails to connect.
 
-## 💡 Recommended Improvements
-*   **Optimized AST Splitting:** The current 26k notes for 500 commits is large. Refining the splitter to only extract symbols touched by diff hunks would improve query speed without sacrificing precision.
-*   **Cluster Aggregation:** Multi-segment notes from the same commit should be aggregated or cross-referenced to reduce redundancy in query results.
+## 🚀 Post-Optimization Evaluation (2026-03-30)
+
+Following the implementation of **parallel ingestion** and **diff-hunk aware AST splitting**, the case study was re-run to verify both performance and precision.
+
+### 1. Performance & Scale
+*   **Total Notes:** 3,596 (previously 26,151).
+*   **Noise Reduction:** ~86% reduction in structural nodes by ignoring symbols not directly touched by commit hunks.
+*   **Ingestion Speed:** Total time reduced from ~75s to **~33s** (including model load).
+
+### 2. Precision Verification
+The core query `"hydration context mismatch"` was executed on the new graph:
+*   **Recall:** Both critical commits (`d807eb52` and `9ae80d6a`) remain in the top results with scores > 0.45.
+*   **Relevance:** The reduction in total nodes has made the result set significantly less cluttered, as generic structural matches (symbols present in the file but unrelated to the change) are now filtered at the source.
+
+### 3. Conclusion
+The optimizations have successfully moved Spectral Cortex from a "high-noise" structural tool to a "high-precision" structural engine. We have achieved a 2x speedup and 7x reduction in graph size without sacrificing historical recall.
