@@ -1,7 +1,7 @@
-use anyhow::Result;
-use std::collections::HashSet;
 use crate::ast::registry::ParserRegistry;
 use crate::ast::symbol_parser::AstNodeCategory;
+use anyhow::Result;
+use std::collections::HashSet;
 
 use super::IngestArgs;
 
@@ -41,8 +41,6 @@ pub(crate) struct CommitSegment {
     pub(crate) ast_node_type: Option<String>,
     pub(crate) file_path: Option<String>,
 }
-
-
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CommitSplitConfig {
@@ -90,16 +88,21 @@ impl CommitSplitStats {
     pub(crate) fn merge(&mut self, other: Self) {
         self.commits_seen = self.commits_seen.saturating_add(other.commits_seen);
         self.commits_split = self.commits_split.saturating_add(other.commits_split);
-        self.total_segments_emitted =
-            self.total_segments_emitted.saturating_add(other.total_segments_emitted);
-        self.fallback_to_single =
-            self.fallback_to_single.saturating_add(other.fallback_to_single);
-        self.segments_from_headers =
-            self.segments_from_headers.saturating_add(other.segments_from_headers);
-        self.segments_from_bullets =
-            self.segments_from_bullets.saturating_add(other.segments_from_bullets);
-        self.segments_from_paragraphs =
-            self.segments_from_paragraphs.saturating_add(other.segments_from_paragraphs);
+        self.total_segments_emitted = self
+            .total_segments_emitted
+            .saturating_add(other.total_segments_emitted);
+        self.fallback_to_single = self
+            .fallback_to_single
+            .saturating_add(other.fallback_to_single);
+        self.segments_from_headers = self
+            .segments_from_headers
+            .saturating_add(other.segments_from_headers);
+        self.segments_from_bullets = self
+            .segments_from_bullets
+            .saturating_add(other.segments_from_bullets);
+        self.segments_from_paragraphs = self
+            .segments_from_paragraphs
+            .saturating_add(other.segments_from_paragraphs);
     }
 }
 
@@ -236,7 +239,7 @@ fn split_by_paragraphs(message: &str, max_segments: usize) -> Option<Vec<CommitS
         return None;
     }
 
-    // Heuristic: If we have very short paragraphs that look like fragments (e.g. HTML tags), 
+    // Heuristic: If we have very short paragraphs that look like fragments (e.g. HTML tags),
     // merge them.
     let mut merged_paras: Vec<String> = Vec::new();
     for p in raw_paras {
@@ -258,7 +261,7 @@ fn split_by_paragraphs(message: &str, max_segments: usize) -> Option<Vec<CommitS
         .iter()
         .filter(|p| p.split_whitespace().count() >= 5)
         .count();
-    
+
     if substantial < 2 {
         return None;
     }
@@ -280,7 +283,7 @@ fn split_by_paragraphs(message: &str, max_segments: usize) -> Option<Vec<CommitS
             file_path: None,
         });
     }
-    
+
     if segments.len() >= 2 {
         Some(segments)
     } else {
@@ -379,11 +382,12 @@ pub(crate) fn split_commit_with_ast(
     let mut seen_symbols = HashSet::new();
 
     // 1. Collect modified line ranges per file
-    let mut modified_lines_per_file: std::collections::HashMap<String, Vec<std::ops::Range<u32>>> = std::collections::HashMap::new();
+    let mut modified_lines_per_file: std::collections::HashMap<String, Vec<std::ops::Range<u32>>> =
+        std::collections::HashMap::new();
 
     diff.foreach(
         &mut |_, _| true, // file_cb
-        None, // binary_cb
+        None,             // binary_cb
         Some(&mut |delta, hunk| {
             if let Some(path) = delta.new_file().path() {
                 let path_str = path.to_string_lossy().to_string();
@@ -391,7 +395,10 @@ pub(crate) fn split_commit_with_ast(
                 // We use 0-indexed values for tree-sitter line checks.
                 let start_line = hunk.new_start().saturating_sub(1);
                 let end_line = start_line + hunk.new_lines();
-                modified_lines_per_file.entry(path_str).or_default().push(start_line..end_line);
+                modified_lines_per_file
+                    .entry(path_str)
+                    .or_default()
+                    .push(start_line..end_line);
             }
             true
         }),
@@ -410,7 +417,7 @@ pub(crate) fn split_commit_with_ast(
                             // We found a supported language
                             if let Ok(blob) = repo.find_blob(delta.new_file().id()) {
                                 let content = String::from_utf8_lossy(blob.content());
-                                
+
                                 // Initialize tree-sitter parser for this file
                                 let mut ts_parser = tree_sitter::Parser::new();
                                 let lang = match ext {
@@ -421,18 +428,18 @@ pub(crate) fn split_commit_with_ast(
                                     _ => return true, // skip
                                 };
                                 ts_parser.set_language(&lang.into()).ok();
-                                
+
                                 if let Some(tree) = ts_parser.parse(content.as_ref(), None) {
                                     // Extract only symbols touched by diff hunks
                                     extract_symbols(
-                                        tree.root_node(), 
-                                        content.as_ref(), 
-                                        parser, 
-                                        &mut segments, 
-                                        &mut seen_symbols, 
-                                        &path_str, 
+                                        tree.root_node(),
+                                        content.as_ref(),
+                                        parser,
+                                        &mut segments,
+                                        &mut seen_symbols,
+                                        &path_str,
                                         message,
-                                        modified_ranges
+                                        modified_ranges,
                                     );
                                 }
                             }
@@ -469,11 +476,11 @@ fn extract_symbols(
 ) {
     let start_row = node.start_position().row as u32;
     let end_row = node.end_position().row as u32;
-    
+
     // Check if node intersects with any modified hunks
-    let is_modified = modified_ranges.iter().any(|range| {
-        start_row < range.end && end_row >= range.start
-    });
+    let is_modified = modified_ranges
+        .iter()
+        .any(|range| start_row < range.end && end_row >= range.start);
 
     // If this node (and therefore all its children) does not overlap with any modified lines, skip it.
     if !is_modified {
@@ -485,7 +492,7 @@ fn extract_symbols(
         if let Some(symbol_id) = parser.extract_symbol_id(node, source) {
             if !seen_symbols.contains(&symbol_id) {
                 seen_symbols.insert(symbol_id.clone());
-                
+
                 let category = match parser.node_category(node) {
                     AstNodeCategory::ApiDefinition => "API_DEFINITION",
                     AstNodeCategory::Implementation => "IMPLEMENTATION",
@@ -511,7 +518,16 @@ fn extract_symbols(
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            extract_symbols(child, source, parser, segments, seen_symbols, path, message, modified_ranges);
+            extract_symbols(
+                child,
+                source,
+                parser,
+                segments,
+                seen_symbols,
+                path,
+                message,
+                modified_ranges,
+            );
         }
     }
 }
@@ -594,7 +610,7 @@ mod tests {
         let mut stats = CommitSplitStats::default();
         let message = "<li><a\nhref=\"test\">#123</a>\n\nsubstantial text paragraph for context here\n\nexhaustion</li>";
         let parts = split_commit_message(message, &cfg(CommitSplitMode::Strict), &mut stats);
-        assert_eq!(parts.len(), 1); 
+        assert_eq!(parts.len(), 1);
     }
 
     #[test]

@@ -16,7 +16,10 @@ pub struct Model2VecCache {
 impl Model2VecCache {
     /// Creates a cache with the supplied maximum number of entries.
     pub fn new(capacity: usize) -> Self {
-        Self { capacity, ..Self::default() }
+        Self {
+            capacity,
+            ..Self::default()
+        }
     }
 
     /// Returns a cached embedding, if present.

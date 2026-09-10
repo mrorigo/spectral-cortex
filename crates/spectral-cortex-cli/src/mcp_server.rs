@@ -83,13 +83,9 @@ pub struct SpectralCortexMcpServer {
 #[tool_handler]
 impl ServerHandler for SpectralCortexMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
-                "Spectral Cortex MCP Server: compact markdown tools for querying a preloaded SMG file. Prefer small top_k values to keep responses token efficient.".into(),
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "Spectral Cortex MCP Server: compact markdown tools for querying a preloaded SMG file. Prefer small top_k values to keep responses token efficient.",
+        )
     }
 }
 
@@ -146,7 +142,10 @@ impl SpectralCortexMcpServer {
 
     /// Retrieve the most churn-heavy structural hotspots.
     #[rmcp::tool(description = "Report top churn-heavy AST symbols")]
-    fn get_structural_hotspots(&self, Parameters(input): Parameters<StructuralHotspotsInput>) -> String {
+    fn get_structural_hotspots(
+        &self,
+        Parameters(input): Parameters<StructuralHotspotsInput>,
+    ) -> String {
         match self.get_structural_hotspots_impl(input) {
             Ok(output) => output,
             Err(err) => format!("Error: {err}"),
@@ -186,7 +185,7 @@ impl SpectralCortexMcpServer {
             .clamp(40, 300);
 
         let hits = smg.search(&input.query, top_k, input.min_score)?;
-        
+
         let mut out = String::new();
         out.push_str(&format!("# Query Result: `{}`\n", input.query));
         out.push_str(&format!("- SMG: `{}`\n\n", self.smg_path));
@@ -194,8 +193,11 @@ impl SpectralCortexMcpServer {
         for (score, note_id) in hits {
             let note = &smg.notes[&note_id];
             let snippet = Self::compact_snippet(&note.context(), snippet_chars);
-            out.push_str(&format!("- **Score {:.3}** [Note {}]: {}\n", score, note_id, snippet));
-            
+            out.push_str(&format!(
+                "- **Score {:.3}** [Note {}]: {}\n",
+                score, note_id, snippet
+            ));
+
             if let Some(links_k) = input.links_k {
                 let related = smg.get_related_note_links(note_id, Some(links_k));
                 if !related.is_empty() {
@@ -232,7 +234,10 @@ impl SpectralCortexMcpServer {
         out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
         out.push_str(&format!("- symbol_id: {:?}\n", note.symbol_id));
         out.push_str(&format!("- ast_node_type: {:?}\n", note.ast_node_type));
-        out.push_str(&format!("- context: {}\n\n", Self::compact_snippet(&note.context(), snippet_chars)));
+        out.push_str(&format!(
+            "- context: {}\n\n",
+            Self::compact_snippet(&note.context(), snippet_chars)
+        ));
 
         let related = smg.get_related_note_links(note.note_id, Some(links_k));
         if related.is_empty() {
@@ -317,10 +322,10 @@ impl SpectralCortexMcpServer {
         }
 
         history.sort_by_key(|&(ts, _, _)| ts);
-        
+
         // Reverse so that we show most recent first if we are limiting
         history.reverse();
-        
+
         let total_found = history.len();
         if let Some(limit) = input.limit {
             if history.len() > limit {
@@ -331,7 +336,11 @@ impl SpectralCortexMcpServer {
         let mut out = String::new();
         out.push_str(&format!("# Symbol History: `{}`\n", input.symbol_id));
         if let Some(_limit) = input.limit {
-             out.push_str(&format!("- showing last {} of {} entries\n", history.len(), total_found));
+            out.push_str(&format!(
+                "- showing last {} of {} entries\n",
+                history.len(),
+                total_found
+            ));
         }
 
         if history.is_empty() {
@@ -343,7 +352,12 @@ impl SpectralCortexMcpServer {
             let date = chrono::DateTime::from_timestamp(ts as i64, 0)
                 .map(|dt| dt.to_rfc3339())
                 .unwrap_or_else(|| ts.to_string());
-            out.push_str(&format!("- **{}** [Note {}]: {}\n", date, nid, Self::compact_snippet(&ctx, 100)));
+            out.push_str(&format!(
+                "- **{}** [Note {}]: {}\n",
+                date,
+                nid,
+                Self::compact_snippet(&ctx, 100)
+            ));
         }
 
         Ok(out)

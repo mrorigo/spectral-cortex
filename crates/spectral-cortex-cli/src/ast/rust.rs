@@ -1,5 +1,5 @@
-use tree_sitter::{Node};
-use crate::ast::symbol_parser::{SymbolParser, AstNodeCategory};
+use crate::ast::symbol_parser::{AstNodeCategory, SymbolParser};
+use tree_sitter::Node;
 
 pub struct RustSymbolParser;
 

@@ -1,5 +1,5 @@
+use crate::ast::symbol_parser::{AstNodeCategory, SymbolParser};
 use tree_sitter::Node;
-use crate::ast::symbol_parser::{SymbolParser, AstNodeCategory};
 
 pub struct PythonSymbolParser;
 
@@ -15,7 +15,7 @@ impl SymbolParser for PythonSymbolParser {
     }
 
     fn node_category(&self, _node: Node) -> AstNodeCategory {
-        // Python doesn't have a direct "interface" keyword in the AST, 
+        // Python doesn't have a direct "interface" keyword in the AST,
         // but we can potentially use abc.ABC in the future.
         AstNodeCategory::Implementation
     }

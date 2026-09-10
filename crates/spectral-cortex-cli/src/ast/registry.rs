@@ -1,8 +1,8 @@
-use super::symbol_parser::SymbolParser;
-use super::rust::RustSymbolParser;
-use super::typescript::TypescriptSymbolParser;
-use super::python::PythonSymbolParser;
 use super::javascript::JavascriptSymbolParser;
+use super::python::PythonSymbolParser;
+use super::rust::RustSymbolParser;
+use super::symbol_parser::SymbolParser;
+use super::typescript::TypescriptSymbolParser;
 use std::collections::HashMap;
 
 pub struct ParserRegistry {

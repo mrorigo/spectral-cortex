@@ -1,11 +1,15 @@
+use crate::ast::symbol_parser::{AstNodeCategory, SymbolParser};
 use tree_sitter::Node;
-use crate::ast::symbol_parser::{SymbolParser, AstNodeCategory};
 
 pub struct JavascriptSymbolParser;
 
 impl SymbolParser for JavascriptSymbolParser {
     fn symbol_node_types(&self) -> &[&str] {
-        &["function_declaration", "class_declaration", "method_definition"]
+        &[
+            "function_declaration",
+            "class_declaration",
+            "method_definition",
+        ]
     }
 
     fn extract_symbol_id(&self, node: Node, source: &str) -> Option<String> {
