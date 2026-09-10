@@ -90,6 +90,7 @@ pub struct SymbolHistoryInput {
 /// MCP server that provides compact tools for SMG query and inspection.
 #[derive(Clone)]
 pub struct SpectralCortexMcpServer {
+    #[allow(dead_code)]
     pub tool_router: ToolRouter<Self>,
     pub smg_path: String,
     pub smg: Arc<SpectralMemoryGraph>,
