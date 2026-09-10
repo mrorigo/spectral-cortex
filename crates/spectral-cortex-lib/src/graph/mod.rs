@@ -24,6 +24,18 @@ use crate::utils::logging;
 /// The callback receives a message describing the current step and a progress fraction (0.0..1.0).
 pub type ProgressCallback = Arc<dyn Fn(String, f32) + Send + Sync>;
 
+const MAX_RESULT_LIMIT: usize = 10_000;
+const CANDIDATE_EXPANSION: usize = 4;
+
+fn expanded_candidate_limit(top_k: usize) -> Result<usize> {
+    if top_k > MAX_RESULT_LIMIT {
+        return Err(anyhow::anyhow!("top_k must not exceed {MAX_RESULT_LIMIT}"));
+    }
+    top_k
+        .checked_mul(CANDIDATE_EXPANSION)
+        .ok_or_else(|| anyhow::anyhow!("top_k is too large"))
+}
+
 /// Resolve filtered note IDs to their positions in the graph's canonical order.
 fn resolve_filtered_note_indices(
     notes: &HashMap<u32, SMGNote>,
@@ -592,6 +604,16 @@ impl SpectralMemoryGraph {
     ) -> Result<Vec<crate::temporal::Candidate>> {
         use rayon::prelude::*;
 
+        if candidate_note_k == 0 {
+            return Ok(Vec::new());
+        }
+        if candidate_note_k > MAX_RESULT_LIMIT * CANDIDATE_EXPANSION {
+            return Err(anyhow::anyhow!(
+                "candidate_note_k must not exceed {}",
+                MAX_RESULT_LIMIT * CANDIDATE_EXPANSION
+            ));
+        }
+
         // Embed query.
         let query_emb = embed::get_embedding(query)?;
         // Use ndarray operations for efficient norm computation
@@ -907,8 +929,17 @@ impl SpectralMemoryGraph {
         symbol_filter: Option<&str>,
         keyword_weight: f32,
     ) -> Result<Vec<(u64, f32)>> {
-        let candidates =
-            self.retrieve_candidates(query, top_k * 4, file_filter, symbol_filter, keyword_weight)?;
+        if top_k == 0 {
+            return Ok(Vec::new());
+        }
+        let candidate_limit = expanded_candidate_limit(top_k)?;
+        let candidates = self.retrieve_candidates(
+            query,
+            candidate_limit,
+            file_filter,
+            symbol_filter,
+            keyword_weight,
+        )?;
         let cfg = temporal_cfg.unwrap_or_default();
 
         // --- Spectral Polarity Filtering ---
@@ -970,6 +1001,10 @@ impl SpectralMemoryGraph {
         keyword_weight: f32,
     ) -> Result<Vec<(u64, f32)>> {
         let start_filter = Instant::now();
+        if top_k == 0 {
+            return Ok(Vec::new());
+        }
+        let candidate_limit = expanded_candidate_limit(top_k)?;
         // If no time filters are specified, use the standard unfiltered path
         if time_start.is_none() && time_end.is_none() {
             return self.retrieve_with_scores_config(
@@ -1026,7 +1061,7 @@ impl SpectralMemoryGraph {
         // Use the filtered note set for retrieval
         let candidates = self.retrieve_candidates_filtered(
             query,
-            top_k,
+            candidate_limit,
             &filtered_note_ids,
             file_filter,
             symbol_filter,
@@ -1058,8 +1093,9 @@ impl SpectralMemoryGraph {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_score_boost, matches_metadata_filters, normalize_semantic_score,
-        resolve_filtered_note_indices, SMGNote, SpectralBuildConfig, SpectralMemoryGraph,
+        apply_score_boost, expanded_candidate_limit, matches_metadata_filters,
+        normalize_semantic_score, resolve_filtered_note_indices, SMGNote, SpectralBuildConfig,
+        SpectralMemoryGraph, CANDIDATE_EXPANSION, MAX_RESULT_LIMIT,
     };
     use nalgebra_sparse::CsrMatrix;
     use ndarray::{Array1, Array2};
@@ -1153,6 +1189,17 @@ mod tests {
         assert!(matches_metadata_filters(&candidate, None, None));
         assert!(!matches_metadata_filters(&candidate, Some("src/"), None));
         assert!(!matches_metadata_filters(&candidate, None, Some("symbol")));
+    }
+
+    #[test]
+    fn query_limits_are_checked_and_expanded_safely() {
+        assert_eq!(expanded_candidate_limit(0).expect("zero limit"), 0);
+        assert_eq!(
+            expanded_candidate_limit(MAX_RESULT_LIMIT).expect("maximum limit"),
+            MAX_RESULT_LIMIT * CANDIDATE_EXPANSION
+        );
+        assert!(expanded_candidate_limit(MAX_RESULT_LIMIT + 1).is_err());
+        assert!(expanded_candidate_limit(usize::MAX).is_err());
     }
 
     #[test]
