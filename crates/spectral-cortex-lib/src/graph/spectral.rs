@@ -24,7 +24,7 @@ use nalgebra::DMatrix;
 use nalgebra_sparse::CsrMatrix;
 use ndarray::{s, Array1, Array2, Axis};
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::model::smg_note::SMGNote;
@@ -265,6 +265,87 @@ pub fn to_sparse(w: &Array2<f32>) -> Result<CsrMatrix<f32>> {
 
     CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values)
         .map_err(|error| anyhow::anyhow!("invalid CSR data: {error}"))
+}
+
+/// Compute thresholded fused cosine similarities directly as symmetric CSR data.
+pub fn compute_sparse_fused_similarity_matrix(
+    x: &Array2<f32>,
+    order: &[u32],
+    notes: &HashMap<u32, SMGNote>,
+    alpha: f32,
+    beta: f32,
+    threshold: f32,
+) -> Result<CsrMatrix<f32>> {
+    let n = x.nrows();
+    if order.len() != n {
+        return Err(anyhow::anyhow!(
+            "note order length does not match embeddings"
+        ));
+    }
+    let norms: Vec<f32> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            x.row(i)
+                .iter()
+                .map(|value| value * value)
+                .sum::<f32>()
+                .sqrt()
+        })
+        .collect();
+    let structural_neighbors: Vec<HashSet<u32>> = order
+        .iter()
+        .map(|note_id| {
+            notes
+                .get(note_id)
+                .map(|note| note.structural_links.iter().copied().collect())
+                .unwrap_or_default()
+        })
+        .collect();
+
+    let rows: Vec<Vec<(usize, f32)>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let vi = x.row(i);
+            (0..n)
+                .filter_map(|j| {
+                    if i == j {
+                        return None;
+                    }
+                    let cosine = if norms[i] == 0.0 || norms[j] == 0.0 {
+                        0.0
+                    } else {
+                        vi.iter()
+                            .zip(x.row(j).iter())
+                            .map(|(a, b)| a * b)
+                            .sum::<f32>()
+                            / (norms[i] * norms[j])
+                    };
+                    let fused = if structural_neighbors[i].contains(&order[j])
+                        || structural_neighbors[j].contains(&order[i])
+                    {
+                        alpha * cosine + beta
+                    } else {
+                        cosine
+                    };
+                    (fused >= threshold).then_some((j, fused))
+                })
+                .collect()
+        })
+        .collect();
+
+    let mut row_offsets = Vec::with_capacity(n + 1);
+    let mut col_indices = Vec::new();
+    let mut values = Vec::new();
+    row_offsets.push(0);
+    for row in rows {
+        for (column, value) in row {
+            col_indices.push(column);
+            values.push(value);
+        }
+        row_offsets.push(col_indices.len());
+    }
+    CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values)
+        .map_err(|error| anyhow::anyhow!("invalid sparse similarity data: {error}"))
 }
 
 /// Compute degree vector `d = W · 1` (length n).

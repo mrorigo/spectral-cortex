@@ -1,8 +1,8 @@
 use ndarray::array;
 use spectral_cortex::graph::spectral::{
-    assemble_embedding_matrix, compute_fused_similarity_matrix, compute_spectral_embeddings,
-    cosine_similarity_matrix, degree_vector, normalized_laplacian, sparsify_adj,
-    spectral_decomposition,
+    assemble_embedding_matrix, compute_fused_similarity_matrix,
+    compute_sparse_fused_similarity_matrix, compute_spectral_embeddings, cosine_similarity_matrix,
+    degree_vector, normalized_laplacian, sparsify_adj, spectral_decomposition,
 };
 use spectral_cortex::model::smg_note::SMGNote;
 use std::collections::HashMap;
@@ -97,6 +97,50 @@ fn test_fused_similarity_matches_cosine_and_preserves_structural_fusion() {
     let expected = 0.5 * reference[(0, 1)] + 0.25;
     assert!((fused[(0, 1)] - expected).abs() < 1e-6);
     assert_eq!(fused[(0, 1)], fused[(1, 0)]);
+}
+
+#[test]
+fn test_sparse_fused_similarity_matches_thresholded_dense_reference() {
+    let embeddings = array![[1.0_f32, 0.0], [0.0, 1.0], [1.0, 1.0]];
+    let order = [1, 2, 3];
+    let mut notes = HashMap::new();
+    for note_id in order {
+        notes.insert(
+            note_id,
+            SMGNote {
+                note_id,
+                raw_content: String::new(),
+                embedding: vec![],
+                norm: 0.0,
+                source_turn_ids: vec![],
+                source_commit_ids: vec![],
+                source_timestamps: vec![],
+                spectral_coords: None,
+                related_note_links: vec![],
+                symbol_id: None,
+                ast_node_type: None,
+                structural_links: vec![],
+                file_path: None,
+            },
+        );
+    }
+    notes.get_mut(&1).unwrap().structural_links = vec![2];
+
+    let mut dense = compute_fused_similarity_matrix(&embeddings, &order, &notes, 0.5, 0.25, None);
+    sparsify_adj(&mut dense, 0.5);
+    let sparse =
+        compute_sparse_fused_similarity_matrix(&embeddings, &order, &notes, 0.5, 0.25, 0.5)
+            .expect("valid sparse matrix");
+
+    for i in 0..3 {
+        for j in 0..3 {
+            let actual = sparse
+                .get_entry(i, j)
+                .map(|entry| entry.into_value())
+                .unwrap_or(0.0);
+            assert!((actual - dense[(i, j)]).abs() < 1e-6);
+        }
+    }
 }
 
 #[test]

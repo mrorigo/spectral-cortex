@@ -452,9 +452,9 @@ impl SpectralMemoryGraph {
     ) -> Result<()> {
         use crate::graph::spectral::{
             assemble_embedding_matrix, compute_centroids_in_embedding_space,
-            compute_fused_similarity_matrix, compute_spectral_embeddings, detect_long_range_links,
-            eigengap_heuristic, normalized_laplacian_sparse, run_kmeans_on_spectral, sparsify_adj,
-            spectral_decomposition_sparse, to_sparse,
+            compute_sparse_fused_similarity_matrix, compute_spectral_embeddings,
+            detect_long_range_links, eigengap_heuristic, normalized_laplacian_sparse,
+            run_kmeans_on_spectral, spectral_decomposition_sparse,
         };
 
         // A rebuild invalidates all derived state up front. If any later
@@ -489,7 +489,7 @@ impl SpectralMemoryGraph {
             }
         };
 
-        const TOTAL_STEPS: usize = 10;
+        const TOTAL_STEPS: usize = 9;
 
         // Stable ordering of notes (sort by note_id to make behaviour deterministic).
         let mut note_ids: Vec<u32> = self.notes.keys().cloned().collect();
@@ -499,46 +499,38 @@ impl SpectralMemoryGraph {
         report_progress(1, TOTAL_STEPS, "Assembling embedding matrix".to_string());
         let embed_mat = assemble_embedding_matrix(&self.notes, &note_ids);
 
-        // 2) Fused similarity matrix (dense).
+        // 2) Build thresholded fused similarities directly as sparse CSR data.
         report_progress(
             2,
             TOTAL_STEPS,
-            "Computing fused similarity matrix (structural fusion)".to_string(),
+            "Computing sparse fused similarity matrix".to_string(),
         );
-        let mut sim = compute_fused_similarity_matrix(
+        let sim_sparse = compute_sparse_fused_similarity_matrix(
             &embed_mat,
             &note_ids,
             &self.notes,
             config.structural_alpha,
             config.structural_beta,
-            progress.as_deref(),
-        );
+            config.adj_sparse_threshold,
+        )?;
 
-        // 3) Sparsify adjacency in-place (zero diagonal + threshold).
-        report_progress(3, TOTAL_STEPS, "Sparsifying adjacency matrix".to_string());
-        sparsify_adj(&mut sim, config.adj_sparse_threshold);
-
-        // 3b) Convert to sparse matrix and drop dense background to save memory
-        let sim_sparse = to_sparse(&sim)?;
-        drop(sim); // Free up the large dense matrix (e.g. 25GB for 80k notes)
-
-        // 4) Normalized Laplacian (L_sym wrapper).
-        report_progress(4, TOTAL_STEPS, "Computing normalized Laplacian".to_string());
+        // 3) Normalized Laplacian (L_sym wrapper).
+        report_progress(3, TOTAL_STEPS, "Computing normalized Laplacian".to_string());
         let lap = normalized_laplacian_sparse(&sim_sparse)?;
 
-        // 5) Eigen-decomposition.
-        report_progress(5, TOTAL_STEPS, "Performing eigen-decomposition".to_string());
+        // 4) Eigen-decomposition.
+        report_progress(4, TOTAL_STEPS, "Performing eigen-decomposition".to_string());
         let (eigenvalues, eigenvectors) =
             spectral_decomposition_sparse(&lap, config.num_spectral_dims)?;
 
-        // 6) Spectral embeddings: take leading `k` eigenvectors and row-normalize.
-        report_progress(6, TOTAL_STEPS, "Extracting spectral embeddings".to_string());
+        // 5) Spectral embeddings: take leading `k` eigenvectors and row-normalize.
+        report_progress(5, TOTAL_STEPS, "Extracting spectral embeddings".to_string());
         let n_components = std::cmp::min(config.num_spectral_dims, n.saturating_sub(1));
         let spectral_emb = compute_spectral_embeddings(&eigenvectors, n_components, true);
 
-        // 7) Decide number of clusters.
+        // 6) Decide number of clusters.
         report_progress(
-            7,
+            6,
             TOTAL_STEPS,
             "Determining optimal cluster count".to_string(),
         );
@@ -549,12 +541,12 @@ impl SpectralMemoryGraph {
         // Also ensure we don't ask for more clusters than points.
         let n_clusters = std::cmp::min(suggested_k, std::cmp::max(config.min_clusters, n));
 
-        // 8) K-Means on spectral embeddings.
-        report_progress(8, TOTAL_STEPS, "Running K-Means clustering".to_string());
+        // 7) K-Means on spectral embeddings.
+        report_progress(7, TOTAL_STEPS, "Running K-Means clustering".to_string());
         let labels = run_kmeans_on_spectral(&spectral_emb, n_clusters)?;
 
-        // 9) Compute centroids in original embedding space.
-        report_progress(9, TOTAL_STEPS, "Computing cluster centroids".to_string());
+        // 8) Compute centroids in original embedding space.
+        report_progress(8, TOTAL_STEPS, "Computing cluster centroids".to_string());
         let centroids_map =
             compute_centroids_in_embedding_space(&labels, note_ids.as_slice(), &self.notes);
 
@@ -564,9 +556,9 @@ impl SpectralMemoryGraph {
             .map(|(c, vec)| (*c, vec.iter().map(|x| x * x).sum::<f32>().sqrt()))
             .collect();
 
-        // 10) Long-range spectral links: spectral similarity high && embedding similarity low.
+        // 9) Long-range spectral links: spectral similarity high && embedding similarity low.
         report_progress(
-            10,
+            9,
             TOTAL_STEPS,
             "Detecting long-range semantic links".to_string(),
         );
