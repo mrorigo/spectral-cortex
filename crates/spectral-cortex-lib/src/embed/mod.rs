@@ -107,8 +107,15 @@ mod real {
             .lock()
             .map_err(|_| anyhow::anyhow!("embedding pool lock is poisoned"))?;
         *guard = Some(Arc::new(pool));
-        *CONFIG.lock().map_err(|_| anyhow::anyhow!("embedding config lock is poisoned"))? =
-            Some(EmbeddingConfig { backend: "minilm".into(), model_name: None, normalize: None, batch_size: None });
+        *CONFIG
+            .lock()
+            .map_err(|_| anyhow::anyhow!("embedding config lock is poisoned"))? =
+            Some(EmbeddingConfig {
+                backend: "minilm".into(),
+                model_name: None,
+                normalize: None,
+                batch_size: None,
+            });
 
         eprintln!(
             "Embedding pool initialized with {} workers in {:?}",
@@ -134,9 +141,15 @@ mod real {
             .lock()
             .map_err(|_| anyhow::anyhow!("Model2Vec lock is poisoned"))?;
         *guard = Some((Arc::new(model), config.batch_size));
-        *CONFIG.lock().map_err(|_| anyhow::anyhow!("embedding config lock is poisoned"))? = Some(EmbeddingConfig {
-            backend: "model2vec".into(), model_name: Some(config.model_name), normalize: config.normalize, batch_size: Some(config.batch_size),
-        });
+        *CONFIG
+            .lock()
+            .map_err(|_| anyhow::anyhow!("embedding config lock is poisoned"))? =
+            Some(EmbeddingConfig {
+                backend: "model2vec".into(),
+                model_name: Some(config.model_name),
+                normalize: config.normalize,
+                batch_size: Some(config.batch_size),
+            });
         Ok(())
     }
 
@@ -154,7 +167,8 @@ mod real {
             .as_ref()
             .cloned()
         {
-            return model.0
+            return model
+                .0
                 .encode_with_args(&[text.to_string()], None, model.1)
                 .into_iter()
                 .next()
@@ -378,9 +392,9 @@ mod fake {
 pub use fake::{get_embedding, get_embeddings, init, shutdown};
 
 #[cfg(not(any(test, feature = "fake-embed")))]
-pub use real::{get_embedding, get_embeddings, init, shutdown};
-#[cfg(not(any(test, feature = "fake-embed")))]
 pub use real::current_config;
+#[cfg(not(any(test, feature = "fake-embed")))]
+pub use real::{get_embedding, get_embeddings, init, shutdown};
 
 #[cfg(all(not(any(test, feature = "fake-embed")), feature = "model2vec-embedder"))]
 pub use real::{init_model2vec, Model2VecConfig};

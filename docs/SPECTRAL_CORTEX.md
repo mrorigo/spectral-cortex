@@ -100,6 +100,13 @@ Spectral Cortex includes MCP serving in the primary CLI:
 spectral-cortex mcp --smg smg.json
 ```
 
+The MCP server is local-only and communicates over stdio. It uses RMCP 3.2.0
+for MCP 2026-07-28 negotiation while retaining the legacy initialize lifecycle
+for compatible clients. The graph is loaded once from `--smg`; MCP tools cannot
+choose arbitrary files. Successful calls return the existing compact markdown
+and structured content with a `markdown` field. Invalid bounds and graph
+failures are reported as protocol errors.
+
 MCP tools:
 
 1. `graph_summary`: compact graph metadata.

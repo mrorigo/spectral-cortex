@@ -10,14 +10,29 @@ use rmcp::{
     model::*,
     schemars, tool_handler,
     transport::stdio,
-    ServerHandler, ServiceExt,
+    ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use serde::Deserialize;
+use serde_json::json;
 use spectral_cortex::{load_smg_json, SpectralMemoryGraph};
 
 const DEFAULT_TOP_K: usize = 5;
 // const DEFAULT_LINKS_K: usize = 3;
 const DEFAULT_SNIPPET_CHARS: usize = 140;
+
+fn markdown_output_schema() -> Arc<JsonObject> {
+    Arc::new(
+        json!({
+            "type": "object",
+            "properties": { "markdown": { "type": "string" } },
+            "required": ["markdown"],
+            "additionalProperties": false
+        })
+        .as_object()
+        .cloned()
+        .unwrap_or_default(),
+    )
+}
 
 /// Input for querying the graph with a text query.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -75,6 +90,7 @@ pub struct SymbolHistoryInput {
 /// MCP server that provides compact tools for SMG query and inspection.
 #[derive(Clone)]
 pub struct SpectralCortexMcpServer {
+    #[allow(dead_code)]
     pub tool_router: ToolRouter<Self>,
     pub smg_path: String,
     pub smg: Arc<SpectralMemoryGraph>,
@@ -83,18 +99,29 @@ pub struct SpectralCortexMcpServer {
 #[tool_handler]
 impl ServerHandler for SpectralCortexMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(
-                "Spectral Cortex MCP Server: compact markdown tools for querying a preloaded SMG file. Prefer small top_k values to keep responses token efficient.".into(),
-            ),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2026_07_28)
+            .with_instructions(
+                "Spectral Cortex MCP Server: compact markdown tools for querying a preloaded SMG file. Prefer small top_k values to keep responses token efficient.",
+            )
     }
 }
 
 #[rmcp::tool_router]
 impl SpectralCortexMcpServer {
+    fn success_result(markdown: String) -> CallToolResult {
+        let mut result = CallToolResult::structured(json!({ "markdown": markdown }));
+        result.content = vec![ContentBlock::text(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("markdown"))
+                .and_then(|value| value.as_str())
+                .unwrap_or_default(),
+        )];
+        result
+    }
+
     /// Construct a new server instance.
     pub fn new(smg_path: String, smg: SpectralMemoryGraph) -> Self {
         Self {
@@ -106,66 +133,107 @@ impl SpectralCortexMcpServer {
 
     /// Query the graph and return a compact markdown table.
     #[rmcp::tool(
-        description = "Run semantic query against an SMG and return token-efficient markdown results"
+        description = "Run semantic query against an SMG and return token-efficient markdown results",
+        output_schema = markdown_output_schema()
     )]
-    fn query_graph(&self, Parameters(input): Parameters<QueryGraphInput>) -> String {
+    fn query_graph(
+        &self,
+        Parameters(input): Parameters<QueryGraphInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.query_graph_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
     /// Inspect a single note and show top related notes with similarity.
     #[rmcp::tool(
-        description = "Inspect one note by id and return compact markdown with related notes"
+        description = "Inspect one note by id and return compact markdown with related notes",
+        output_schema = markdown_output_schema()
     )]
-    fn inspect_note(&self, Parameters(input): Parameters<InspectNoteInput>) -> String {
+    fn inspect_note(
+        &self,
+        Parameters(input): Parameters<InspectNoteInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.inspect_note_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
     /// List long-range links from the graph.
-    #[rmcp::tool(description = "List long-range spectral links as compact markdown")]
-    fn long_range_links(&self, Parameters(input): Parameters<LongRangeLinksInput>) -> String {
+    #[rmcp::tool(
+        description = "List long-range spectral links as compact markdown",
+        output_schema = markdown_output_schema()
+    )]
+    fn long_range_links(
+        &self,
+        Parameters(input): Parameters<LongRangeLinksInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.long_range_links_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
     /// Return a small summary of graph size and available structures.
-    #[rmcp::tool(description = "Return compact summary metadata for an SMG")]
-    fn graph_summary(&self, Parameters(input): Parameters<GraphSummaryInput>) -> String {
+    #[rmcp::tool(
+        description = "Return compact summary metadata for an SMG",
+        output_schema = markdown_output_schema()
+    )]
+    fn graph_summary(
+        &self,
+        Parameters(input): Parameters<GraphSummaryInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.graph_summary_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
     /// Retrieve the most churn-heavy structural hotspots.
-    #[rmcp::tool(description = "Report top churn-heavy AST symbols")]
-    fn get_structural_hotspots(&self, Parameters(input): Parameters<StructuralHotspotsInput>) -> String {
+    #[rmcp::tool(
+        description = "Report top churn-heavy AST symbols",
+        output_schema = markdown_output_schema()
+    )]
+    fn get_structural_hotspots(
+        &self,
+        Parameters(input): Parameters<StructuralHotspotsInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.get_structural_hotspots_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
     /// Retrieve chronological change history for a single symbol.
-    #[rmcp::tool(description = "Retrieve timeline of a symbol's evolution")]
-    fn inspect_symbol_history(&self, Parameters(input): Parameters<SymbolHistoryInput>) -> String {
+    #[rmcp::tool(
+        description = "Retrieve timeline of a symbol's evolution",
+        output_schema = markdown_output_schema()
+    )]
+    fn inspect_symbol_history(
+        &self,
+        Parameters(input): Parameters<SymbolHistoryInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.inspect_symbol_history_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 }
 
 impl SpectralCortexMcpServer {
-    fn clamp_top_k(top_k: Option<usize>, default_k: usize, max_k: usize) -> usize {
-        top_k.unwrap_or(default_k).max(1).min(max_k)
+    fn bounded_limit(
+        value: Option<usize>,
+        default_value: usize,
+        maximum: usize,
+        name: &str,
+    ) -> Result<usize> {
+        let value = value.unwrap_or(default_value);
+        if !(1..=maximum).contains(&value) {
+            anyhow::bail!("{name} must be between 1 and {maximum}")
+        }
+        Ok(value)
     }
 
     fn compact_snippet(text: &str, max_chars: usize) -> String {
@@ -179,14 +247,24 @@ impl SpectralCortexMcpServer {
 
     fn query_graph_impl(&self, input: QueryGraphInput) -> Result<String> {
         let smg = &self.smg;
-        let top_k = Self::clamp_top_k(input.top_k, DEFAULT_TOP_K, 20);
-        let snippet_chars = input
-            .snippet_chars
-            .unwrap_or(DEFAULT_SNIPPET_CHARS)
-            .clamp(40, 300);
+        let top_k = Self::bounded_limit(input.top_k, DEFAULT_TOP_K, 20, "top_k")?;
+        let snippet_chars = Self::bounded_limit(
+            input.snippet_chars,
+            DEFAULT_SNIPPET_CHARS,
+            300,
+            "snippet_chars",
+        )?;
+        if snippet_chars < 40 {
+            anyhow::bail!("snippet_chars must be between 40 and 300")
+        }
+        if let Some(min_score) = input.min_score {
+            if !min_score.is_finite() || !(0.0..=1.0).contains(&min_score) {
+                anyhow::bail!("min_score must be between 0.0 and 1.0")
+            }
+        }
 
         let hits = smg.search(&input.query, top_k, input.min_score)?;
-        
+
         let mut out = String::new();
         out.push_str(&format!("# Query Result: `{}`\n", input.query));
         out.push_str(&format!("- SMG: `{}`\n\n", self.smg_path));
@@ -194,8 +272,11 @@ impl SpectralCortexMcpServer {
         for (score, note_id) in hits {
             let note = &smg.notes[&note_id];
             let snippet = Self::compact_snippet(&note.context(), snippet_chars);
-            out.push_str(&format!("- **Score {:.3}** [Note {}]: {}\n", score, note_id, snippet));
-            
+            out.push_str(&format!(
+                "- **Score {:.3}** [Note {}]: {}\n",
+                score, note_id, snippet
+            ));
+
             if let Some(links_k) = input.links_k {
                 let related = smg.get_related_note_links(note_id, Some(links_k));
                 if !related.is_empty() {
@@ -216,11 +297,16 @@ impl SpectralCortexMcpServer {
 
     fn inspect_note_impl(&self, input: InspectNoteInput) -> Result<String> {
         let smg = &self.smg;
-        let links_k = Self::clamp_top_k(input.links_k, 10, 25);
-        let snippet_chars = input
-            .snippet_chars
-            .unwrap_or(DEFAULT_SNIPPET_CHARS)
-            .clamp(40, 300);
+        let links_k = Self::bounded_limit(input.links_k, 10, 25, "links_k")?;
+        let snippet_chars = Self::bounded_limit(
+            input.snippet_chars,
+            DEFAULT_SNIPPET_CHARS,
+            300,
+            "snippet_chars",
+        )?;
+        if snippet_chars < 40 {
+            anyhow::bail!("snippet_chars must be between 40 and 300")
+        }
 
         let note = smg
             .notes
@@ -232,7 +318,10 @@ impl SpectralCortexMcpServer {
         out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
         out.push_str(&format!("- symbol_id: {:?}\n", note.symbol_id));
         out.push_str(&format!("- ast_node_type: {:?}\n", note.ast_node_type));
-        out.push_str(&format!("- context: {}\n\n", Self::compact_snippet(&note.context(), snippet_chars)));
+        out.push_str(&format!(
+            "- context: {}\n\n",
+            Self::compact_snippet(&note.context(), snippet_chars)
+        ));
 
         let related = smg.get_related_note_links(note.note_id, Some(links_k));
         if related.is_empty() {
@@ -256,7 +345,7 @@ impl SpectralCortexMcpServer {
 
     fn long_range_links_impl(&self, input: LongRangeLinksInput) -> Result<String> {
         let smg = &self.smg;
-        let top_k = Self::clamp_top_k(input.top_k, 20, 100);
+        let top_k = Self::bounded_limit(input.top_k, 20, 100, "top_k")?;
         let links = smg.get_long_range_links(Some(top_k));
 
         let mut out = String::new();
@@ -288,9 +377,9 @@ impl SpectralCortexMcpServer {
             .into_iter()
             .map(|(sid, (count, typ))| (sid, count, typ))
             .collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|entry| std::cmp::Reverse(entry.1));
 
-        let top_k = input.top_k.unwrap_or(10).min(50);
+        let top_k = Self::bounded_limit(input.top_k, 10, 50, "top_k")?;
         let results = sorted.into_iter().take(top_k);
 
         let mut out = String::new();
@@ -317,12 +406,15 @@ impl SpectralCortexMcpServer {
         }
 
         history.sort_by_key(|&(ts, _, _)| ts);
-        
+
         // Reverse so that we show most recent first if we are limiting
         history.reverse();
-        
+
         let total_found = history.len();
         if let Some(limit) = input.limit {
+            if !(1..=1_000).contains(&limit) {
+                anyhow::bail!("limit must be between 1 and 1000")
+            }
             if history.len() > limit {
                 history.truncate(limit);
             }
@@ -331,7 +423,11 @@ impl SpectralCortexMcpServer {
         let mut out = String::new();
         out.push_str(&format!("# Symbol History: `{}`\n", input.symbol_id));
         if let Some(_limit) = input.limit {
-             out.push_str(&format!("- showing last {} of {} entries\n", history.len(), total_found));
+            out.push_str(&format!(
+                "- showing last {} of {} entries\n",
+                history.len(),
+                total_found
+            ));
         }
 
         if history.is_empty() {
@@ -343,7 +439,12 @@ impl SpectralCortexMcpServer {
             let date = chrono::DateTime::from_timestamp(ts as i64, 0)
                 .map(|dt| dt.to_rfc3339())
                 .unwrap_or_else(|| ts.to_string());
-            out.push_str(&format!("- **{}** [Note {}]: {}\n", date, nid, Self::compact_snippet(&ctx, 100)));
+            out.push_str(&format!(
+                "- **{}** [Note {}]: {}\n",
+                date,
+                nid,
+                Self::compact_snippet(&ctx, 100)
+            ));
         }
 
         Ok(out)
@@ -397,4 +498,214 @@ pub fn run_mcp_server(smg_path: &Path) -> Result<()> {
         service.waiting().await?;
         Ok::<(), anyhow::Error>(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SpectralCortexMcpServer;
+    use rmcp::{
+        model::{
+            CallToolRequest, CallToolRequestParams, ClientCapabilities, ClientJsonRpcMessage,
+            ClientRequest, ErrorCode, Implementation, InitializeRequest, InitializeRequestParams,
+            ListToolsRequest, ProtocolVersion, RequestId, RequestMetaObject, ServerJsonRpcMessage,
+            ServerResult,
+        },
+        service::serve_directly,
+        transport::{IntoTransport, Transport},
+        ServiceExt,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn successful_results_include_markdown_and_structured_content() {
+        let result = SpectralCortexMcpServer::success_result("# Graph Summary".into());
+
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 1);
+        assert_eq!(
+            result
+                .structured_content
+                .and_then(|value| value.get("markdown").cloned())
+                .and_then(|value| value.as_str().map(str::to_owned)),
+            Some("# Graph Summary".into())
+        );
+    }
+
+    #[test]
+    fn tool_catalog_is_complete_and_schemaful() {
+        let tools = SpectralCortexMcpServer::tool_router().list_all();
+        let names: Vec<_> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+
+        assert_eq!(
+            names,
+            vec![
+                "get_structural_hotspots",
+                "graph_summary",
+                "inspect_note",
+                "inspect_symbol_history",
+                "long_range_links",
+                "query_graph",
+            ]
+        );
+        assert!(tools.iter().all(|tool| {
+            tool.description
+                .as_ref()
+                .is_some_and(|description| !description.is_empty())
+                && tool.input_schema.get("type") == Some(&json!("object"))
+                && tool.output_schema.is_some()
+        }));
+    }
+
+    #[tokio::test]
+    async fn modern_wire_round_trip_lists_and_calls_tools() {
+        let (server_transport, client_transport) = tokio::io::duplex(16_384);
+        let fixture = tempfile::NamedTempFile::new().expect("create SMG fixture");
+        std::fs::write(
+            fixture.path(),
+            r#"{"metadata":{"format_version":"spectral-cortex-v1"},"notes":[],"cluster_labels":null,"cluster_centroids":null,"cluster_centroid_norms":null,"long_range_links":null}"#,
+        )
+        .expect("write SMG fixture");
+        let smg = spectral_cortex::load_smg_json(fixture.path()).expect("load SMG fixture");
+        let server = SpectralCortexMcpServer::new(fixture.path().display().to_string(), smg);
+        let server = serve_directly::<rmcp::RoleServer, _, _, _, _>(server, server_transport, None);
+        let server_task = tokio::spawn(async move {
+            server.waiting().await.expect("wait for MCP server");
+        });
+        let mut client = IntoTransport::<rmcp::RoleClient, _, _>::into_transport(client_transport);
+
+        let mut list = ListToolsRequest {
+            method: Default::default(),
+            params: None,
+            extensions: Default::default(),
+        };
+        let mut meta = RequestMetaObject::new();
+        meta.set_protocol_version(ProtocolVersion::V_2026_07_28);
+        meta.set_client_info(Implementation::new("spectral-cortex-test", "1.0.0"));
+        meta.set_client_capabilities(ClientCapabilities::default());
+        list.extensions.insert(meta);
+        client
+            .send(ClientJsonRpcMessage::request(
+                ClientRequest::ListToolsRequest(list),
+                RequestId::Number(1),
+            ))
+            .await
+            .expect("send tools/list");
+        let listed = client.receive().await.expect("receive tools/list response");
+        let tools = match listed {
+            ServerJsonRpcMessage::Response(response) => match response.result {
+                ServerResult::ListToolsResult(result) => result.tools,
+                other => panic!("expected tools/list result, got {other:?}"),
+            },
+            other => panic!("expected tools/list response, got {other:?}"),
+        };
+        assert_eq!(tools.len(), 6);
+        assert!(tools.iter().all(|tool| tool.output_schema.is_some()));
+
+        let mut call = CallToolRequest::new(
+            CallToolRequestParams::new("graph_summary").with_arguments(serde_json::Map::new()),
+        );
+        let mut call_meta = RequestMetaObject::new();
+        call_meta.set_protocol_version(ProtocolVersion::V_2026_07_28);
+        call_meta.set_client_info(Implementation::new("spectral-cortex-test", "1.0.0"));
+        call_meta.set_client_capabilities(ClientCapabilities::default());
+        call.extensions.insert(call_meta);
+        client
+            .send(ClientJsonRpcMessage::request(
+                ClientRequest::CallToolRequest(call),
+                RequestId::Number(2),
+            ))
+            .await
+            .expect("send tools/call");
+        let called = client.receive().await.expect("receive tools/call response");
+        match called {
+            ServerJsonRpcMessage::Response(response) => match response.result {
+                ServerResult::CallToolResult(result) => {
+                    assert_eq!(result.is_error, Some(false));
+                    assert!(result.structured_content.is_some());
+                }
+                other => panic!("expected tools/call result, got {other:?}"),
+            },
+            other => panic!("expected tools/call response, got {other:?}"),
+        }
+
+        let mut failed_call = CallToolRequest::new(
+            CallToolRequestParams::new("inspect_note").with_arguments(
+                serde_json::json!({ "note_id": 999 })
+                    .as_object()
+                    .cloned()
+                    .expect("object arguments"),
+            ),
+        );
+        let mut failed_meta = RequestMetaObject::new();
+        failed_meta.set_protocol_version(ProtocolVersion::V_2026_07_28);
+        failed_meta.set_client_info(Implementation::new("spectral-cortex-test", "1.0.0"));
+        failed_meta.set_client_capabilities(ClientCapabilities::default());
+        failed_call.extensions.insert(failed_meta);
+        client
+            .send(ClientJsonRpcMessage::request(
+                ClientRequest::CallToolRequest(failed_call),
+                RequestId::Number(3),
+            ))
+            .await
+            .expect("send failing tools/call");
+        let failed = client.receive().await.expect("receive failing tools/call");
+        match failed {
+            ServerJsonRpcMessage::Error(error) => {
+                assert_eq!(error.error.code, ErrorCode::INTERNAL_ERROR)
+            }
+            other => panic!("expected protocol error, got {other:?}"),
+        }
+        drop(client);
+        server_task.await.expect("join MCP server");
+    }
+
+    #[tokio::test]
+    async fn legacy_initialize_negotiates_and_returns_server_info() {
+        let (server_transport, client_transport) = tokio::io::duplex(16_384);
+        let fixture = tempfile::NamedTempFile::new().expect("create SMG fixture");
+        std::fs::write(
+            fixture.path(),
+            r#"{"metadata":{"format_version":"spectral-cortex-v1"},"notes":[],"cluster_labels":null,"cluster_centroids":null,"cluster_centroid_norms":null,"long_range_links":null}"#,
+        )
+        .expect("write SMG fixture");
+        let smg = spectral_cortex::load_smg_json(fixture.path()).expect("load SMG fixture");
+        let server = SpectralCortexMcpServer::new(fixture.path().display().to_string(), smg);
+        let server_task = tokio::spawn(async move {
+            server
+                .serve(server_transport)
+                .await
+                .expect("start MCP server")
+                .waiting()
+                .await
+                .expect("wait for MCP server");
+        });
+        let mut client = IntoTransport::<rmcp::RoleClient, _, _>::into_transport(client_transport);
+        let initialize = InitializeRequest::new(
+            InitializeRequestParams::new(
+                ClientCapabilities::default(),
+                Implementation::new("spectral-cortex-legacy-test", "1.0.0"),
+            )
+            .with_protocol_version(ProtocolVersion::V_2025_11_25),
+        );
+        client
+            .send(ClientJsonRpcMessage::request(
+                ClientRequest::InitializeRequest(initialize),
+                RequestId::Number(1),
+            ))
+            .await
+            .expect("send initialize");
+        let response = client.receive().await.expect("receive initialize");
+        match response {
+            ServerJsonRpcMessage::Response(response) => match response.result {
+                ServerResult::InitializeResult(result) => {
+                    assert_eq!(result.protocol_version, ProtocolVersion::V_2025_11_25);
+                    assert!(result.capabilities.tools.is_some());
+                }
+                other => panic!("expected initialize result, got {other:?}"),
+            },
+            other => panic!("expected initialize response, got {other:?}"),
+        }
+        drop(client);
+        server_task.await.expect("join MCP server");
+    }
 }

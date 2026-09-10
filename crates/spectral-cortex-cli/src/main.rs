@@ -35,9 +35,9 @@ use regex::{Regex, RegexBuilder};
 use serde_json::json;
 use spectral_cortex::embed;
 
+pub mod ast;
 mod git_commit_split;
 mod mcp_server;
-pub mod ast;
 
 use crate::git_commit_split::{split_commit_message, CommitSplitConfig, CommitSplitStats};
 use crate::mcp_server::run_mcp_server;
@@ -428,6 +428,7 @@ fn main() -> Result<()> {
 }
 
 /// Run the `mcp` subcommand.
+#[allow(unused_variables)]
 fn run_mcp(args: McpArgs) -> Result<()> {
     if let Some(model_name) = args
         .model_name
@@ -458,10 +459,8 @@ fn run_hotspots(args: HotspotsArgs) -> Result<()> {
     let smg = load_smg_json(&args.smg)
         .with_context(|| format!("loading SMG from {}", args.smg.display()))?;
 
-    let server = crate::mcp_server::SpectralCortexMcpServer::new(
-        args.smg.display().to_string(),
-        smg,
-    );
+    let server =
+        crate::mcp_server::SpectralCortexMcpServer::new(args.smg.display().to_string(), smg);
 
     let input = crate::mcp_server::StructuralHotspotsInput {
         top_k: Some(args.top_k),
@@ -478,10 +477,8 @@ fn run_history(args: HistoryArgs) -> Result<()> {
     let smg = load_smg_json(&args.smg)
         .with_context(|| format!("loading SMG from {}", args.smg.display()))?;
 
-    let server = crate::mcp_server::SpectralCortexMcpServer::new(
-        args.smg.display().to_string(),
-        smg,
-    );
+    let server =
+        crate::mcp_server::SpectralCortexMcpServer::new(args.smg.display().to_string(), smg);
 
     let input = crate::mcp_server::SymbolHistoryInput {
         symbol_id: args.symbol,
@@ -504,6 +501,10 @@ fn run_update(args: UpdateArgs) -> Result<()> {
         max_commits: args.max_commits,
         workers: args.workers,
         cache_size: args.cache_size,
+        model_name: None,
+        normalize: true,
+        batch_size: 1024,
+        subfolder: None,
         git_filter_drop: args.git_filter_drop,
         git_filter_preset: args.git_filter_preset,
         git_filter_case_insensitive: args.git_filter_case_insensitive,
@@ -529,6 +530,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 /// # Errors
 ///
 /// Returns an `anyhow::Error` when IO/git operations fail or when the library API fails.
+#[allow(unused_variables)]
 fn run_ingest(args: IngestArgs) -> Result<()> {
     println!("Starting ingest for repo: {}", args.repo.display());
 
@@ -579,8 +581,14 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     let registry = crate::ast::registry::ParserRegistry::new();
 
     // Collect commits into conversation turns.
-    let collected = collect_commits(&args.repo, args.max_commits, &git_filters, &split_config, &registry)
-        .with_context(|| format!("collecting commits from {}", args.repo.display()))?;
+    let collected = collect_commits(
+        &args.repo,
+        args.max_commits,
+        &git_filters,
+        &split_config,
+        &registry,
+    )
+    .with_context(|| format!("collecting commits from {}", args.repo.display()))?;
     let mut turns = collected.turns;
 
     println!("Collected {} commits (turns).", turns.len());
@@ -637,8 +645,13 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
         if outp.exists() {
             let start_load = Instant::now();
             println!("Loading existing SMG from {}...", outp.display());
-            let smg = load_smg_json(outp).with_context(|| format!("loading JSON SMG from {}", outp.display()))?;
-            println!("Loaded SMG from {} in {:?}", outp.display(), start_load.elapsed());
+            let smg = load_smg_json(outp)
+                .with_context(|| format!("loading JSON SMG from {}", outp.display()))?;
+            println!(
+                "Loaded SMG from {} in {:?}",
+                outp.display(),
+                start_load.elapsed()
+            );
             smg
         } else {
             println!(
@@ -729,7 +742,8 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     });
 
     // Synchronize with background embedding pool initialization
-    init_handle.join()
+    init_handle
+        .join()
         .map_err(|_| anyhow::anyhow!("embedding pool initialization thread panicked"))?
         .with_context(|| "initializing embedding pool (background join)")?;
 
@@ -764,10 +778,19 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     });
 
     // Final configuration: prioritize CLI overrides, then sticky SMG config, then library defaults.
-    let mut config = smg.last_build_config.clone().unwrap_or_else(spectral_cortex::SpectralBuildConfig::default);
-    if let Some(n) = args.num_spectral_dims { config.num_spectral_dims = n; }
-    if let Some(n) = args.min_clusters { config.min_clusters = n; }
-    if let Some(n) = args.max_clusters { config.max_clusters = n; }
+    let mut config = smg
+        .last_build_config
+        .clone()
+        .unwrap_or_else(spectral_cortex::SpectralBuildConfig::default);
+    if let Some(n) = args.num_spectral_dims {
+        config.num_spectral_dims = n;
+    }
+    if let Some(n) = args.min_clusters {
+        config.min_clusters = n;
+    }
+    if let Some(n) = args.max_clusters {
+        config.max_clusters = n;
+    }
 
     smg.build_spectral_structure_with_config(Some(progress_cb), &config)
         .context("building spectral structures")?;
@@ -778,7 +801,11 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
         let start_ser = Instant::now();
         println!("Serializing SMG to {}...", outp.display());
         save_smg_json(&smg, &outp).with_context(|| format!("saving SMG to {}", outp.display()))?;
-        println!("Saved SMG to {} in {:?}", outp.display(), start_ser.elapsed());
+        println!(
+            "Saved SMG to {} in {:?}",
+            outp.display(),
+            start_ser.elapsed()
+        );
     }
 
     // Summary output: number of notes and some cluster info if present.
@@ -809,13 +836,20 @@ struct GitFilterStats {
 
 impl GitFilterStats {
     fn merge(&mut self, other: Self) {
-        self.total_commits_seen = self.total_commits_seen.saturating_add(other.total_commits_seen);
+        self.total_commits_seen = self
+            .total_commits_seen
+            .saturating_add(other.total_commits_seen);
         self.commits_kept = self.commits_kept.saturating_add(other.commits_kept);
-        self.commits_skipped_empty =
-            self.commits_skipped_empty.saturating_add(other.commits_skipped_empty);
+        self.commits_skipped_empty = self
+            .commits_skipped_empty
+            .saturating_add(other.commits_skipped_empty);
         self.lines_dropped = self.lines_dropped.saturating_add(other.lines_dropped);
-        self.total_chars_before = self.total_chars_before.saturating_add(other.total_chars_before);
-        self.total_chars_after = self.total_chars_after.saturating_add(other.total_chars_after);
+        self.total_chars_before = self
+            .total_chars_before
+            .saturating_add(other.total_chars_before);
+        self.total_chars_after = self
+            .total_chars_after
+            .saturating_add(other.total_chars_after);
     }
 }
 
@@ -864,8 +898,7 @@ impl GitFilterConfig {
             drop_patterns.push(rx);
         }
 
-        let html_comment_regex =
-            Regex::new(r"(?s)<!--.*?-->").expect("valid HTML comment regex");
+        let html_comment_regex = Regex::new(r"(?s)<!--.*?-->").expect("valid HTML comment regex");
 
         Ok(Self {
             drop_patterns,
@@ -949,6 +982,7 @@ fn apply_git_line_filters(
 }
 
 /// Run the `query` subcommand.
+#[allow(unused_variables)]
 fn run_query(args: QueryArgs) -> Result<()> {
     let q = args
         .query
@@ -968,7 +1002,11 @@ fn run_query(args: QueryArgs) -> Result<()> {
         .as_ref()
         .filter(|config| config.backend == "model2vec")
         .and_then(|config| config.model_name.clone());
-    let model_name = args.model_name.clone().or_else(|| persisted_model).or_else(|| std::env::var("MODEL2VEC_MODEL_NAME").ok());
+    let model_name = args
+        .model_name
+        .clone()
+        .or(persisted_model)
+        .or_else(|| std::env::var("MODEL2VEC_MODEL_NAME").ok());
     // Initialize embedding pool with CLI parameters
     let _start_total = Instant::now();
     let _ = _start_total; // suppress unused warning
@@ -991,7 +1029,8 @@ fn run_query(args: QueryArgs) -> Result<()> {
             embed::init(args.workers, args.cache_size)?;
         }
     } else {
-        embed::init(args.workers, args.cache_size).with_context(|| "initializing embedding pool")?;
+        embed::init(args.workers, args.cache_size)
+            .with_context(|| "initializing embedding pool")?;
     }
 
     // Determine how many candidates to retrieve (default = top_k * 5).
@@ -1158,7 +1197,7 @@ fn run_query(args: QueryArgs) -> Result<()> {
                     "source_turn_ids": note.source_turn_ids,
                     "related_notes": related_notes,
                 });
-                
+
                 // If cluster labels are present, map the note id to its label using the sorted ordering.
                 if let Some(labels) = smg.cluster_labels.as_ref() {
                     if let Some(idx) = note_ids.iter().position(|x| x == &nid) {
@@ -1185,8 +1224,13 @@ fn run_query(args: QueryArgs) -> Result<()> {
                         primary_results.push((cid.clone(), obj));
                     } else {
                         // Push to the primary result's contextual_hits array
-                        if let Some((_, primary_obj)) = primary_results.iter_mut().find(|(c, _)| c == cid) {
-                            if let Some(hits) = primary_obj.get_mut("contextual_hits").and_then(|h| h.as_array_mut()) {
+                        if let Some((_, primary_obj)) =
+                            primary_results.iter_mut().find(|(c, _)| c == cid)
+                        {
+                            if let Some(hits) = primary_obj
+                                .get_mut("contextual_hits")
+                                .and_then(|h| h.as_array_mut())
+                            {
                                 hits.push(obj);
                             }
                         }
@@ -1199,8 +1243,9 @@ fn run_query(args: QueryArgs) -> Result<()> {
                 fallback_results.push(serde_json::json!({ "turn_id": tid, "score": score }));
             }
         }
-        
-        let mut results: Vec<serde_json::Value> = primary_results.into_iter().map(|(_, obj)| obj).collect();
+
+        let mut results: Vec<serde_json::Value> =
+            primary_results.into_iter().map(|(_, obj)| obj).collect();
         results.extend(fallback_results);
         // Echo the effective temporal configuration in the JSON output.
         let temporal_info = json!({
@@ -1463,9 +1508,11 @@ fn collect_commits(
             p
         } else {
             let p = ProgressBar::new_spinner();
-            p.set_style(ProgressStyle::default_spinner()
-                .template("{spinner:.green} [{elapsed_precise}] {pos} {msg}")
-                .unwrap());
+            p.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.green} [{elapsed_precise}] {pos} {msg}")
+                    .unwrap(),
+            );
             p
         };
 
@@ -1509,7 +1556,8 @@ fn collect_commits(
                 let timestamp = time.seconds() as u64;
                 let commit_id = oid.to_string();
 
-                let segments = if split_config.mode == crate::git_commit_split::CommitSplitMode::Ast {
+                let segments = if split_config.mode == crate::git_commit_split::CommitSplitMode::Ast
+                {
                     crate::git_commit_split::split_commit_with_ast(
                         &local_repo,
                         &commit,

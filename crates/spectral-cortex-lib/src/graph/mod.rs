@@ -977,6 +977,7 @@ impl SpectralMemoryGraph {
     /// # Returns
     ///
     /// A list of (turn_id, score) pairs for the top-k matches, filtered by time range.
+    #[allow(clippy::too_many_arguments)]
     pub fn retrieve_with_scores_config_filtered(
         &self,
         query: &str,
@@ -1268,8 +1269,10 @@ mod tests {
         let mut graph = SpectralMemoryGraph::new().expect("graph construction");
         graph.cluster_labels = Some(Array1::from_vec(vec![0]));
         graph.last_build_config = Some(SpectralBuildConfig::default());
-        let mut invalid_config = SpectralBuildConfig::default();
-        invalid_config.min_clusters = 0;
+        let invalid_config = SpectralBuildConfig {
+            min_clusters: 0,
+            ..Default::default()
+        };
 
         let error = graph
             .build_spectral_structure_with_config(None, &invalid_config)

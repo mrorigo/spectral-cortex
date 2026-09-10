@@ -1,8 +1,8 @@
-use super::symbol_parser::SymbolParser;
-use super::rust::RustSymbolParser;
-use super::typescript::TypescriptSymbolParser;
-use super::python::PythonSymbolParser;
 use super::javascript::JavascriptSymbolParser;
+use super::python::PythonSymbolParser;
+use super::rust::RustSymbolParser;
+use super::symbol_parser::SymbolParser;
+use super::typescript::TypescriptSymbolParser;
 use std::collections::HashMap;
 
 pub struct ParserRegistry {
@@ -29,5 +29,11 @@ impl ParserRegistry {
 
     pub fn get(&self, ext: &str) -> Option<&dyn SymbolParser> {
         self.parsers.get(ext).map(|p| p.as_ref())
+    }
+}
+
+impl Default for ParserRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }

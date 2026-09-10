@@ -123,7 +123,7 @@ pub fn compute_fused_similarity_matrix(
 
             let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
             if let Some(cb) = progress {
-                if done % 500 == 0 || done == n {
+                if done.is_multiple_of(500) || done == n {
                     cb(
                         format!("Similarity matrix: {}/{} rows", done, n),
                         done as f32 / n as f32,
@@ -249,9 +249,9 @@ pub fn to_sparse(w: &Array2<f32>) -> Result<CsrMatrix<f32>> {
     let total = row_offsets.last().copied().unwrap_or(0);
     let mut col_indices = vec![0; total];
     let mut values = vec![0.0; total];
-    for i in 0..n {
+    for (i, row) in w.outer_iter().enumerate() {
         let mut offset = row_offsets[i];
-        for (j, &value) in w.row(i).iter().enumerate() {
+        for (j, &value) in row.iter().enumerate() {
             if value != 0.0 {
                 col_indices[offset] = j;
                 values[offset] = value;
@@ -448,9 +448,7 @@ pub fn normalized_laplacian_sparse(w: &CsrMatrix<f32>) -> Result<SparseNormalize
             let start = row_offsets[i];
             let end = row_offsets[i + 1];
             let mut d = 0.0f32;
-            for k in start..end {
-                d += values[k];
-            }
+            d += values[start..end].iter().sum::<f32>();
             d
         })
         .collect();
@@ -516,7 +514,7 @@ pub fn spectral_decomposition_sparse(
     let eigen = l.eigsh(k, Order::Smallest);
 
     // Convert eigenvalues to Array1
-    let eigvals = Array1::from_iter(eigen.eigenvalues.iter().map(|&x| x));
+    let eigvals = Array1::from_iter(eigen.eigenvalues.iter().copied());
 
     // Convert eigenvectors to Array2 (n x k_returned)
     let n_rows = eigen.eigenvectors.nrows();

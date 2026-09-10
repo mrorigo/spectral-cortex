@@ -33,7 +33,7 @@ indicatif = { version = "0.17", optional = true }
 
 # Async runtime and MCP server transport
 tokio = { version = "1", features = ["full"] }
-rmcp = { version = "0.15.0", features = ["server", "macros", "transport-io"] }
+rmcp = { version = "3.2.0", features = ["server", "macros", "transport-io"] }
 num = "0.4.3"
 regex = "1.11"
 
@@ -46,6 +46,7 @@ tree-sitter-python = "0.23"
 rayon = "1.11.0"
 
 [features]
+fake-embed = []
 model2vec-embedder = ["spectral-cortex/model2vec-embedder"]
 # Default features enable the git2 backend and progress bars for a pleasant UX.
 default = ["git2-backend", "progress"]
@@ -55,6 +56,10 @@ git2-backend = ["git2"]
 
 # Enable progress indicators and nicer CLI feedback
 progress = ["indicatif"]
+
+[dev-dependencies]
+rmcp = { version = "3.2.0", features = ["client"] }
+tempfile = "3"
 
 [[bin]]
 name = "spectral-cortex"
