@@ -631,6 +631,7 @@ impl SpectralMemoryGraph {
                 MAX_RESULT_LIMIT * CANDIDATE_EXPANSION
             ));
         }
+        let query_lower = (keyword_weight > 0.0).then(|| query.to_lowercase());
 
         // Embed query.
         let query_emb = embed::get_embedding(query)?;
@@ -659,16 +660,15 @@ impl SpectralMemoryGraph {
 
                 // Hybrid scoring: boost based on symbol/file metadata if query matches
                 let mut score = raw_sim;
-                if keyword_weight > 0.0 {
+                if let Some(q_lower) = query_lower.as_deref() {
                     let mut boost = 1.0;
-                    let q_lower = query.to_lowercase();
                     if let Some(sid) = &note.symbol_id {
-                        if sid.to_lowercase().contains(&q_lower) {
+                        if sid.to_lowercase().contains(q_lower) {
                             boost += keyword_weight;
                         }
                     }
                     if let Some(fp) = &note.file_path {
-                        if fp.to_lowercase().contains(&q_lower) {
+                        if fp.to_lowercase().contains(q_lower) {
                             boost += keyword_weight;
                         }
                     }
@@ -799,6 +799,8 @@ impl SpectralMemoryGraph {
     ) -> Result<Vec<crate::temporal::Candidate>> {
         use rayon::prelude::*;
 
+        let query_lower = (keyword_weight > 0.0).then(|| query.to_lowercase());
+
         // Embed query.
         let query_emb = embed::get_embedding(query)?;
         // Use ndarray operations for efficient norm computation
@@ -824,16 +826,15 @@ impl SpectralMemoryGraph {
 
                 // Hybrid scoring: boost based on symbol/file metadata if query matches
                 let mut score = raw_sim;
-                if keyword_weight > 0.0 {
+                if let Some(q_lower) = query_lower.as_deref() {
                     let mut boost = 1.0;
-                    let q_lower = query.to_lowercase();
                     if let Some(sid) = &note.symbol_id {
-                        if sid.to_lowercase().contains(&q_lower) {
+                        if sid.to_lowercase().contains(q_lower) {
                             boost += keyword_weight;
                         }
                     }
                     if let Some(fp) = &note.file_path {
-                        if fp.to_lowercase().contains(&q_lower) {
+                        if fp.to_lowercase().contains(q_lower) {
                             boost += keyword_weight;
                         }
                     }
