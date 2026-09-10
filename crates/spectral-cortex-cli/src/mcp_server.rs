@@ -500,6 +500,7 @@ pub fn run_mcp_server(smg_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::SpectralCortexMcpServer;
+    use serde_json::json;
 
     #[test]
     fn successful_results_include_markdown_and_structured_content() {
@@ -514,5 +515,30 @@ mod tests {
                 .and_then(|value| value.as_str().map(str::to_owned)),
             Some("# Graph Summary".into())
         );
+    }
+
+    #[test]
+    fn tool_catalog_is_complete_and_schemaful() {
+        let tools = SpectralCortexMcpServer::tool_router().list_all();
+        let names: Vec<_> = tools.iter().map(|tool| tool.name.as_ref()).collect();
+
+        assert_eq!(
+            names,
+            vec![
+                "get_structural_hotspots",
+                "graph_summary",
+                "inspect_note",
+                "inspect_symbol_history",
+                "long_range_links",
+                "query_graph",
+            ]
+        );
+        assert!(tools.iter().all(|tool| {
+            tool.description
+                .as_ref()
+                .is_some_and(|description| !description.is_empty())
+                && tool.input_schema.get("type") == Some(&json!("object"))
+                && tool.output_schema.is_some()
+        }));
     }
 }
