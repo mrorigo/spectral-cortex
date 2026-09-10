@@ -505,11 +505,13 @@ mod tests {
     use rmcp::{
         model::{
             CallToolRequest, CallToolRequestParams, ClientCapabilities, ClientJsonRpcMessage,
-            ClientRequest, ErrorCode, Implementation, ListToolsRequest, ProtocolVersion, RequestId,
-            RequestMetaObject, ServerJsonRpcMessage, ServerResult,
+            ClientRequest, ErrorCode, Implementation, InitializeRequest, InitializeRequestParams,
+            ListToolsRequest, ProtocolVersion, RequestId, RequestMetaObject, ServerJsonRpcMessage,
+            ServerResult,
         },
         service::serve_directly,
         transport::{IntoTransport, Transport},
+        ServiceExt,
     };
     use serde_json::json;
 
@@ -651,6 +653,56 @@ mod tests {
                 assert_eq!(error.error.code, ErrorCode::INTERNAL_ERROR)
             }
             other => panic!("expected protocol error, got {other:?}"),
+        }
+        drop(client);
+        server_task.await.expect("join MCP server");
+    }
+
+    #[tokio::test]
+    async fn legacy_initialize_negotiates_and_returns_server_info() {
+        let (server_transport, client_transport) = tokio::io::duplex(16_384);
+        let fixture = tempfile::NamedTempFile::new().expect("create SMG fixture");
+        std::fs::write(
+            fixture.path(),
+            r#"{"metadata":{"format_version":"spectral-cortex-v1"},"notes":[],"cluster_labels":null,"cluster_centroids":null,"cluster_centroid_norms":null,"long_range_links":null}"#,
+        )
+        .expect("write SMG fixture");
+        let smg = spectral_cortex::load_smg_json(fixture.path()).expect("load SMG fixture");
+        let server = SpectralCortexMcpServer::new(fixture.path().display().to_string(), smg);
+        let server_task = tokio::spawn(async move {
+            server
+                .serve(server_transport)
+                .await
+                .expect("start MCP server")
+                .waiting()
+                .await
+                .expect("wait for MCP server");
+        });
+        let mut client = IntoTransport::<rmcp::RoleClient, _, _>::into_transport(client_transport);
+        let initialize = InitializeRequest::new(
+            InitializeRequestParams::new(
+                ClientCapabilities::default(),
+                Implementation::new("spectral-cortex-legacy-test", "1.0.0"),
+            )
+            .with_protocol_version(ProtocolVersion::V_2025_11_25),
+        );
+        client
+            .send(ClientJsonRpcMessage::request(
+                ClientRequest::InitializeRequest(initialize),
+                RequestId::Number(1),
+            ))
+            .await
+            .expect("send initialize");
+        let response = client.receive().await.expect("receive initialize");
+        match response {
+            ServerJsonRpcMessage::Response(response) => match response.result {
+                ServerResult::InitializeResult(result) => {
+                    assert_eq!(result.protocol_version, ProtocolVersion::V_2025_11_25);
+                    assert!(result.capabilities.tools.is_some());
+                }
+                other => panic!("expected initialize result, got {other:?}"),
+            },
+            other => panic!("expected initialize response, got {other:?}"),
         }
         drop(client);
         server_task.await.expect("join MCP server");
