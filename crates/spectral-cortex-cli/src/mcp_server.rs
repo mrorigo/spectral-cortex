@@ -502,6 +502,15 @@ pub fn run_mcp_server(smg_path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::SpectralCortexMcpServer;
+    use rmcp::{
+        model::{
+            CallToolRequest, CallToolRequestParams, ClientCapabilities, ClientJsonRpcMessage,
+            ClientRequest, Implementation, ListToolsRequest, ProtocolVersion, RequestId,
+            RequestMetaObject, ServerJsonRpcMessage, ServerResult,
+        },
+        service::serve_directly,
+        transport::{IntoTransport, Transport},
+    };
     use serde_json::json;
 
     #[test]
@@ -542,5 +551,80 @@ mod tests {
                 && tool.input_schema.get("type") == Some(&json!("object"))
                 && tool.output_schema.is_some()
         }));
+    }
+
+    #[tokio::test]
+    async fn modern_wire_round_trip_lists_and_calls_tools() {
+        let (server_transport, client_transport) = tokio::io::duplex(16_384);
+        let fixture = tempfile::NamedTempFile::new().expect("create SMG fixture");
+        std::fs::write(
+            fixture.path(),
+            r#"{"metadata":{"format_version":"spectral-cortex-v1"},"notes":[],"cluster_labels":null,"cluster_centroids":null,"cluster_centroid_norms":null,"long_range_links":null}"#,
+        )
+        .expect("write SMG fixture");
+        let smg = spectral_cortex::load_smg_json(fixture.path()).expect("load SMG fixture");
+        let server = SpectralCortexMcpServer::new(fixture.path().display().to_string(), smg);
+        let server = serve_directly::<rmcp::RoleServer, _, _, _, _>(server, server_transport, None);
+        let server_task = tokio::spawn(async move {
+            server.waiting().await.expect("wait for MCP server");
+        });
+        let mut client = IntoTransport::<rmcp::RoleClient, _, _>::into_transport(client_transport);
+
+        let mut list = ListToolsRequest {
+            method: Default::default(),
+            params: None,
+            extensions: Default::default(),
+        };
+        let mut meta = RequestMetaObject::new();
+        meta.set_protocol_version(ProtocolVersion::V_2026_07_28);
+        meta.set_client_info(Implementation::new("spectral-cortex-test", "1.0.0"));
+        meta.set_client_capabilities(ClientCapabilities::default());
+        list.extensions.insert(meta);
+        client
+            .send(ClientJsonRpcMessage::request(
+                ClientRequest::ListToolsRequest(list),
+                RequestId::Number(1),
+            ))
+            .await
+            .expect("send tools/list");
+        let listed = client.receive().await.expect("receive tools/list response");
+        let tools = match listed {
+            ServerJsonRpcMessage::Response(response) => match response.result {
+                ServerResult::ListToolsResult(result) => result.tools,
+                other => panic!("expected tools/list result, got {other:?}"),
+            },
+            other => panic!("expected tools/list response, got {other:?}"),
+        };
+        assert_eq!(tools.len(), 6);
+        assert!(tools.iter().all(|tool| tool.output_schema.is_some()));
+
+        let mut call = CallToolRequest::new(
+            CallToolRequestParams::new("graph_summary").with_arguments(serde_json::Map::new()),
+        );
+        let mut call_meta = RequestMetaObject::new();
+        call_meta.set_protocol_version(ProtocolVersion::V_2026_07_28);
+        call_meta.set_client_info(Implementation::new("spectral-cortex-test", "1.0.0"));
+        call_meta.set_client_capabilities(ClientCapabilities::default());
+        call.extensions.insert(call_meta);
+        client
+            .send(ClientJsonRpcMessage::request(
+                ClientRequest::CallToolRequest(call),
+                RequestId::Number(2),
+            ))
+            .await
+            .expect("send tools/call");
+        let called = client.receive().await.expect("receive tools/call response");
+        match called {
+            ServerJsonRpcMessage::Response(response) => match response.result {
+                ServerResult::CallToolResult(result) => {
+                    assert_eq!(result.is_error, Some(false));
+                    assert!(result.structured_content.is_some());
+                }
+                other => panic!("expected tools/call result, got {other:?}"),
+            },
+            other => panic!("expected tools/call response, got {other:?}"),
+        }
+        drop(client);
+        server_task.await.expect("join MCP server");
     }
 }

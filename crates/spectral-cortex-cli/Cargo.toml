@@ -56,6 +56,10 @@ git2-backend = ["git2"]
 # Enable progress indicators and nicer CLI feedback
 progress = ["indicatif"]
 
+[dev-dependencies]
+rmcp = { version = "3.2.0", features = ["client"] }
+tempfile = "3"
+
 [[bin]]
 name = "spectral-cortex"
 path = "src/main.rs"
