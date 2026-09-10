@@ -6,7 +6,9 @@ use tempfile::NamedTempFile;
 
 fn process_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(())).lock().expect("test lock")
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("test lock")
 }
 
 fn empty_smg_fixture() -> NamedTempFile {
