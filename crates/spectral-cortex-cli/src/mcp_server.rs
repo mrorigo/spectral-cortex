@@ -376,7 +376,7 @@ impl SpectralCortexMcpServer {
             .into_iter()
             .map(|(sid, (count, typ))| (sid, count, typ))
             .collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|entry| std::cmp::Reverse(entry.1));
 
         let top_k = Self::bounded_limit(input.top_k, 10, 50, "top_k")?;
         let results = sorted.into_iter().take(top_k);
