@@ -51,6 +51,20 @@ fn resolve_filtered_note_indices(
     Ok((filtered_ids, global_indices))
 }
 
+/// Normalize a cosine similarity to the retrieval score contract `[0, 1]`.
+fn normalize_semantic_score(cosine: f32) -> f32 {
+    if cosine.is_finite() {
+        cosine.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// Apply a multiplicative retrieval boost without leaving the `[0, 1]` range.
+fn apply_score_boost(score: f32, boost: f32) -> f32 {
+    (score * boost.max(0.0)).clamp(0.0, 1.0)
+}
+
 /// Submodules
 pub mod spectral;
 
@@ -547,10 +561,10 @@ impl SpectralMemoryGraph {
 
     /// Retrieve candidate per-turn records with raw semantic scores and timestamps.
     ///
-    /// This method returns a flat list of `temporal::Candidate` where `raw_score` is the
-    /// note-level semantic similarity (optionally cluster-boosted) and `timestamp` is the
+    /// This method returns a flat list of `temporal::Candidate` where `raw_score` is in
+    /// `[0, 1]`, after optional keyword and cluster boosts, and `timestamp` is the
     /// per-source-turn timestamp. Callers can pass these into the temporal re-ranker
-    /// to compute final scores.
+    /// to compute final scores, which are also in `[0, 1]`.
     pub fn retrieve_candidates(
         &self,
         query: &str,
@@ -584,11 +598,12 @@ impl SpectralMemoryGraph {
                 // Use ndarray operations for efficient dot product computation
                 let note_arr = Array1::from(note.embedding.clone());
                 let dot = note_arr.dot(&query_arr);
-                let raw_sim = if note.norm == 0.0 || norm_q == 0.0 {
+                let cosine = if note.norm == 0.0 || norm_q == 0.0 {
                     0.0
                 } else {
                     dot / (note.norm * norm_q)
                 };
+                let raw_sim = normalize_semantic_score(cosine);
 
                 // Hybrid scoring: boost based on symbol/file metadata if query matches
                 let mut score = raw_sim;
@@ -605,7 +620,7 @@ impl SpectralMemoryGraph {
                             boost += keyword_weight;
                         }
                     }
-                    score *= boost;
+                    score = apply_score_boost(score, boost);
                 }
 
                 // Hard filters for file/symbol
@@ -653,7 +668,7 @@ impl SpectralMemoryGraph {
             scores.par_iter_mut().enumerate().for_each(|(i, entry)| {
                 if let Some(lbl) = labels.get(i) {
                     if top_clusters.contains(lbl) {
-                        entry.1 *= 1.2;
+                        entry.1 = apply_score_boost(entry.1, 1.2);
                     }
                 }
             });
@@ -765,11 +780,12 @@ impl SpectralMemoryGraph {
                 // Use ndarray operations for efficient dot product computation
                 let note_arr = Array1::from(note.embedding.clone());
                 let dot = note_arr.dot(&query_arr);
-                let raw_sim = if note.norm == 0.0 || norm_q == 0.0 {
+                let cosine = if note.norm == 0.0 || norm_q == 0.0 {
                     0.0
                 } else {
                     dot / (note.norm * norm_q)
                 };
+                let raw_sim = normalize_semantic_score(cosine);
 
                 // Hybrid scoring: boost based on symbol/file metadata if query matches
                 let mut score = raw_sim;
@@ -786,7 +802,7 @@ impl SpectralMemoryGraph {
                             boost += keyword_weight;
                         }
                     }
-                    score *= boost;
+                    score = apply_score_boost(score, boost);
                 }
 
                 // Hard filters for file/symbol
@@ -835,7 +851,7 @@ impl SpectralMemoryGraph {
                 if let Some(global_index) = global_indices.get(&note_ids[i]) {
                     if let Some(lbl) = labels.get(*global_index) {
                         if top_clusters.contains(lbl) {
-                            entry.1 *= 1.2;
+                            entry.1 = apply_score_boost(entry.1, 1.2);
                         }
                     }
                 }
@@ -1042,7 +1058,10 @@ impl SpectralMemoryGraph {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_filtered_note_indices, SMGNote, SpectralBuildConfig, SpectralMemoryGraph};
+    use super::{
+        apply_score_boost, normalize_semantic_score, resolve_filtered_note_indices, SMGNote,
+        SpectralBuildConfig, SpectralMemoryGraph,
+    };
     use nalgebra_sparse::CsrMatrix;
     use ndarray::{Array1, Array2};
     use std::collections::HashMap;
@@ -1082,6 +1101,23 @@ mod tests {
         let error = resolve_filtered_note_indices(&notes, &[99]).expect_err("unknown ID");
 
         assert!(error.to_string().contains("unknown note ID 99"));
+    }
+
+    #[test]
+    fn semantic_scores_follow_the_bounded_contract() {
+        assert_eq!(normalize_semantic_score(-1.0), 0.0);
+        assert_eq!(normalize_semantic_score(0.0), 0.0);
+        assert_eq!(normalize_semantic_score(0.75), 0.75);
+        assert_eq!(normalize_semantic_score(2.0), 1.0);
+        assert_eq!(normalize_semantic_score(f32::NAN), 0.0);
+        assert_eq!(normalize_semantic_score(f32::INFINITY), 0.0);
+    }
+
+    #[test]
+    fn score_boosts_are_multiplicative_and_capped() {
+        assert_eq!(apply_score_boost(0.5, 1.2), 0.6);
+        assert_eq!(apply_score_boost(0.9, 1.2), 1.0);
+        assert_eq!(apply_score_boost(0.5, -1.0), 0.0);
     }
 
     #[test]
