@@ -1,7 +1,8 @@
 use ndarray::array;
 use spectral_cortex::graph::spectral::{
-    assemble_embedding_matrix, compute_spectral_embeddings, cosine_similarity_matrix,
-    degree_vector, normalized_laplacian, sparsify_adj, spectral_decomposition,
+    assemble_embedding_matrix, compute_fused_similarity_matrix, compute_spectral_embeddings,
+    cosine_similarity_matrix, degree_vector, normalized_laplacian, sparsify_adj,
+    spectral_decomposition,
 };
 use spectral_cortex::model::smg_note::SMGNote;
 use std::collections::HashMap;
@@ -25,7 +26,7 @@ fn test_assemble_and_cosine() {
             symbol_id: None,
             ast_node_type: None,
             structural_links: vec![],
-            file_path: Some("file1.rs".to_string())
+            file_path: Some("file1.rs".to_string()),
         },
     );
     notes.insert(
@@ -43,7 +44,7 @@ fn test_assemble_and_cosine() {
             symbol_id: None,
             ast_node_type: None,
             structural_links: vec![],
-            file_path: Some("file1.rs".to_string())
+            file_path: Some("file1.rs".to_string()),
         },
     );
 
@@ -58,6 +59,44 @@ fn test_assemble_and_cosine() {
     assert!((sim[(1, 1)] - 1.0).abs() < 1e-6);
     // orthogonal vectors should have near-zero cosine similarity
     assert!(sim[(0, 1)].abs() < 1e-6);
+}
+
+#[test]
+fn test_fused_similarity_matches_cosine_and_preserves_structural_fusion() {
+    let embeddings = array![[1.0_f32, 0.0], [0.0, 1.0], [1.0, 1.0]];
+    let reference = cosine_similarity_matrix(&embeddings);
+    let mut notes = HashMap::new();
+    for note_id in 1..=3 {
+        notes.insert(
+            note_id,
+            SMGNote {
+                note_id,
+                raw_content: String::new(),
+                embedding: vec![],
+                norm: 0.0,
+                source_turn_ids: vec![],
+                source_commit_ids: vec![],
+                source_timestamps: vec![],
+                spectral_coords: None,
+                related_note_links: vec![],
+                symbol_id: None,
+                ast_node_type: None,
+                structural_links: vec![],
+                file_path: None,
+            },
+        );
+    }
+
+    let plain = compute_fused_similarity_matrix(&embeddings, &[1, 2, 3], &notes, 1.0, 0.0, None);
+    for (actual, expected) in plain.iter().zip(reference.iter()) {
+        assert!((actual - expected).abs() < 1e-6);
+    }
+
+    notes.get_mut(&1).unwrap().structural_links = vec![2];
+    let fused = compute_fused_similarity_matrix(&embeddings, &[1, 2, 3], &notes, 0.5, 0.25, None);
+    let expected = 0.5 * reference[(0, 1)] + 0.25;
+    assert!((fused[(0, 1)] - expected).abs() < 1e-6);
+    assert_eq!(fused[(0, 1)], fused[(1, 0)]);
 }
 
 #[test]

@@ -17,13 +17,13 @@ in their docstrings to comply with the project's documentation guidelines.
 
 use crate::lanzcos::{Hermitian, Order, SparseNormalizedLaplacian};
 use anyhow::Result;
-use rayon::prelude::*;
 use linfa::prelude::*;
 use linfa_clustering::KMeans;
 use nalgebra::linalg::SymmetricEigen;
 use nalgebra::DMatrix;
-use ndarray::{s, Array1, Array2, Axis};
 use nalgebra_sparse::CsrMatrix;
+use ndarray::{s, Array1, Array2, Axis};
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -99,45 +99,49 @@ pub fn compute_fused_similarity_matrix(
         .collect();
 
     let counter = AtomicUsize::new(0);
-    let mut sim = Array2::<f32>::zeros((n, n));
 
-    // We can't easily write to sim in parallel without raw pointers or chunks_mut.
-    // For n=130k, we must be careful with memory and speed.
-    // We'll use safe chunks_mut to parallelize row construction.
-    
-    
-    // Process rows in parallel
-    (0..n).into_par_iter().for_each(|i| {
-        let vi = x.slice(s![i, ..]);
-        let ni = norms[i];
-        
-        for j in i..n {
-            let nj = norms[j];
-            let cosine = if ni == 0.0 || nj == 0.0 {
-                0.0
-            } else {
-                let vj = x.slice(s![j, ..]);
-                let dot: f32 = vi.iter().zip(vj.iter()).map(|(a, b)| a * b).sum();
-                dot / (ni * nj)
-            };
-            
-            // sim[(i, j)] = cosine;
-            // Since we use as_slice_mut, we must calculate raw index
-            // For dense Array2 (n, n), index is i*n + j
-            unsafe {
-                let base = sim.as_ptr() as *mut f32;
-                *base.add(i * n + j) = cosine;
-                *base.add(j * n + i) = cosine;
+    // Build each upper-triangle row independently. The owned rows make the
+    // parallel phase disjoint and safe; the dense matrix is assembled after
+    // all workers complete.
+    let upper_rows: Vec<Vec<f32>> = (0..n)
+        .into_par_iter()
+        .map(|i| {
+            let vi = x.slice(s![i, ..]);
+            let ni = norms[i];
+            let row: Vec<f32> = (i..n)
+                .map(|j| {
+                    let nj = norms[j];
+                    if ni == 0.0 || nj == 0.0 {
+                        0.0
+                    } else {
+                        let vj = x.slice(s![j, ..]);
+                        let dot: f32 = vi.iter().zip(vj.iter()).map(|(a, b)| a * b).sum();
+                        dot / (ni * nj)
+                    }
+                })
+                .collect();
+
+            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Some(cb) = progress {
+                if done % 500 == 0 || done == n {
+                    cb(
+                        format!("Similarity matrix: {}/{} rows", done, n),
+                        done as f32 / n as f32,
+                    );
+                }
             }
+            row
+        })
+        .collect();
+
+    let mut sim = Array2::<f32>::zeros((n, n));
+    for (i, row) in upper_rows.iter().enumerate() {
+        for (offset, &value) in row.iter().enumerate() {
+            let j = i + offset;
+            sim[(i, j)] = value;
+            sim[(j, i)] = value;
         }
-        
-        let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
-        if let Some(cb) = progress {
-            if done % 500 == 0 || done == n {
-                cb(format!("Similarity matrix: {}/{} rows", done, n), done as f32 / n as f32);
-            }
-        }
-    });
+    }
 
     // 2. Fuse with structural links
     boost_with_structural_links(&mut sim, order, notes, alpha, beta);
@@ -160,7 +164,11 @@ pub fn cosine_similarity_matrix(x: &Array2<f32>) -> Array2<f32> {
                 let vj = x.slice(s![j, ..]);
                 let dot: f32 = vi.iter().zip(vj.iter()).map(|(a, b)| a * b).sum();
                 let norm_j = vj.iter().map(|v| v * v).sum::<f32>().sqrt();
-                let cosine = if norm_i == 0.0 || norm_j == 0.0 { 0.0 } else { dot / (norm_i * norm_j) };
+                let cosine = if norm_i == 0.0 || norm_j == 0.0 {
+                    0.0
+                } else {
+                    dot / (norm_i * norm_j)
+                };
                 row.push((j, cosine));
             }
             row
@@ -185,7 +193,9 @@ pub fn boost_with_structural_links(
     beta: f32,
 ) {
     let n = order.len();
-    if n == 0 { return; }
+    if n == 0 {
+        return;
+    }
     let id_to_idx: HashMap<u32, usize> = order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
     for i in 0..n {
         let nid = order[i];
@@ -253,8 +263,7 @@ pub fn to_sparse(w: &Array2<f32>) -> CsrMatrix<f32> {
         row_offsets.push(col_indices.len());
     }
 
-    CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values)
-        .expect("valid CSR data")
+    CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values).expect("valid CSR data")
 }
 
 /// Compute degree vector `d = W · 1` (length n).
@@ -270,12 +279,9 @@ pub fn degree_vector(w: &Array2<f32>) -> Array1<f32> {
     let n = w.nrows();
     let mut degree = Array1::zeros(n);
     let degree_slice = degree.as_slice_mut().expect("Standard layout");
-    degree_slice
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(i, d)| {
-            *d = w.row(i).sum();
-        });
+    degree_slice.par_iter_mut().enumerate().for_each(|(i, d)| {
+        *d = w.row(i).sum();
+    });
     degree
 }
 
@@ -319,12 +325,12 @@ pub fn normalized_laplacian(w: &Array2<f32>) -> Array2<f32> {
 /// for the Lanczos solver without storing the full identity matrix.
 pub fn normalized_laplacian_sparse(w: &CsrMatrix<f32>) -> SparseNormalizedLaplacian<f32> {
     let n = w.nrows();
-    
+
     // 1) Parallel compute degree vector from CSR data
     let row_offsets = w.row_offsets();
     let values = w.values();
     let col_indices = w.col_indices();
-    
+
     let degree: Vec<f32> = (0..n)
         .into_par_iter()
         .map(|i| {
@@ -366,8 +372,9 @@ pub fn normalized_laplacian_sparse(w: &CsrMatrix<f32>) -> SparseNormalizedLaplac
         new_values.extend(chunk);
     }
 
-    let w_norm = CsrMatrix::try_from_csr_data(n, n, row_offsets.to_vec(), col_indices.to_vec(), new_values)
-        .expect("valid CSR data");
+    let w_norm =
+        CsrMatrix::try_from_csr_data(n, n, row_offsets.to_vec(), col_indices.to_vec(), new_values)
+            .expect("valid CSR data");
 
     SparseNormalizedLaplacian { w_norm }
 }
@@ -375,12 +382,12 @@ pub fn normalized_laplacian_sparse(w: &CsrMatrix<f32>) -> SparseNormalizedLaplac
 /// Compute eigenvalues and eigenvectors of a symmetric matrix.
 pub fn spectral_decomposition(l: &Array2<f32>, k: usize) -> Result<(Array1<f32>, Array2<f32>)> {
     let (eigvals, evecs) = spectral_decomposition_full(l)?;
-    
+
     // Take top k if requested
     let k = std::cmp::min(k, eigvals.len());
     let eigvals_k = eigvals.slice(s![..k]).to_owned();
     let evecs_k = evecs.slice(s![.., ..k]).to_owned();
-    
+
     Ok((eigvals_k, evecs_k))
 }
 
@@ -393,7 +400,7 @@ pub fn spectral_decomposition_sparse(
     if n == 0 {
         return Err(anyhow::anyhow!("Matrix is empty"));
     }
-    
+
     // Use Lanczos to compute k smallest eigenvalues/eigenvectors.
     let eigen = l.eigsh(k, Order::Smallest);
 
@@ -632,11 +639,12 @@ pub fn detect_long_range_links(
                 } else {
                     dot / (norm_i * norm_j)
                 };
-                
+
                 // API Weighting: give higher gravity to API definitions
                 if let (Some(ni), Some(nj)) = (notes.get(&note_ids[i]), notes.get(&note_ids[j])) {
-                    if ni.ast_node_type.as_deref() == Some("API_DEFINITION") || 
-                       nj.ast_node_type.as_deref() == Some("API_DEFINITION") {
+                    if ni.ast_node_type.as_deref() == Some("API_DEFINITION")
+                        || nj.ast_node_type.as_deref() == Some("API_DEFINITION")
+                    {
                         sp_sim *= 1.15; // 15% gravity boost for APIs
                     }
                 }
@@ -644,7 +652,10 @@ pub fn detect_long_range_links(
                 if sp_sim > spectral_sim_thr {
                     // Check if embedding similarity is LOW (means they are conceptually linked but not obviously similar)
                     // CsrMatrix access is O(row_nnz). This is only called for survivors.
-                    let emb_s = emb_sim.get_entry(i, j).map(|v| v.into_value()).unwrap_or(0.0);
+                    let emb_s = emb_sim
+                        .get_entry(i, j)
+                        .map(|v| v.into_value())
+                        .unwrap_or(0.0);
                     if emb_s < embed_sim_thr {
                         row_pairs.push((note_ids[i], note_ids[j], sp_sim));
                     }
