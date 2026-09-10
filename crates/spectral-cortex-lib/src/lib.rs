@@ -253,6 +253,9 @@ fn validate_serial_smg_data(serial: &SerializableSMG) -> Result<()> {
         if !note_ids.insert(note.note_id) {
             anyhow::bail!("duplicate note ID {}", note.note_id);
         }
+        if note.note_id == u32::MAX {
+            anyhow::bail!("note ID {} cannot be loaded", u32::MAX);
+        }
         if note.source_turn_ids.len() != note.source_commit_ids.len()
             || note.source_turn_ids.len() != note.source_timestamps.len()
         {
@@ -402,6 +405,7 @@ mod persistence_tests {
         let mut invalid = note(1);
         invalid.source_timestamps.clear();
         assert!(validate_serial_smg_data(&serial(vec![invalid])).is_err());
+        assert!(validate_serial_smg_data(&serial(vec![note(u32::MAX)])).is_err());
     }
 
     #[test]
