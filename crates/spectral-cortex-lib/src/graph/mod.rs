@@ -394,6 +394,10 @@ impl SpectralMemoryGraph {
     /// Resolve structural links between notes sharing the same `symbol_id`.
     /// This should be called after ingestion to populate `structural_links`.
     pub fn resolve_structural_links(&mut self) {
+        for note in self.notes.values_mut() {
+            note.structural_links.clear();
+        }
+
         let mut symbol_to_notes: HashMap<String, Vec<u32>> = HashMap::new();
         for note in self.notes.values() {
             if let Some(sid) = &note.symbol_id {
@@ -404,7 +408,9 @@ impl SpectralMemoryGraph {
             }
         }
 
-        for (_sid, nids) in symbol_to_notes {
+        for (_sid, mut nids) in symbol_to_notes {
+            nids.sort_unstable();
+            nids.dedup();
             for &nid in &nids {
                 if let Some(note) = self.notes.get_mut(&nid) {
                     for &target_id in &nids {
@@ -412,6 +418,8 @@ impl SpectralMemoryGraph {
                             note.structural_links.push(target_id);
                         }
                     }
+                    note.structural_links.sort_unstable();
+                    note.structural_links.dedup();
                 }
             }
         }
@@ -1194,6 +1202,35 @@ mod tests {
 
         assert!((score - 2.0_f32.sqrt() / 2.0).abs() < 1e-6);
         assert_eq!(cosine_score(&[1.0, 0.0], 0.0, &query, 1.0), 0.0);
+    }
+
+    #[test]
+    fn structural_link_resolution_is_idempotent_and_sorted() {
+        let mut graph = SpectralMemoryGraph::new().expect("graph construction");
+        for note_id in [30, 10, 20] {
+            let mut current = note(note_id);
+            current.symbol_id = Some("shared".to_string());
+            current.structural_links = vec![999, 999];
+            graph.notes.insert(note_id, current);
+        }
+
+        graph.resolve_structural_links();
+        let first: HashMap<u32, Vec<u32>> = graph
+            .notes
+            .iter()
+            .map(|(&id, note)| (id, note.structural_links.clone()))
+            .collect();
+        graph.resolve_structural_links();
+        let second: HashMap<u32, Vec<u32>> = graph
+            .notes
+            .iter()
+            .map(|(&id, note)| (id, note.structural_links.clone()))
+            .collect();
+
+        assert_eq!(first, second);
+        assert_eq!(first[&10], vec![20, 30]);
+        assert_eq!(first[&20], vec![10, 30]);
+        assert_eq!(first[&30], vec![10, 20]);
     }
 
     #[test]
