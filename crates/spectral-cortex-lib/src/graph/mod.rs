@@ -65,6 +65,23 @@ fn apply_score_boost(score: f32, boost: f32) -> f32 {
     (score * boost.max(0.0)).clamp(0.0, 1.0)
 }
 
+/// Return whether a note satisfies every requested metadata filter.
+fn matches_metadata_filters(
+    note: &SMGNote,
+    file_filter: Option<&str>,
+    symbol_filter: Option<&str>,
+) -> bool {
+    file_filter.is_none_or(|filter| {
+        note.file_path
+            .as_deref()
+            .is_some_and(|path| path.contains(filter))
+    }) && symbol_filter.is_none_or(|filter| {
+        note.symbol_id
+            .as_deref()
+            .is_some_and(|symbol| symbol.contains(filter))
+    })
+}
+
 /// Submodules
 pub mod spectral;
 
@@ -593,6 +610,9 @@ impl SpectralMemoryGraph {
         let mut scores: Vec<(usize, f32)> = note_ids
             .par_iter()
             .enumerate()
+            .filter(|(_, nid)| {
+                matches_metadata_filters(&self.notes[nid], file_filter, symbol_filter)
+            })
             .map(|(i, nid)| {
                 let note = &self.notes[nid];
                 // Use ndarray operations for efficient dot product computation
@@ -621,18 +641,6 @@ impl SpectralMemoryGraph {
                         }
                     }
                     score = apply_score_boost(score, boost);
-                }
-
-                // Hard filters for file/symbol
-                if let Some(ff) = file_filter {
-                    if !note.file_path.as_deref().unwrap_or("").contains(ff) {
-                        score = 0.0;
-                    }
-                }
-                if let Some(sf) = symbol_filter {
-                    if !note.symbol_id.as_deref().unwrap_or("").contains(sf) {
-                        score = 0.0;
-                    }
                 }
 
                 (i, score)
@@ -775,6 +783,9 @@ impl SpectralMemoryGraph {
         let mut scores: Vec<(usize, f32)> = note_ids
             .par_iter()
             .enumerate()
+            .filter(|(_, nid)| {
+                matches_metadata_filters(&self.notes[nid], file_filter, symbol_filter)
+            })
             .map(|(i, nid)| {
                 let note = &self.notes[nid];
                 // Use ndarray operations for efficient dot product computation
@@ -803,18 +814,6 @@ impl SpectralMemoryGraph {
                         }
                     }
                     score = apply_score_boost(score, boost);
-                }
-
-                // Hard filters for file/symbol
-                if let Some(ff) = file_filter {
-                    if !note.file_path.as_deref().unwrap_or("").contains(ff) {
-                        score = 0.0;
-                    }
-                }
-                if let Some(sf) = symbol_filter {
-                    if !note.symbol_id.as_deref().unwrap_or("").contains(sf) {
-                        score = 0.0;
-                    }
                 }
 
                 (i, score)
@@ -1059,8 +1058,8 @@ impl SpectralMemoryGraph {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_score_boost, normalize_semantic_score, resolve_filtered_note_indices, SMGNote,
-        SpectralBuildConfig, SpectralMemoryGraph,
+        apply_score_boost, matches_metadata_filters, normalize_semantic_score,
+        resolve_filtered_note_indices, SMGNote, SpectralBuildConfig, SpectralMemoryGraph,
     };
     use nalgebra_sparse::CsrMatrix;
     use ndarray::{Array1, Array2};
@@ -1118,6 +1117,42 @@ mod tests {
         assert_eq!(apply_score_boost(0.5, 1.2), 0.6);
         assert_eq!(apply_score_boost(0.9, 1.2), 1.0);
         assert_eq!(apply_score_boost(0.5, -1.0), 0.0);
+    }
+
+    #[test]
+    fn metadata_filters_require_every_requested_field() {
+        let mut candidate = note(10);
+        candidate.file_path = Some("src/graph/mod.rs".to_string());
+        candidate.symbol_id = Some("retrieve_candidates".to_string());
+
+        assert!(matches_metadata_filters(&candidate, None, None));
+        assert!(matches_metadata_filters(&candidate, Some("graph/"), None));
+        assert!(matches_metadata_filters(
+            &candidate,
+            None,
+            Some("retrieve_")
+        ));
+        assert!(matches_metadata_filters(
+            &candidate,
+            Some("graph/"),
+            Some("retrieve_")
+        ));
+        assert!(!matches_metadata_filters(&candidate, Some("other/"), None));
+        assert!(!matches_metadata_filters(&candidate, None, Some("missing")));
+        assert!(!matches_metadata_filters(
+            &candidate,
+            Some("graph/"),
+            Some("missing")
+        ));
+    }
+
+    #[test]
+    fn supplied_filters_reject_missing_metadata() {
+        let candidate = note(10);
+
+        assert!(matches_metadata_filters(&candidate, None, None));
+        assert!(!matches_metadata_filters(&candidate, Some("src/"), None));
+        assert!(!matches_metadata_filters(&candidate, None, Some("symbol")));
     }
 
     #[test]
