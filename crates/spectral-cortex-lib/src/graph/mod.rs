@@ -388,7 +388,18 @@ impl SpectralMemoryGraph {
             spectral_decomposition_sparse, to_sparse,
         };
 
-        self.last_build_config = Some(config.clone());
+        // A rebuild invalidates all derived state up front. If any later
+        // stage fails, the graph remains internally consistent but uncached.
+        self.similarity_matrix = None;
+        self.spectral_embeddings = None;
+        self.cluster_labels = None;
+        self.cluster_centroids = None;
+        self.cluster_centroid_norms = None;
+        self.long_range_links = None;
+        self.last_build_config = None;
+        for note in self.notes.values_mut() {
+            note.related_note_links.clear();
+        }
 
         config.validate()?;
 
@@ -441,7 +452,6 @@ impl SpectralMemoryGraph {
         // 3b) Convert to sparse matrix and drop dense background to save memory
         let sim_sparse = to_sparse(&sim);
         drop(sim); // Free up the large dense matrix (e.g. 25GB for 80k notes)
-        self.similarity_matrix = Some(sim_sparse.clone());
 
         // 4) Normalized Laplacian (L_sym wrapper).
         report_progress(4, TOTAL_STEPS, "Computing normalized Laplacian".to_string());
@@ -456,7 +466,6 @@ impl SpectralMemoryGraph {
         report_progress(6, TOTAL_STEPS, "Extracting spectral embeddings".to_string());
         let n_components = std::cmp::min(config.num_spectral_dims, n.saturating_sub(1));
         let spectral_emb = compute_spectral_embeddings(&eigenvectors, n_components, true);
-        self.spectral_embeddings = Some(spectral_emb.clone());
 
         // 7) Decide number of clusters.
         report_progress(
@@ -474,20 +483,17 @@ impl SpectralMemoryGraph {
         // 8) K-Means on spectral embeddings.
         report_progress(8, TOTAL_STEPS, "Running K-Means clustering".to_string());
         let labels = run_kmeans_on_spectral(&spectral_emb, n_clusters)?;
-        self.cluster_labels = Some(labels.clone());
 
         // 9) Compute centroids in original embedding space.
         report_progress(9, TOTAL_STEPS, "Computing cluster centroids".to_string());
         let centroids_map =
             compute_centroids_in_embedding_space(&labels, note_ids.as_slice(), &self.notes);
-        self.cluster_centroids = Some(centroids_map.clone());
 
         // Precompute centroid norms for fast cosine similarity during queries
         let centroid_norms: HashMap<usize, f32> = centroids_map
             .iter()
             .map(|(c, vec)| (*c, vec.iter().map(|x| x * x).sum::<f32>().sqrt()))
             .collect();
-        self.cluster_centroid_norms = Some(centroid_norms);
 
         // 10) Long-range spectral links: spectral similarity high && embedding similarity low.
         report_progress(
@@ -497,35 +503,44 @@ impl SpectralMemoryGraph {
         );
         let pairs = detect_long_range_links(
             &spectral_emb,
-            self.similarity_matrix
-                .as_ref()
-                .expect("similarity matrix set"),
+            &sim_sparse,
             config.spectral_link_similarity_threshold,
             config.embed_link_similarity_threshold,
             note_ids.as_slice(),
             &self.notes,
             None, // no top-k limit during build
         );
-        // Store the links with scores for later retrieval
-        self.long_range_links = Some(pairs.clone());
-
         // Also populate per-note related links for persistence and fallback retrieval.
-        // Reset first to prevent stale links from accumulating across repeated rebuilds.
-        for note in self.notes.values_mut() {
-            note.related_note_links.clear();
-        }
-        for (a, b, score) in pairs.into_iter() {
-            if let Some(note_a) = self.notes.get_mut(&a) {
-                if !note_a.related_note_links.iter().any(|(nid, _)| *nid == b) {
-                    note_a.related_note_links.push((b, score));
+        let mut related_note_links: HashMap<u32, Vec<(u32, f32)>> = self
+            .notes
+            .keys()
+            .map(|&note_id| (note_id, Vec::new()))
+            .collect();
+        for (a, b, score) in pairs.iter().copied() {
+            if let Some(links) = related_note_links.get_mut(&a) {
+                if !links.iter().any(|(nid, _)| *nid == b) {
+                    links.push((b, score));
                 }
             }
-            if let Some(note_b) = self.notes.get_mut(&b) {
-                if !note_b.related_note_links.iter().any(|(nid, _)| *nid == a) {
-                    note_b.related_note_links.push((a, score));
+            if let Some(links) = related_note_links.get_mut(&b) {
+                if !links.iter().any(|(nid, _)| *nid == a) {
+                    links.push((a, score));
                 }
             }
         }
+
+        self.similarity_matrix = Some(sim_sparse);
+        self.spectral_embeddings = Some(spectral_emb);
+        self.cluster_labels = Some(labels);
+        self.cluster_centroids = Some(centroids_map);
+        self.cluster_centroid_norms = Some(centroid_norms);
+        self.long_range_links = Some(pairs);
+        for (note_id, links) in related_note_links {
+            if let Some(note) = self.notes.get_mut(&note_id) {
+                note.related_note_links = links;
+            }
+        }
+        self.last_build_config = Some(config.clone());
 
         Ok(())
     }
@@ -1027,7 +1042,9 @@ impl SpectralMemoryGraph {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_filtered_note_indices, SMGNote};
+    use super::{resolve_filtered_note_indices, SMGNote, SpectralBuildConfig, SpectralMemoryGraph};
+    use nalgebra_sparse::CsrMatrix;
+    use ndarray::{Array1, Array2};
     use std::collections::HashMap;
 
     fn note(note_id: u32) -> SMGNote {
@@ -1065,5 +1082,53 @@ mod tests {
         let error = resolve_filtered_note_indices(&notes, &[99]).expect_err("unknown ID");
 
         assert!(error.to_string().contains("unknown note ID 99"));
+    }
+
+    #[test]
+    fn small_rebuild_clears_all_spectral_state() {
+        let mut graph = SpectralMemoryGraph::new().expect("graph construction");
+        graph.notes.insert(10, note(10));
+        graph.notes.insert(20, note(20));
+        graph.notes.get_mut(&10).unwrap().related_note_links = vec![(20, 0.9)];
+        graph.similarity_matrix = Some(CsrMatrix::identity(2));
+        graph.spectral_embeddings = Some(Array2::zeros((2, 1)));
+        graph.cluster_labels = Some(Array1::from_vec(vec![0, 1]));
+        graph.cluster_centroids = Some(HashMap::from([(0, vec![1.0])]));
+        graph.cluster_centroid_norms = Some(HashMap::from([(0, 1.0)]));
+        graph.long_range_links = Some(vec![(10, 20, 0.9)]);
+        graph.last_build_config = Some(SpectralBuildConfig::default());
+
+        graph
+            .build_spectral_structure(None)
+            .expect("small graph build");
+
+        assert!(graph.similarity_matrix.is_none());
+        assert!(graph.spectral_embeddings.is_none());
+        assert!(graph.cluster_labels.is_none());
+        assert!(graph.cluster_centroids.is_none());
+        assert!(graph.cluster_centroid_norms.is_none());
+        assert!(graph.long_range_links.is_none());
+        assert!(graph.last_build_config.is_none());
+        assert!(graph
+            .notes
+            .values()
+            .all(|note| note.related_note_links.is_empty()));
+    }
+
+    #[test]
+    fn failed_rebuild_clears_previous_state() {
+        let mut graph = SpectralMemoryGraph::new().expect("graph construction");
+        graph.cluster_labels = Some(Array1::from_vec(vec![0]));
+        graph.last_build_config = Some(SpectralBuildConfig::default());
+        let mut invalid_config = SpectralBuildConfig::default();
+        invalid_config.min_clusters = 0;
+
+        let error = graph
+            .build_spectral_structure_with_config(None, &invalid_config)
+            .expect_err("invalid configuration");
+
+        assert!(error.to_string().contains("min_clusters"));
+        assert!(graph.cluster_labels.is_none());
+        assert!(graph.last_build_config.is_none());
     }
 }
