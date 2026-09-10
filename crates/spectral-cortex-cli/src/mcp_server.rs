@@ -505,7 +505,7 @@ mod tests {
     use rmcp::{
         model::{
             CallToolRequest, CallToolRequestParams, ClientCapabilities, ClientJsonRpcMessage,
-            ClientRequest, Implementation, ListToolsRequest, ProtocolVersion, RequestId,
+            ClientRequest, ErrorCode, Implementation, ListToolsRequest, ProtocolVersion, RequestId,
             RequestMetaObject, ServerJsonRpcMessage, ServerResult,
         },
         service::serve_directly,
@@ -623,6 +623,34 @@ mod tests {
                 other => panic!("expected tools/call result, got {other:?}"),
             },
             other => panic!("expected tools/call response, got {other:?}"),
+        }
+
+        let mut failed_call = CallToolRequest::new(
+            CallToolRequestParams::new("inspect_note").with_arguments(
+                serde_json::json!({ "note_id": 999 })
+                    .as_object()
+                    .cloned()
+                    .expect("object arguments"),
+            ),
+        );
+        let mut failed_meta = RequestMetaObject::new();
+        failed_meta.set_protocol_version(ProtocolVersion::V_2026_07_28);
+        failed_meta.set_client_info(Implementation::new("spectral-cortex-test", "1.0.0"));
+        failed_meta.set_client_capabilities(ClientCapabilities::default());
+        failed_call.extensions.insert(failed_meta);
+        client
+            .send(ClientJsonRpcMessage::request(
+                ClientRequest::CallToolRequest(failed_call),
+                RequestId::Number(3),
+            ))
+            .await
+            .expect("send failing tools/call");
+        let failed = client.receive().await.expect("receive failing tools/call");
+        match failed {
+            ServerJsonRpcMessage::Error(error) => {
+                assert_eq!(error.error.code, ErrorCode::INTERNAL_ERROR)
+            }
+            other => panic!("expected protocol error, got {other:?}"),
         }
         drop(client);
         server_task.await.expect("join MCP server");
