@@ -132,6 +132,8 @@ pub struct SpectralMemoryGraph {
     pub long_range_links: Option<Vec<(u32, u32, f32)>>, // (note_id_a, note_id_b, spectral_similarity)
     /// The configuration used during the last spectral build.
     pub last_build_config: Option<SpectralBuildConfig>,
+    /// Embedding backend configuration used to create stored vectors.
+    pub embedding_config: Option<crate::embed::EmbeddingConfig>,
 }
 
 /// Configurable parameters for spectral-structure construction.
@@ -219,6 +221,7 @@ impl SpectralMemoryGraph {
             cluster_centroid_norms: None,
             long_range_links: None,
             last_build_config: None,
+            embedding_config: None,
         })
     }
 

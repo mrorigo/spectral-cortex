@@ -344,6 +344,25 @@ Extensibility & agent hooks
 
 Testing & development
 ---------------------
+
+Optional Model2Vec embeddings
+-----------------------------
+Build the CLI with the optional backend and select the same model during ingest
+and query:
+
+```bash
+cargo run -p spectral-cortex --features model2vec-embedder -- ingest \
+  --repo . --model-name minishlab/potion-base-8M --batch-size 1024
+cargo run -p spectral-cortex --features model2vec-embedder -- query \
+  --smg smg.json --query "search text" --model-name minishlab/potion-base-8M
+```
+
+`MODEL2VEC_MODEL_NAME` and `MODEL2VEC_NORMALIZE` can be used instead of the
+corresponding model-name and normalize options. Model2Vec models may be a
+Hugging Face identifier or a local model directory. The selected model must be
+the same for ingestion and querying; its embedding dimension is part of the
+SMG's compatibility contract.
+
 - Run unit tests:
 ```bash
 cargo test -p spectral-cortex

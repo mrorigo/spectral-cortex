@@ -117,6 +117,22 @@ struct IngestArgs {
     #[arg(long, default_value = "100")]
     cache_size: usize,
 
+    /// Use Model2Vec instead of the default MiniLM backend.
+    #[arg(long)]
+    model_name: Option<String>,
+
+    /// Override the Model2Vec model normalization setting.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    normalize: bool,
+
+    /// Model2Vec encoding batch size.
+    #[arg(long, default_value_t = 1024)]
+    batch_size: usize,
+
+    /// Optional Model2Vec subfolder containing model files.
+    #[arg(long)]
+    subfolder: Option<String>,
+
     /// Drop commit message lines that match this regex. Repeatable.
     #[arg(long = "git-filter-drop", value_name = "REGEX")]
     git_filter_drop: Vec<String>,
@@ -291,6 +307,22 @@ struct QueryArgs {
     #[arg(long, default_value = "0")]
     cache_size: usize,
 
+    /// Use Model2Vec for query embeddings. This must match the model used at ingest.
+    #[arg(long)]
+    model_name: Option<String>,
+
+    /// Override the Model2Vec model normalization setting.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    normalize: bool,
+
+    /// Model2Vec encoding batch size.
+    #[arg(long, default_value_t = 1024)]
+    batch_size: usize,
+
+    /// Optional Model2Vec subfolder containing model files.
+    #[arg(long)]
+    subfolder: Option<String>,
+
     /// Number of long-range links to return (default: all).
     #[arg(long)]
     links_k: Option<usize>,
@@ -334,6 +366,22 @@ struct McpArgs {
     /// Path to the SMG JSON file to preload and serve.
     #[arg(short = 's', long = "smg", value_name = "PATH")]
     smg: PathBuf,
+
+    /// Optional Model2Vec model used by MCP query tools.
+    #[arg(long)]
+    model_name: Option<String>,
+
+    /// Model2Vec normalization override.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    normalize: bool,
+
+    /// Model2Vec encoding batch size.
+    #[arg(long, default_value_t = 1024)]
+    batch_size: usize,
+
+    /// Optional Model2Vec model subfolder.
+    #[arg(long)]
+    subfolder: Option<String>,
 }
 
 /// Arguments for the `hotspots` subcommand.
@@ -381,7 +429,28 @@ fn main() -> Result<()> {
 
 /// Run the `mcp` subcommand.
 fn run_mcp(args: McpArgs) -> Result<()> {
-    run_mcp_server(&args.smg)
+    if let Some(model_name) = args
+        .model_name
+        .or_else(|| std::env::var("MODEL2VEC_MODEL_NAME").ok())
+    {
+        #[cfg(feature = "model2vec-embedder")]
+        embed::init_model2vec(embed::Model2VecConfig {
+            model_name,
+            normalize: Some(args.normalize),
+            batch_size: args.batch_size,
+            subfolder: args.subfolder,
+        })?;
+        #[cfg(not(feature = "model2vec-embedder"))]
+        {
+            eprintln!("warning: Model2Vec is unavailable; falling back to MiniLM");
+            embed::init(4, 0)?;
+        }
+    } else {
+        embed::init(4, 0)?;
+    }
+    let result = run_mcp_server(&args.smg);
+    let _ = embed::shutdown();
+    result
 }
 
 /// Run the `hotspots` subcommand.
@@ -468,9 +537,35 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
         "Initializing embedding pool with {} workers (background)...",
         args.workers
     );
+    let model_name = args
+        .model_name
+        .clone()
+        .or_else(|| std::env::var("MODEL2VEC_MODEL_NAME").ok());
+    let normalize = std::env::var("MODEL2VEC_NORMALIZE")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(args.normalize);
+    let batch_size = args.batch_size;
+    let subfolder = args.subfolder.clone();
     let workers = args.workers;
     let cache_size = args.cache_size;
     let init_handle = std::thread::spawn(move || {
+        if let Some(model_name) = model_name {
+            #[cfg(feature = "model2vec-embedder")]
+            {
+                return embed::init_model2vec(embed::Model2VecConfig {
+                    model_name,
+                    normalize: Some(normalize),
+                    batch_size,
+                    subfolder,
+                });
+            }
+            #[cfg(not(feature = "model2vec-embedder"))]
+            {
+                eprintln!("warning: Model2Vec is unavailable; falling back to MiniLM");
+                return embed::init(workers, cache_size);
+            }
+        }
         embed::init(workers, cache_size)
     });
 
@@ -555,6 +650,11 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     } else {
         SpectralMemoryGraph::new().context("initializing SpectralMemoryGraph")?
     };
+
+    #[cfg(not(feature = "fake-embed"))]
+    {
+        smg.embedding_config = embed::current_config();
+    }
 
     if args.incremental {
         let existing_commit_ids: HashSet<String> = smg
@@ -850,24 +950,49 @@ fn apply_git_line_filters(
 
 /// Run the `query` subcommand.
 fn run_query(args: QueryArgs) -> Result<()> {
-    // Initialize embedding pool with CLI parameters
-    let _start_total = Instant::now();
-    let _ = _start_total; // suppress unused warning
-    embed::init(args.workers, args.cache_size).with_context(|| "initializing embedding pool")?;
-
-    // Require query string and SMG path.
     let q = args
         .query
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("--query is required"))?;
     let smg_path = args
         .smg
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("--smg <path> is required"))?;
-
-    // Load the persisted SMG and run retrieval.
     let start_load = Instant::now();
     let smg = load_smg_json(&smg_path)
         .with_context(|| format!("loading SMG from {}", smg_path.display()))?;
     eprintln!("Loaded SMG in {:?}", start_load.elapsed());
+
+    let persisted_model = smg
+        .embedding_config
+        .as_ref()
+        .filter(|config| config.backend == "model2vec")
+        .and_then(|config| config.model_name.clone());
+    let model_name = args.model_name.clone().or_else(|| persisted_model).or_else(|| std::env::var("MODEL2VEC_MODEL_NAME").ok());
+    // Initialize embedding pool with CLI parameters
+    let _start_total = Instant::now();
+    let _ = _start_total; // suppress unused warning
+    if let Some(model_name) = model_name {
+        #[cfg(feature = "model2vec-embedder")]
+        embed::init_model2vec(embed::Model2VecConfig {
+            model_name,
+            normalize: Some(
+                std::env::var("MODEL2VEC_NORMALIZE")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(args.normalize),
+            ),
+            batch_size: args.batch_size,
+            subfolder: args.subfolder.clone(),
+        })?;
+        #[cfg(not(feature = "model2vec-embedder"))]
+        {
+            eprintln!("warning: Model2Vec is unavailable; falling back to MiniLM");
+            embed::init(args.workers, args.cache_size)?;
+        }
+    } else {
+        embed::init(args.workers, args.cache_size).with_context(|| "initializing embedding pool")?;
+    }
 
     // Determine how many candidates to retrieve (default = top_k * 5).
     let candidate_k = args.candidate_k.unwrap_or(args.top_k.saturating_mul(5));

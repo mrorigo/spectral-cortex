@@ -1,3 +1,30 @@
+/// Common interface implemented by embedding backends.
+pub trait Embedder: Send + Sync {
+    /// Embed one text and return its vector.
+    fn embed(&self, text: &str) -> anyhow::Result<Vec<f32>>;
+
+    /// Embed multiple texts and preserve input ordering.
+    fn embed_batch(&self, texts: &[String]) -> anyhow::Result<Vec<Vec<f32>>>;
+
+    /// Return the stable backend name.
+    fn get_name(&self) -> &'static str;
+}
+
+use serde::{Deserialize, Serialize};
+
+/// Embedding backend parameters persisted alongside an SMG.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct EmbeddingConfig {
+    /// Backend identifier, such as `minilm` or `model2vec`.
+    pub backend: String,
+    /// Model identifier when the backend requires one.
+    pub model_name: Option<String>,
+    /// Normalization override used by the backend.
+    pub normalize: Option<bool>,
+    /// Batch size used for encoding.
+    pub batch_size: Option<usize>,
+}
+
 /*
 Conditional embedder implementation:
 
@@ -17,16 +44,44 @@ Notes:
   appropriate feature or make `real-embed` the crate default.
 */
 
+#[cfg(feature = "model2vec-embedder")]
+pub mod model2vec;
+
 #[cfg(not(any(test, feature = "fake-embed")))]
 mod real {
+    use crate::embed::EmbeddingConfig;
     use anyhow::Result;
     use once_cell::sync::Lazy;
     use rust_embed::pool::{EmbeddingPool, ModelType, PoolConfig};
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
+    #[cfg(feature = "model2vec-embedder")]
+    use model2vec_rs::model::StaticModel;
+
     /// Global embedding pool guarded by a mutex for thread‑safety.
     static POOL: Lazy<Mutex<Option<Arc<EmbeddingPool>>>> = Lazy::new(|| Mutex::new(None));
+    static CONFIG: Lazy<Mutex<Option<EmbeddingConfig>>> = Lazy::new(|| Mutex::new(None));
+
+    #[cfg(feature = "model2vec-embedder")]
+    type Model2VecRuntime = (Arc<StaticModel>, usize);
+
+    #[cfg(feature = "model2vec-embedder")]
+    static MODEL2VEC: Lazy<Mutex<Option<Model2VecRuntime>>> = Lazy::new(|| Mutex::new(None));
+
+    /// Configuration for the optional Model2Vec backend.
+    #[cfg(feature = "model2vec-embedder")]
+    #[derive(Clone, Debug)]
+    pub struct Model2VecConfig {
+        /// Hugging Face model identifier or local model directory.
+        pub model_name: String,
+        /// Overrides the model's normalization setting.
+        pub normalize: Option<bool>,
+        /// Maximum number of texts encoded in one call.
+        pub batch_size: usize,
+        /// Optional subdirectory containing model files.
+        pub subfolder: Option<String>,
+    }
 
     /// Initialize the embedding pool with specified configuration.
     /// Must be called before any embedding operations.
@@ -52,6 +107,8 @@ mod real {
             .lock()
             .map_err(|_| anyhow::anyhow!("embedding pool lock is poisoned"))?;
         *guard = Some(Arc::new(pool));
+        *CONFIG.lock().map_err(|_| anyhow::anyhow!("embedding config lock is poisoned"))? =
+            Some(EmbeddingConfig { backend: "minilm".into(), model_name: None, normalize: None, batch_size: None });
 
         eprintln!(
             "Embedding pool initialized with {} workers in {:?}",
@@ -61,8 +118,48 @@ mod real {
         Ok(())
     }
 
+    /// Initialize the Model2Vec backend for subsequent embedding operations.
+    #[cfg(feature = "model2vec-embedder")]
+    pub fn init_model2vec(config: Model2VecConfig) -> Result<()> {
+        if config.batch_size == 0 {
+            anyhow::bail!("Model2Vec batch size must be greater than zero");
+        }
+        let model = StaticModel::from_pretrained(
+            &config.model_name,
+            None,
+            config.normalize,
+            config.subfolder.as_deref(),
+        )?;
+        let mut guard = MODEL2VEC
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Model2Vec lock is poisoned"))?;
+        *guard = Some((Arc::new(model), config.batch_size));
+        *CONFIG.lock().map_err(|_| anyhow::anyhow!("embedding config lock is poisoned"))? = Some(EmbeddingConfig {
+            backend: "model2vec".into(), model_name: Some(config.model_name), normalize: config.normalize, batch_size: Some(config.batch_size),
+        });
+        Ok(())
+    }
+
+    /// Returns the active backend configuration for persistence.
+    pub fn current_config() -> Option<EmbeddingConfig> {
+        CONFIG.lock().ok().and_then(|guard| guard.clone())
+    }
+
     /// Embed a single piece of text, returning a plain `Vec<f32>`.
     pub fn get_embedding(text: &str) -> Result<Vec<f32>> {
+        #[cfg(feature = "model2vec-embedder")]
+        if let Some(model) = MODEL2VEC
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Model2Vec lock is poisoned"))?
+            .as_ref()
+            .cloned()
+        {
+            return model.0
+                .encode_with_args(&[text.to_string()], None, model.1)
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Model2Vec returned no embedding"));
+        }
         let pool: Arc<EmbeddingPool> = {
             let guard = POOL
                 .lock()
@@ -94,6 +191,20 @@ mod real {
     ) -> Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(vec![]);
+        }
+
+        #[cfg(feature = "model2vec-embedder")]
+        if let Some(model) = MODEL2VEC
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Model2Vec lock is poisoned"))?
+            .as_ref()
+            .cloned()
+        {
+            let result = model.0.encode_with_args(texts, None, model.1);
+            if let Some(ref cb) = progress {
+                cb("Embedding".to_string(), 1.0);
+            }
+            return Ok(result);
         }
 
         let pool: Arc<EmbeddingPool> = {
@@ -150,6 +261,13 @@ mod real {
 
     /// Shutdown the pool gracefully.
     pub fn shutdown() -> Result<()> {
+        #[cfg(feature = "model2vec-embedder")]
+        {
+            let mut model_guard = MODEL2VEC
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Model2Vec lock is poisoned"))?;
+            model_guard.take();
+        }
         let mut guard = POOL
             .lock()
             .map_err(|_| anyhow::anyhow!("embedding pool lock is poisoned"))?;
@@ -261,3 +379,8 @@ pub use fake::{get_embedding, get_embeddings, init, shutdown};
 
 #[cfg(not(any(test, feature = "fake-embed")))]
 pub use real::{get_embedding, get_embeddings, init, shutdown};
+#[cfg(not(any(test, feature = "fake-embed")))]
+pub use real::current_config;
+
+#[cfg(all(not(any(test, feature = "fake-embed")), feature = "model2vec-embedder"))]
+pub use real::{init_model2vec, Model2VecConfig};

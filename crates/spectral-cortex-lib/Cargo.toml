@@ -26,6 +26,7 @@ rayon = "1.11.0"
 nalgebra-sparse = "0.10.0"
 rand = "0.8"
 num = "0.4"
+model2vec-rs = { version = "0.2.1", optional = true }
 
 [features]
 # Default features: none. The crate selects the real MiniLM embedder by default
@@ -38,6 +39,10 @@ default = []
 # enable it). The crate's source also selects the fake embedder automatically
 # for `cfg(test)` (so unit/integration tests remain deterministic).
 fake-embed = []
+
+# Optional Model2Vec backend. The backend downloads models from Hugging Face
+# unless the caller supplies a local model directory.
+model2vec-embedder = ["dep:model2vec-rs"]
 
 [dev-dependencies]
 

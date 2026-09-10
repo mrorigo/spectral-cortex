@@ -108,6 +108,12 @@ impl SerializableSMG {
             metadata.insert("min_clusters".to_string(), config.min_clusters.to_string());
             metadata.insert("max_clusters".to_string(), config.max_clusters.to_string());
         }
+        if let Some(config) = &smg.embedding_config {
+            metadata.insert("embedding_backend".into(), config.backend.clone());
+            if let Some(model) = &config.model_name { metadata.insert("embedding_model_name".into(), model.clone()); }
+            if let Some(normalize) = config.normalize { metadata.insert("embedding_normalize".into(), normalize.to_string()); }
+            if let Some(batch_size) = config.batch_size { metadata.insert("embedding_batch_size".into(), batch_size.to_string()); }
+        }
 
         Self {
             metadata,
@@ -173,6 +179,14 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
 
     // Create a fresh graph (this also initialises logging/embedder per existing API).
     let mut smg = SpectralMemoryGraph::new()?;
+    if let Some(backend) = serial.metadata.get("embedding_backend") {
+        smg.embedding_config = Some(embed::EmbeddingConfig {
+            backend: backend.clone(),
+            model_name: serial.metadata.get("embedding_model_name").cloned(),
+            normalize: serial.metadata.get("embedding_normalize").and_then(|v| v.parse().ok()),
+            batch_size: serial.metadata.get("embedding_batch_size").and_then(|v| v.parse().ok()),
+        });
+    }
 
     // Restore last build config if present in metadata
     let mut config = SpectralBuildConfig::default();
