@@ -59,9 +59,12 @@ The following plan items are implemented on `feature-mcp-upgrade`:
 - README and user-facing MCP documentation describe stdio, protocol support,
   structured results, and limits.
 
-The remaining verification work is repository-wide gates, malformed-input and
-stdout-purity checks, and manual MCP Inspector validation. Those checks are
-not represented as complete until their evidence is recorded below.
+The remaining verification work is malformed-input coverage and manual MCP
+Inspector validation. Repository-wide format, check, and test gates pass.
+The required clippy command still reports unrelated existing issues in
+`main.rs`, `ast/registry.rs`, and `git_commit_split.rs`; the MCP server itself
+is clean under the MCP-focused changes. Those checks are not represented as
+complete until their evidence is recorded below.
 
 ## Target protocol policy
 
@@ -262,6 +265,11 @@ The upgrade is complete only when all gates pass:
    the SDK's limitation and an explicit release note.
 7. Manual MCP Inspector validation of stdio startup, tool listing, one success,
    and one failure.
+
+Current evidence: gates 1, 2, and 4 pass. Wire tests cover modern request
+metadata, `tools/list`, successful `tools/call`, protocol errors, and legacy
+`initialize`. The clippy gate is blocked by unrelated pre-existing warnings;
+manual Inspector validation is not available in the current environment.
 
 ## Research basis
 
