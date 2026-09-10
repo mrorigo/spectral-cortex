@@ -299,7 +299,7 @@ pub fn compute_sparse_fused_similarity_matrix(
         })
         .collect();
 
-    let rows: Vec<Vec<(usize, f32)>> = (0..n)
+    let row_counts: Vec<usize> = (0..n)
         .into_par_iter()
         .map(|i| {
             let vi = x.row(i);
@@ -324,22 +324,49 @@ pub fn compute_sparse_fused_similarity_matrix(
                     if structural_neighbors[j].contains(&order[i]) {
                         fused = alpha * fused + beta;
                     }
-                    (fused >= threshold).then_some((j, fused))
+                    (fused >= threshold).then_some(())
                 })
-                .collect()
+                .count()
         })
         .collect();
 
     let mut row_offsets = Vec::with_capacity(n + 1);
-    let mut col_indices = Vec::new();
-    let mut values = Vec::new();
     row_offsets.push(0);
-    for row in rows {
-        for (column, value) in row {
-            col_indices.push(column);
-            values.push(value);
+    for count in row_counts {
+        row_offsets.push(row_offsets.last().copied().unwrap_or(0) + count);
+    }
+    let total = row_offsets.last().copied().unwrap_or(0);
+    let mut col_indices = vec![0; total];
+    let mut values = vec![0.0; total];
+    for i in 0..n {
+        let mut offset = row_offsets[i];
+        let vi = x.row(i);
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            let cosine = if norms[i] == 0.0 || norms[j] == 0.0 {
+                0.0
+            } else {
+                vi.iter()
+                    .zip(x.row(j).iter())
+                    .map(|(a, b)| a * b)
+                    .sum::<f32>()
+                    / (norms[i] * norms[j])
+            };
+            let mut fused = cosine;
+            if structural_neighbors[i].contains(&order[j]) {
+                fused = alpha * fused + beta;
+            }
+            if structural_neighbors[j].contains(&order[i]) {
+                fused = alpha * fused + beta;
+            }
+            if fused >= threshold {
+                col_indices[offset] = j;
+                values[offset] = fused;
+                offset += 1;
+            }
         }
-        row_offsets.push(col_indices.len());
     }
     CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values)
         .map_err(|error| anyhow::anyhow!("invalid sparse similarity data: {error}"))
