@@ -234,33 +234,30 @@ pub fn sparsify_adj(w: &mut Array2<f32>, threshold: f32) {
 pub fn to_sparse(w: &Array2<f32>) -> Result<CsrMatrix<f32>> {
     let n = w.nrows();
 
-    // Process rows in parallel to collect non-zeros.
-    let row_results: Vec<Vec<(usize, f32)>> = (0..n)
+    // Count non-zeros first so the final CSR buffers can be allocated once.
+    let row_counts: Vec<usize> = (0..n)
         .into_par_iter()
-        .map(|i| {
-            let mut row = Vec::new();
-            for j in 0..n {
-                let val = w[(i, j)];
-                if val != 0.0 {
-                    row.push((j, val));
-                }
-            }
-            row
-        })
+        .map(|i| w.row(i).iter().filter(|&&value| value != 0.0).count())
         .collect();
 
-    // Flatten parallel results into CSR components.
     let mut row_offsets = Vec::with_capacity(n + 1);
-    let mut col_indices = Vec::new();
-    let mut values = Vec::new();
-
     row_offsets.push(0);
-    for row in row_results {
-        for (j, val) in row {
-            col_indices.push(j);
-            values.push(val);
+    for count in row_counts {
+        row_offsets.push(row_offsets.last().copied().unwrap_or(0) + count);
+    }
+
+    let total = row_offsets.last().copied().unwrap_or(0);
+    let mut col_indices = vec![0; total];
+    let mut values = vec![0.0; total];
+    for i in 0..n {
+        let mut offset = row_offsets[i];
+        for (j, &value) in w.row(i).iter().enumerate() {
+            if value != 0.0 {
+                col_indices[offset] = j;
+                values[offset] = value;
+                offset += 1;
+            }
         }
-        row_offsets.push(col_indices.len());
     }
 
     CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values)

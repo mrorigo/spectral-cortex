@@ -2,7 +2,7 @@ use ndarray::array;
 use spectral_cortex::graph::spectral::{
     assemble_embedding_matrix, compute_fused_similarity_matrix,
     compute_sparse_fused_similarity_matrix, compute_spectral_embeddings, cosine_similarity_matrix,
-    degree_vector, normalized_laplacian, sparsify_adj, spectral_decomposition,
+    degree_vector, normalized_laplacian, sparsify_adj, spectral_decomposition, to_sparse,
 };
 use spectral_cortex::model::smg_note::SMGNote;
 use std::collections::HashMap;
@@ -141,6 +141,19 @@ fn test_sparse_fused_similarity_matches_thresholded_dense_reference() {
             assert!((actual - dense[(i, j)]).abs() < 1e-6);
         }
     }
+}
+
+#[test]
+fn test_to_sparse_preserves_empty_diagonal_and_thresholded_rows() {
+    let empty = array![[0.0_f32, 0.0], [0.0, 0.0]];
+    let sparse = to_sparse(&empty).expect("empty CSR");
+    assert_eq!(sparse.row_offsets(), &[0, 0, 0]);
+
+    let matrix = array![[1.0_f32, 0.5, 0.0], [0.5, 1.0, 0.25], [0.0, 0.25, 1.0]];
+    let sparse = to_sparse(&matrix).expect("symmetric CSR");
+    assert_eq!(sparse.row_offsets(), &[0, 2, 5, 7]);
+    assert_eq!(sparse.col_indices(), &[0, 1, 0, 1, 2, 1, 2]);
+    assert_eq!(sparse.values(), &[1.0, 0.5, 0.5, 1.0, 0.25, 0.25, 1.0]);
 }
 
 #[test]
