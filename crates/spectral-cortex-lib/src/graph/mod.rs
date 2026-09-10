@@ -945,27 +945,9 @@ impl SpectralMemoryGraph {
         )?;
         let cfg = temporal_cfg.unwrap_or_default();
 
-        // --- Spectral Polarity Filtering ---
-        let filtered_candidates = if let Some(_spec_emb) = &self.spectral_embeddings {
-            // Embed query to get query embedding
-            let _query_emb = crate::embed::get_embedding(query)?;
-
-            // Map query to spectral space
-            // This is a simplification: for true spectral polarity we need to project
-            // the query embedding onto the eigenvectors.
-            // For now, we'll use a pragmatic approximation: if the candidate is in a
-            // cluster that has a low spectral similarity to the query's best-matching cluster.
-
-            // Actually, let's implement the plan's projection logic if possible.
-            // If we have similarity_matrix W, L = I - D-1/2 W D-1/2, eigenvectors V.
-            // u_spectral = u_semantic * V or similar.
-
-            Ok::<_, anyhow::Error>(candidates)
-        } else {
-            Ok::<_, anyhow::Error>(candidates)
-        }?;
-
-        let re_ranked = crate::temporal::re_rank_with_temporal(filtered_candidates, &cfg, None);
+        // Spectral polarity filtering is not active; candidates are explicitly
+        // passed unchanged to temporal reranking until a real projection is implemented.
+        let re_ranked = crate::temporal::re_rank_with_temporal(candidates, &cfg, None);
 
         let results: Vec<(u64, f32)> = re_ranked
             .into_iter()

@@ -470,7 +470,7 @@ Fields:
 6. `min_clusters`
 7. `structural_alpha`: base weight for structural link influence (default: 1.0)
 8. `structural_beta`: additive boost for direct structural links (default: 0.1)
-9. `polarity_threshold`: threshold for spectral polarity retrieval pruning (default: 0.85)
+9. `polarity_threshold`: reserved for future spectral polarity retrieval pruning (currently inactive)
 
 Methods:
 
