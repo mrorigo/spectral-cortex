@@ -12,8 +12,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use nalgebra_sparse::CsrMatrix;
 use anyhow::{Context, Result};
+use nalgebra_sparse::CsrMatrix;
 use ndarray::{Array1, Array2};
 
 use crate::embed;
@@ -23,6 +23,33 @@ use crate::utils::logging;
 /// Progress callback type for long-running operations.
 /// The callback receives a message describing the current step and a progress fraction (0.0..1.0).
 pub type ProgressCallback = Arc<dyn Fn(String, f32) + Send + Sync>;
+
+/// Resolve filtered note IDs to their positions in the graph's canonical order.
+fn resolve_filtered_note_indices(
+    notes: &HashMap<u32, SMGNote>,
+    filtered_note_ids: &[u32],
+) -> Result<(Vec<u32>, HashMap<u32, usize>)> {
+    let mut global_note_ids: Vec<u32> = notes.keys().copied().collect();
+    global_note_ids.sort_unstable();
+    let global_indices: HashMap<u32, usize> = global_note_ids
+        .iter()
+        .enumerate()
+        .map(|(index, &note_id)| (note_id, index))
+        .collect();
+
+    let mut filtered_ids = filtered_note_ids.to_vec();
+    filtered_ids.sort_unstable();
+    filtered_ids.dedup();
+    for note_id in &filtered_ids {
+        if !global_indices.contains_key(note_id) {
+            return Err(anyhow::anyhow!(
+                "filtered retrieval references unknown note ID {note_id}"
+            ));
+        }
+    }
+
+    Ok((filtered_ids, global_indices))
+}
 
 /// Submodules
 pub mod spectral;
@@ -37,8 +64,8 @@ pub struct SpectralMemoryGraph {
     pub construction_time: Duration,
     // Cached structures for spectral processing
     pub similarity_matrix: Option<CsrMatrix<f32>>, // sparse similarity of embeddings
-    pub spectral_embeddings: Option<Array2<f32>>, // eigenvectors (n x k)
-    pub cluster_labels: Option<Array1<usize>>,  // optional K‑Means labels
+    pub spectral_embeddings: Option<Array2<f32>>,  // eigenvectors (n x k)
+    pub cluster_labels: Option<Array1<usize>>,     // optional K‑Means labels
     pub cluster_centroids: Option<HashMap<usize, Vec<f32>>>, // optional mean embeddings per cluster
     pub cluster_centroid_norms: Option<HashMap<usize, f32>>, // precomputed L2 norms of centroids for fast cosine similarity
     pub long_range_links: Option<Vec<(u32, u32, f32)>>, // (note_id_a, note_id_b, spectral_similarity)
@@ -309,7 +336,10 @@ impl SpectralMemoryGraph {
         let mut symbol_to_notes: HashMap<String, Vec<u32>> = HashMap::new();
         for note in self.notes.values() {
             if let Some(sid) = &note.symbol_id {
-                symbol_to_notes.entry(sid.clone()).or_default().push(note.note_id);
+                symbol_to_notes
+                    .entry(sid.clone())
+                    .or_default()
+                    .push(note.note_id);
             }
         }
 
@@ -353,11 +383,11 @@ impl SpectralMemoryGraph {
     ) -> Result<()> {
         use crate::graph::spectral::{
             assemble_embedding_matrix, compute_centroids_in_embedding_space,
-            compute_spectral_embeddings, compute_fused_similarity_matrix, detect_long_range_links,
+            compute_fused_similarity_matrix, compute_spectral_embeddings, detect_long_range_links,
             eigengap_heuristic, normalized_laplacian_sparse, run_kmeans_on_spectral, sparsify_adj,
             spectral_decomposition_sparse, to_sparse,
         };
-        
+
         self.last_build_config = Some(config.clone());
 
         config.validate()?;
@@ -407,7 +437,7 @@ impl SpectralMemoryGraph {
         // 3) Sparsify adjacency in-place (zero diagonal + threshold).
         report_progress(3, TOTAL_STEPS, "Sparsifying adjacency matrix".to_string());
         sparsify_adj(&mut sim, config.adj_sparse_threshold);
-        
+
         // 3b) Convert to sparse matrix and drop dense background to save memory
         let sim_sparse = to_sparse(&sim);
         drop(sim); // Free up the large dense matrix (e.g. 25GB for 80k notes)
@@ -419,7 +449,8 @@ impl SpectralMemoryGraph {
 
         // 5) Eigen-decomposition.
         report_progress(5, TOTAL_STEPS, "Performing eigen-decomposition".to_string());
-        let (eigenvalues, eigenvectors) = spectral_decomposition_sparse(&lap, config.num_spectral_dims)?;
+        let (eigenvalues, eigenvectors) =
+            spectral_decomposition_sparse(&lap, config.num_spectral_dims)?;
 
         // 6) Spectral embeddings: take leading `k` eigenvectors and row-normalize.
         report_progress(6, TOTAL_STEPS, "Extracting spectral embeddings".to_string());
@@ -644,15 +675,22 @@ impl SpectralMemoryGraph {
         Ok(candidates)
     }
     /// Search the graph using a text query, retrieving top results with scores.
-    pub fn search(&self, query: &str, top_k: usize, min_score: Option<f32>) -> Result<Vec<(f32, u32)>> {
+    pub fn search(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(f32, u32)>> {
         let results = self.retrieve_with_scores_config(query, top_k, None, None, None, 0.3)?;
         let mut searched: Vec<(f32, u32)> = Vec::new();
 
         let min_s = min_score.unwrap_or(0.0);
-        
+
         // We need to map turn_id back to note_id for the MCP response.
         for (tid, score) in results {
-            if score < min_s { continue; }
+            if score < min_s {
+                continue;
+            }
             // Invert index lookup (inefficient but works for small graphs)
             for note in self.notes.values() {
                 if note.source_turn_ids.contains(&tid) {
@@ -661,7 +699,7 @@ impl SpectralMemoryGraph {
                 }
             }
         }
-        
+
         Ok(searched)
     }
 
@@ -697,8 +735,10 @@ impl SpectralMemoryGraph {
         let query_arr = Array1::from(query_emb);
         let norm_q = query_arr.dot(&query_arr).sqrt();
 
-        // Use the provided filtered note IDs (assume they're already sorted)
-        let note_ids: Vec<u32> = filtered_note_ids.to_vec();
+        // Cluster labels are indexed by the globally sorted note order. Keep
+        // that mapping separate from the filtered candidate list.
+        let (note_ids, global_indices) =
+            resolve_filtered_note_indices(&self.notes, filtered_note_ids)?;
 
         // Compute raw cosine similarity per note (note-level score) using precomputed norms.
         // Use parallel iteration for better performance on multi-core systems.
@@ -777,9 +817,11 @@ impl SpectralMemoryGraph {
 
             // Boost scores for notes in top clusters using parallel iteration
             scores.par_iter_mut().enumerate().for_each(|(i, entry)| {
-                if let Some(lbl) = labels.get(i) {
-                    if top_clusters.contains(lbl) {
-                        entry.1 *= 1.2;
+                if let Some(global_index) = global_indices.get(&note_ids[i]) {
+                    if let Some(lbl) = labels.get(*global_index) {
+                        if top_clusters.contains(lbl) {
+                            entry.1 *= 1.2;
+                        }
                     }
                 }
             });
@@ -835,24 +877,25 @@ impl SpectralMemoryGraph {
         symbol_filter: Option<&str>,
         keyword_weight: f32,
     ) -> Result<Vec<(u64, f32)>> {
-        let candidates = self.retrieve_candidates(query, top_k * 4, file_filter, symbol_filter, keyword_weight)?;
+        let candidates =
+            self.retrieve_candidates(query, top_k * 4, file_filter, symbol_filter, keyword_weight)?;
         let cfg = temporal_cfg.unwrap_or_default();
-        
+
         // --- Spectral Polarity Filtering ---
         let filtered_candidates = if let Some(_spec_emb) = &self.spectral_embeddings {
             // Embed query to get query embedding
             let _query_emb = crate::embed::get_embedding(query)?;
-            
+
             // Map query to spectral space
-            // This is a simplification: for true spectral polarity we need to project 
+            // This is a simplification: for true spectral polarity we need to project
             // the query embedding onto the eigenvectors.
-            // For now, we'll use a pragmatic approximation: if the candidate is in a 
+            // For now, we'll use a pragmatic approximation: if the candidate is in a
             // cluster that has a low spectral similarity to the query's best-matching cluster.
-            
+
             // Actually, let's implement the plan's projection logic if possible.
             // If we have similarity_matrix W, L = I - D-1/2 W D-1/2, eigenvectors V.
             // u_spectral = u_semantic * V or similar.
-            
+
             Ok::<_, anyhow::Error>(candidates)
         } else {
             Ok::<_, anyhow::Error>(candidates)
@@ -899,7 +942,14 @@ impl SpectralMemoryGraph {
         let start_filter = Instant::now();
         // If no time filters are specified, use the standard unfiltered path
         if time_start.is_none() && time_end.is_none() {
-            return self.retrieve_with_scores_config(query, top_k, temporal_cfg, file_filter, symbol_filter, keyword_weight);
+            return self.retrieve_with_scores_config(
+                query,
+                top_k,
+                temporal_cfg,
+                file_filter,
+                symbol_filter,
+                keyword_weight,
+            );
         }
 
         // Filter notes by time range before computing similarity
@@ -972,5 +1022,48 @@ impl SpectralMemoryGraph {
         let scored = self.retrieve_with_scores(query, top_k)?;
         let ids = scored.into_iter().map(|(tid, _score)| tid).collect();
         Ok(ids)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_filtered_note_indices, SMGNote};
+    use std::collections::HashMap;
+
+    fn note(note_id: u32) -> SMGNote {
+        SMGNote {
+            note_id,
+            raw_content: String::new(),
+            embedding: vec![],
+            norm: 0.0,
+            source_turn_ids: vec![],
+            source_commit_ids: vec![],
+            source_timestamps: vec![],
+            spectral_coords: None,
+            related_note_links: vec![],
+            symbol_id: None,
+            ast_node_type: None,
+            file_path: None,
+            structural_links: vec![],
+        }
+    }
+
+    #[test]
+    fn filtered_ids_use_global_sorted_indices() {
+        let notes = HashMap::from([(10, note(10)), (20, note(20)), (30, note(30))]);
+        let (filtered, global_indices) =
+            resolve_filtered_note_indices(&notes, &[30, 10, 30]).expect("valid IDs");
+
+        assert_eq!(filtered, vec![10, 30]);
+        assert_eq!(global_indices[&10], 0);
+        assert_eq!(global_indices[&30], 2);
+    }
+
+    #[test]
+    fn filtered_ids_reject_unknown_notes() {
+        let notes = HashMap::from([(10, note(10))]);
+        let error = resolve_filtered_note_indices(&notes, &[99]).expect_err("unknown ID");
+
+        assert!(error.to_string().contains("unknown note ID 99"));
     }
 }
