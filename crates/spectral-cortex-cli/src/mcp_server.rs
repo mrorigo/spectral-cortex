@@ -98,9 +98,11 @@ pub struct SpectralCortexMcpServer {
 #[tool_handler]
 impl ServerHandler for SpectralCortexMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "Spectral Cortex MCP Server: compact markdown tools for querying a preloaded SMG file. Prefer small top_k values to keep responses token efficient.",
-        )
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2026_07_28)
+            .with_instructions(
+                "Spectral Cortex MCP Server: compact markdown tools for querying a preloaded SMG file. Prefer small top_k values to keep responses token efficient.",
+            )
     }
 }
 
