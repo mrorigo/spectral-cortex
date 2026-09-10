@@ -44,6 +44,25 @@ These facts are grounded in the current manifest and
 `crates/spectral-cortex-cli/src/mcp_server.rs`; they are not assumptions about
 the intended future architecture.
 
+## Implementation status
+
+The following plan items are implemented on `feature-mcp-upgrade`:
+
+- RMCP is pinned to `3.2.0`.
+- Modern `2026-07-28` metadata negotiation is preferred, with legacy
+  `initialize` negotiation retained.
+- All six tools return markdown plus structured `{ "markdown": string }`
+  content and declare output schemas.
+- Tool limits and score thresholds are validated with hard bounds.
+- Modern duplex wire tests cover `tools/list`, successful `tools/call`, and a
+  protocol error. A legacy duplex test covers `initialize` negotiation.
+- README and user-facing MCP documentation describe stdio, protocol support,
+  structured results, and limits.
+
+The remaining verification work is repository-wide gates, malformed-input and
+stdout-purity checks, and manual MCP Inspector validation. Those checks are
+not represented as complete until their evidence is recorded below.
+
 ## Target protocol policy
 
 ### Supported protocol eras
