@@ -20,6 +20,20 @@ const DEFAULT_TOP_K: usize = 5;
 // const DEFAULT_LINKS_K: usize = 3;
 const DEFAULT_SNIPPET_CHARS: usize = 140;
 
+fn markdown_output_schema() -> Arc<JsonObject> {
+    Arc::new(
+        json!({
+            "type": "object",
+            "properties": { "markdown": { "type": "string" } },
+            "required": ["markdown"],
+            "additionalProperties": false
+        })
+        .as_object()
+        .cloned()
+        .unwrap_or_default(),
+    )
+}
+
 /// Input for querying the graph with a text query.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct QueryGraphInput {
@@ -116,7 +130,8 @@ impl SpectralCortexMcpServer {
 
     /// Query the graph and return a compact markdown table.
     #[rmcp::tool(
-        description = "Run semantic query against an SMG and return token-efficient markdown results"
+        description = "Run semantic query against an SMG and return token-efficient markdown results",
+        output_schema = markdown_output_schema()
     )]
     fn query_graph(
         &self,
@@ -130,7 +145,8 @@ impl SpectralCortexMcpServer {
 
     /// Inspect a single note and show top related notes with similarity.
     #[rmcp::tool(
-        description = "Inspect one note by id and return compact markdown with related notes"
+        description = "Inspect one note by id and return compact markdown with related notes",
+        output_schema = markdown_output_schema()
     )]
     fn inspect_note(
         &self,
@@ -143,7 +159,10 @@ impl SpectralCortexMcpServer {
     }
 
     /// List long-range links from the graph.
-    #[rmcp::tool(description = "List long-range spectral links as compact markdown")]
+    #[rmcp::tool(
+        description = "List long-range spectral links as compact markdown",
+        output_schema = markdown_output_schema()
+    )]
     fn long_range_links(
         &self,
         Parameters(input): Parameters<LongRangeLinksInput>,
@@ -155,7 +174,10 @@ impl SpectralCortexMcpServer {
     }
 
     /// Return a small summary of graph size and available structures.
-    #[rmcp::tool(description = "Return compact summary metadata for an SMG")]
+    #[rmcp::tool(
+        description = "Return compact summary metadata for an SMG",
+        output_schema = markdown_output_schema()
+    )]
     fn graph_summary(
         &self,
         Parameters(input): Parameters<GraphSummaryInput>,
@@ -167,7 +189,10 @@ impl SpectralCortexMcpServer {
     }
 
     /// Retrieve the most churn-heavy structural hotspots.
-    #[rmcp::tool(description = "Report top churn-heavy AST symbols")]
+    #[rmcp::tool(
+        description = "Report top churn-heavy AST symbols",
+        output_schema = markdown_output_schema()
+    )]
     fn get_structural_hotspots(
         &self,
         Parameters(input): Parameters<StructuralHotspotsInput>,
@@ -179,7 +204,10 @@ impl SpectralCortexMcpServer {
     }
 
     /// Retrieve chronological change history for a single symbol.
-    #[rmcp::tool(description = "Retrieve timeline of a symbol's evolution")]
+    #[rmcp::tool(
+        description = "Retrieve timeline of a symbol's evolution",
+        output_schema = markdown_output_schema()
+    )]
     fn inspect_symbol_history(
         &self,
         Parameters(input): Parameters<SymbolHistoryInput>,
