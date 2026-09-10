@@ -46,6 +46,7 @@ tree-sitter-python = "0.23"
 rayon = "1.11.0"
 
 [features]
+fake-embed = []
 model2vec-embedder = ["spectral-cortex/model2vec-embedder"]
 # Default features enable the git2 backend and progress bars for a pleasant UX.
 default = ["git2-backend", "progress"]

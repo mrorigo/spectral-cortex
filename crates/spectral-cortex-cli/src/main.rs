@@ -428,6 +428,7 @@ fn main() -> Result<()> {
 }
 
 /// Run the `mcp` subcommand.
+#[allow(unused_variables)]
 fn run_mcp(args: McpArgs) -> Result<()> {
     if let Some(model_name) = args
         .model_name
@@ -500,6 +501,10 @@ fn run_update(args: UpdateArgs) -> Result<()> {
         max_commits: args.max_commits,
         workers: args.workers,
         cache_size: args.cache_size,
+        model_name: None,
+        normalize: true,
+        batch_size: 1024,
+        subfolder: None,
         git_filter_drop: args.git_filter_drop,
         git_filter_preset: args.git_filter_preset,
         git_filter_case_insensitive: args.git_filter_case_insensitive,
@@ -525,6 +530,7 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 /// # Errors
 ///
 /// Returns an `anyhow::Error` when IO/git operations fail or when the library API fails.
+#[allow(unused_variables)]
 fn run_ingest(args: IngestArgs) -> Result<()> {
     println!("Starting ingest for repo: {}", args.repo.display());
 
@@ -976,6 +982,7 @@ fn apply_git_line_filters(
 }
 
 /// Run the `query` subcommand.
+#[allow(unused_variables)]
 fn run_query(args: QueryArgs) -> Result<()> {
     let q = args
         .query
@@ -998,7 +1005,7 @@ fn run_query(args: QueryArgs) -> Result<()> {
     let model_name = args
         .model_name
         .clone()
-        .or_else(|| persisted_model)
+        .or(persisted_model)
         .or_else(|| std::env::var("MODEL2VEC_MODEL_NAME").ok());
     // Initialize embedding pool with CLI parameters
     let _start_total = Instant::now();

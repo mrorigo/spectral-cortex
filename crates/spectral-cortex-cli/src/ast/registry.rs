@@ -31,3 +31,9 @@ impl ParserRegistry {
         self.parsers.get(ext).map(|p| p.as_ref())
     }
 }
+
+impl Default for ParserRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}

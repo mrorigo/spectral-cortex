@@ -464,6 +464,7 @@ pub(crate) fn split_commit_with_ast(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn extract_symbols(
     node: tree_sitter::Node,
     source: &str,
