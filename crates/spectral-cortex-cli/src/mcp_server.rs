@@ -220,8 +220,17 @@ impl SpectralCortexMcpServer {
 }
 
 impl SpectralCortexMcpServer {
-    fn clamp_top_k(top_k: Option<usize>, default_k: usize, max_k: usize) -> usize {
-        top_k.unwrap_or(default_k).max(1).min(max_k)
+    fn bounded_limit(
+        value: Option<usize>,
+        default_value: usize,
+        maximum: usize,
+        name: &str,
+    ) -> Result<usize> {
+        let value = value.unwrap_or(default_value);
+        if !(1..=maximum).contains(&value) {
+            anyhow::bail!("{name} must be between 1 and {maximum}")
+        }
+        Ok(value)
     }
 
     fn compact_snippet(text: &str, max_chars: usize) -> String {
@@ -235,11 +244,21 @@ impl SpectralCortexMcpServer {
 
     fn query_graph_impl(&self, input: QueryGraphInput) -> Result<String> {
         let smg = &self.smg;
-        let top_k = Self::clamp_top_k(input.top_k, DEFAULT_TOP_K, 20);
-        let snippet_chars = input
-            .snippet_chars
-            .unwrap_or(DEFAULT_SNIPPET_CHARS)
-            .clamp(40, 300);
+        let top_k = Self::bounded_limit(input.top_k, DEFAULT_TOP_K, 20, "top_k")?;
+        let snippet_chars = Self::bounded_limit(
+            input.snippet_chars,
+            DEFAULT_SNIPPET_CHARS,
+            300,
+            "snippet_chars",
+        )?;
+        if snippet_chars < 40 {
+            anyhow::bail!("snippet_chars must be between 40 and 300")
+        }
+        if let Some(min_score) = input.min_score {
+            if !min_score.is_finite() || !(0.0..=1.0).contains(&min_score) {
+                anyhow::bail!("min_score must be between 0.0 and 1.0")
+            }
+        }
 
         let hits = smg.search(&input.query, top_k, input.min_score)?;
 
@@ -275,11 +294,16 @@ impl SpectralCortexMcpServer {
 
     fn inspect_note_impl(&self, input: InspectNoteInput) -> Result<String> {
         let smg = &self.smg;
-        let links_k = Self::clamp_top_k(input.links_k, 10, 25);
-        let snippet_chars = input
-            .snippet_chars
-            .unwrap_or(DEFAULT_SNIPPET_CHARS)
-            .clamp(40, 300);
+        let links_k = Self::bounded_limit(input.links_k, 10, 25, "links_k")?;
+        let snippet_chars = Self::bounded_limit(
+            input.snippet_chars,
+            DEFAULT_SNIPPET_CHARS,
+            300,
+            "snippet_chars",
+        )?;
+        if snippet_chars < 40 {
+            anyhow::bail!("snippet_chars must be between 40 and 300")
+        }
 
         let note = smg
             .notes
@@ -318,7 +342,7 @@ impl SpectralCortexMcpServer {
 
     fn long_range_links_impl(&self, input: LongRangeLinksInput) -> Result<String> {
         let smg = &self.smg;
-        let top_k = Self::clamp_top_k(input.top_k, 20, 100);
+        let top_k = Self::bounded_limit(input.top_k, 20, 100, "top_k")?;
         let links = smg.get_long_range_links(Some(top_k));
 
         let mut out = String::new();
@@ -352,7 +376,7 @@ impl SpectralCortexMcpServer {
             .collect();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
 
-        let top_k = input.top_k.unwrap_or(10).min(50);
+        let top_k = Self::bounded_limit(input.top_k, 10, 50, "top_k")?;
         let results = sorted.into_iter().take(top_k);
 
         let mut out = String::new();
@@ -385,6 +409,9 @@ impl SpectralCortexMcpServer {
 
         let total_found = history.len();
         if let Some(limit) = input.limit {
+            if !(1..=1_000).contains(&limit) {
+                anyhow::bail!("limit must be between 1 and 1000")
+            }
             if history.len() > limit {
                 history.truncate(limit);
             }
