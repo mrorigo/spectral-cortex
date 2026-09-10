@@ -156,6 +156,11 @@ Tool input examples:
 ```
 
 All MCP tool responses are markdown-first and intentionally compact to reduce token usage.
+The server uses RMCP 3.2.0, supports MCP 2026-07-28 negotiation, and also
+retains the legacy initialize lifecycle supported by the SDK. Successful tool
+responses include the markdown plus structured content in the form
+`{"markdown":"..."}`. The server is local-only over stdio and reads the SMG
+file supplied at startup.
 
 Agent-oriented workflows & examples
 ----------------------------------

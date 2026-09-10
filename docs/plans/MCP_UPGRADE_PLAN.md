@@ -25,18 +25,20 @@ explicitly deferred unless a later requirement makes one necessary.
 
 ## Current-state facts
 
-1. The CLI depends on `rmcp = 0.15.0` with `server`, `macros`, and
+1. The CLI depends on `rmcp = 3.2.0` with `server`, `macros`, and
    `transport-io` features.
 2. `crates/spectral-cortex-cli/src/mcp_server.rs` uses `ServerHandler`,
    `ToolRouter`, `#[rmcp::tool]`, and `.serve(stdio())`.
 3. The server advertises tools only.
 4. It exposes six tools: `query_graph`, `inspect_note`, `long_range_links`,
    `graph_summary`, `get_structural_hotspots`, and `inspect_symbol_history`.
-5. Tool handlers return `String`; failures are formatted as successful text
-   responses beginning with `Error:`.
+5. Tool handlers return `CallToolResult`; successes contain markdown plus a
+   `{ "markdown": string }` structured result, and failures return RMCP
+   `ErrorData`.
 6. The SMG is loaded once at startup and held in an `Arc`; tool calls do not
    mutate it.
-7. The repository has no MCP protocol integration tests.
+7. The repository has catalog and result-shape unit tests, but no subprocess
+   stdio protocol integration tests yet.
 
 These facts are grounded in the current manifest and
 `crates/spectral-cortex-cli/src/mcp_server.rs`; they are not assumptions about
@@ -107,15 +109,15 @@ information.
 
 ### R1 — Dependency and lifecycle
 
-1. `rmcp` must upgrade from `0.15.0` to the current stable 3.x release
-   available when implementation begins. Pin the selected version in the
-   manifest and record it in the lockfile.
+1. `rmcp` must be pinned to the selected stable 3.x release in the manifest
+   and lockfile. The current implementation selects `3.2.0`.
 2. The server must compile with the repository's normal feature set.
 3. A modern client must be able to discover the server and call a tool using
    MCP `2026-07-28`.
 4. A legacy-compatible client must still be able to initialize and call a tool,
    unless a documented SDK limitation makes this impossible.
-5. The server must not require `Mcp-Session-Id` for modern requests.
+5. The server must not require `Mcp-Session-Id` for modern requests. RMCP
+   3.2.0 remains responsible for protocol negotiation and lifecycle behavior.
 
 ### R2 — Tool catalog
 

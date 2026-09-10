@@ -93,11 +93,21 @@ Run MCP server over stdio using a preloaded graph:
 ./target/release/spectral-cortex mcp --smg smg.json
 ```
 
+The MCP server is local-only and uses stdio. It supports MCP 2026-07-28
+negotiation through RMCP 3.2.0 and retains compatibility with clients that use
+the legacy initialize lifecycle. The SMG path is selected when the process
+starts; tools cannot select another file.
+
 Options:
 
 - `--smg <PATH>`: path to SMG JSON file to preload once at startup.
 
 MCP tool inputs (no `smg_path` required because graph is preloaded):
+
+Numeric limits are validated, not silently expanded: `query_graph.top_k` is
+1-20, `links_k` is 1-25, `snippet_chars` is 40-300, long-range links are
+1-100, structural hotspots are 1-50, and symbol history `limit` is 1-1000.
+`min_score`, when provided, must be finite and between 0.0 and 1.0.
 
 `graph_summary`
 
