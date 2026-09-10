@@ -82,6 +82,8 @@ Commands:
 3. `query`: Retrieve relevant notes from SMG JSON.
 4. `note`: Inspect one note and related links.
 5. `mcp`: Run an MCP stdio server with a preloaded SMG file.
+6. `hotspots`: List the most frequently modified structural symbols.
+7. `history`: List chronological changes for one structural symbol.
 
 ## MCP
 
@@ -287,16 +289,19 @@ Update-specific notes:
 
 1. Final result count.
 2. Default `5`.
+3. Maximum `10,000`.
 
 `--candidate-k <N>`
 
 1. Candidate pool before final filtering.
 2. Default behavior is `top_k * 5`.
 
+`--top-k 0` returns no results without embedding the query. Requests above the maximum return a validation error.
+
 `--min-score <FLOAT>`
 
 1. Inclusive threshold on final score.
-2. Default `0.7`.
+2. Default `0.6`.
 
 `--no-temporal`
 
@@ -321,29 +326,31 @@ Update-specific notes:
 
 `--file <STRING>`
 
-1. Filter results by file path (substring match).
+1. Exclude notes whose file path does not contain the substring.
 
 `--symbol <STRING>`
 
-1. Filter results by symbol ID (substring match).
+1. Exclude notes whose symbol ID does not contain the substring.
 
 `--keyword-weight <FLOAT>`
 
 1. Weight for hybrid metadata boosting (default 0.3).
 
+Semantic and final scores are bounded to `[0, 1]`. Negative cosine similarities score as `0`. Keyword and cluster boosts are multiplicative and capped at `1`.
+
 `--time-start <RFC3339>`
 
-1. Parsed for future query-time filtering support.
+1. Parsed for compatibility.
 2. Currently not applied to retrieval results.
 
 `--time-end <RFC3339>`
 
-1. Parsed for future query-time filtering support.
+1. Parsed for compatibility.
 2. Currently not applied to retrieval results.
 
 `--time-window-days <FLOAT>`
 
-1. Parsed for future query-time filtering support.
+1. Parsed for compatibility.
 2. Currently not applied to retrieval results.
 
 `--workers <N>`
@@ -468,7 +475,7 @@ Fields:
 4. `embed_link_similarity_threshold`
 5. `max_clusters`
 6. `min_clusters`
-7. `structural_alpha`: base weight for structural link influence (default: 1.0)
+7. `structural_alpha`: base weight for structural link influence (default: 0.8)
 8. `structural_beta`: additive boost for direct structural links (default: 0.1)
 9. `polarity_threshold`: reserved for future spectral polarity retrieval pruning (currently inactive)
 
@@ -492,6 +499,9 @@ let config = SpectralBuildConfig {
     embed_link_similarity_threshold: 0.45,
     max_clusters: 18,
     min_clusters: 2,
+    structural_alpha: 0.8,
+    structural_beta: 0.1,
+    polarity_threshold: 0.85,
 };
 smg.build_spectral_structure_with_config(None, &config)?;
 ```

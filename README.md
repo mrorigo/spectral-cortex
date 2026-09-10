@@ -10,6 +10,8 @@ Highlights
 - **Structural Fusion**: Fuses semantic similarity with the repo's call-graph and structural links.
 - **Embedding Deduplication**: Batch-level de-duplication of identical content (e.g., multiple AST symbols in one commit) to drastically reduce embedding costs.
 - **Hybrid Search**: Combines vector similarity with keyword-based metadata boosting for symbols and file paths.
+- **Temporal Re-ranking**: Combines semantic similarity with configurable recency scoring.
+- **Analysis Commands**: Inspect notes, structural hotspots, and symbol history from an SMG.
 
 Contents
 - Quick start
@@ -175,7 +177,7 @@ Why this is suited to agents
 
 CLI reference (important flags)
 -------------------------------
-The `spectral-cortex` binary exposes: `ingest`, `update`, `query`, `note`, and `mcp`.
+The `spectral-cortex` binary exposes: `ingest`, `update`, `query`, `note`, `mcp`, `hotspots`, and `history`.
 
 Ingest (collect commits -> SMG):
 ```bash
@@ -200,6 +202,12 @@ cargo run -p spectral-cortex --release -- \
   note --smg smg.json --note-id 42 --json
 ```
 
+Inspect structural activity and symbol history:
+```bash
+spectral-cortex hotspots --smg smg.json --top-k 10
+spectral-cortex history --smg smg.json --symbol 'crate::module::function'
+```
+
 Run MCP server with preloaded SMG:
 ```bash
 cargo run -p spectral-cortex --release -- \
@@ -209,15 +217,15 @@ cargo run -p spectral-cortex --release -- \
 `mcp` also accepts `--smd` as an alias for `--smg`.
 
 Key query flags (agent-friendly):
-- `--top-k <n>`: how many final results to return (default 5).
-- `--candidate-k <n>`: how many candidates to retrieve from vector search before filtering (defaults to `top_k * 5`).
-- `--min-score <float>`: inclusive threshold applied to the combined `final_score` (default 0.7).
+- `--top-k <n>`: how many final results to return (default 5, maximum 10,000).
+- `--candidate-k <n>`: how many candidates to retrieve before temporal reranking (defaults to `top_k * 5`).
+- `--min-score <float>`: inclusive threshold applied to the combined `final_score` (default 0.6).
 - `--no-temporal`: disable temporal re-ranking for this query (temporal is enabled by default).
 - `--temporal-weight <0..1>`: control recency influence (default 0.20).
 - `--temporal-half-life-days <float>`: half-life for exponential decay (default 14.0).
-- `--file <string>`: filter results by file path (substring match).
-- `--symbol <string>`: filter results by symbol ID (substring match).
 - `--keyword-weight <float>`: weight for hybrid metadata boosting (default 0.3).
+- `--file <string>` and `--symbol <string>`: hard substring filters. Nonmatching notes are excluded before ranking.
+- `--time-start`, `--time-end`, and `--time-window-days`: accepted by the CLI but currently not applied to query retrieval.
 - `--json`: emit machine-readable JSON (recommended for agents).
 
 Key ingest/update filtering flags:
@@ -230,6 +238,8 @@ Key ingest/update filtering flags:
 - `--num-spectral-dims <n>`: number of spectral dimensions (k) to compute (default 8).
 - `--min-clusters <n>`: minimum clusters allowed (default 2).
 - `--max-clusters <n>`: maximum clusters allowed (default 8).
+
+Retrieval raw semantic scores and final temporal scores are bounded to `[0, 1]`. Negative cosine similarities score as `0`. Keyword and cluster boosts are multiplicative and capped at `1`.
 
 Git hook automation (post-commit)
 ---------------------------------
@@ -286,8 +296,9 @@ Primary types:
 - `SpectralMemoryGraph`
   - `new() -> Result<Self>`: initializes embedder and structures.
   - `ingest_turn(&mut self, turn: &ConversationTurn) -> Result<()>`: add a turn.
-  - `build_spectral_structure(&mut self) -> Result<()>`: compute spectral embeddings & clusters.
-  - `retrieve_with_scores(&self, query: &str, candidate_k: usize) -> Result<Vec<(u64, f32)>>`: returns per-turn final scores (semantic + temporal + cluster boosts). Callers may re-rank with a custom `TemporalConfig` if you prefer different defaults.
+  - `build_spectral_structure(&mut self, progress: Option<ProgressCallback>) -> Result<()>`: compute spectral embeddings and clusters.
+  - `retrieve_candidates(&self, query: &str, candidate_note_k: usize, file_filter: Option<&str>, symbol_filter: Option<&str>, keyword_weight: f32) -> Result<Vec<Candidate>>`: return bounded raw semantic candidates.
+  - `retrieve_with_scores(&self, query: &str, top_k: usize) -> Result<Vec<(u64, f32)>>`: return final per-turn scores using default temporal settings.
 
 - `ConversationTurn`
   ```rust
