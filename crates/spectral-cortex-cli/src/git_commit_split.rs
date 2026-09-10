@@ -82,6 +82,7 @@ pub(crate) struct CommitSplitStats {
     pub(crate) segments_from_headers: usize,
     pub(crate) segments_from_bullets: usize,
     pub(crate) segments_from_paragraphs: usize,
+    pub(crate) ast_segments_truncated: usize,
 }
 
 impl CommitSplitStats {
@@ -103,6 +104,9 @@ impl CommitSplitStats {
         self.segments_from_paragraphs = self
             .segments_from_paragraphs
             .saturating_add(other.segments_from_paragraphs);
+        self.ast_segments_truncated = self
+            .ast_segments_truncated
+            .saturating_add(other.ast_segments_truncated);
     }
 }
 
@@ -458,6 +462,27 @@ pub(crate) fn split_commit_with_ast(
         // Fallback to text splitting if no AST symbols found
         Ok(split_commit_message(message, config, stats))
     } else {
+        // AST extraction can find many symbols in one commit. Keep the graph
+        // bounded while selecting symbols deterministically and preserving API
+        // definitions ahead of implementation details.
+        let emitted = segments.len();
+        segments.sort_by(|a, b| {
+            let category_rank = |segment: &CommitSegment| {
+                if segment.ast_node_type.as_deref() == Some("API_DEFINITION") {
+                    0
+                } else {
+                    1
+                }
+            };
+            category_rank(a)
+                .cmp(&category_rank(b))
+                .then_with(|| a.file_path.cmp(&b.file_path))
+                .then_with(|| a.symbol_id.cmp(&b.symbol_id))
+        });
+        segments.truncate(config.max_segments);
+        stats.ast_segments_truncated = stats
+            .ast_segments_truncated
+            .saturating_add(emitted.saturating_sub(segments.len()));
         stats.commits_split = stats.commits_split.saturating_add(1);
         stats.total_segments_emitted = stats.total_segments_emitted.saturating_add(segments.len());
         Ok(segments)

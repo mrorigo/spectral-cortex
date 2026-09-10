@@ -594,12 +594,13 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
         );
     }
     println!(
-        "Commit split summary: mode={} commits_seen={} commits_split={} total_segments={} fallback_single={} parser_modes=[headers:{} bullets:{} paragraphs:{}]",
+        "Commit split summary: mode={} commits_seen={} commits_split={} total_segments={} fallback_single={} ast_truncated={} parser_modes=[headers:{} bullets:{} paragraphs:{}]",
         split_config.mode.as_str(),
         collected.split_stats.commits_seen,
         collected.split_stats.commits_split,
         collected.split_stats.total_segments_emitted,
         collected.split_stats.fallback_to_single,
+        collected.split_stats.ast_segments_truncated,
         collected.split_stats.segments_from_headers,
         collected.split_stats.segments_from_bullets,
         collected.split_stats.segments_from_paragraphs

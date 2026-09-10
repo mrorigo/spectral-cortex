@@ -484,11 +484,16 @@ impl SpectralMemoryGraph {
             return Ok(());
         }
 
+        let build_started = Instant::now();
+
         // Helper to call progress callback if present
         let report_progress = |step: usize, total_steps: usize, msg: String| {
             if let Some(ref cb) = progress {
                 let fraction = (step as f32) / (total_steps as f32);
-                cb(msg, fraction);
+                cb(
+                    format!("{} ({:.2}s)", msg, build_started.elapsed().as_secs_f32()),
+                    fraction,
+                );
             }
         };
 
