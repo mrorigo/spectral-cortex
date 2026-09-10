@@ -21,6 +21,7 @@ use anyhow::Result;
 use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::Path;
@@ -100,7 +101,10 @@ impl SerializableSMG {
         );
 
         if let Some(config) = &smg.last_build_config {
-            metadata.insert("num_spectral_dims".to_string(), config.num_spectral_dims.to_string());
+            metadata.insert(
+                "num_spectral_dims".to_string(),
+                config.num_spectral_dims.to_string(),
+            );
             metadata.insert("min_clusters".to_string(), config.min_clusters.to_string());
             metadata.insert("max_clusters".to_string(), config.max_clusters.to_string());
         }
@@ -164,6 +168,8 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
             format_version
         ));
     }
+
+    validate_serial_smg_data(&serial)?;
 
     // Create a fresh graph (this also initialises logging/embedder per existing API).
     let mut smg = SpectralMemoryGraph::new()?;
@@ -238,4 +244,178 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
     smg.long_range_links = serial.long_range_links;
 
     Ok(smg)
+}
+
+fn validate_serial_smg_data(serial: &SerializableSMG) -> Result<()> {
+    let mut note_ids = HashSet::with_capacity(serial.notes.len());
+    let mut embedding_dim = None;
+    for note in &serial.notes {
+        if !note_ids.insert(note.note_id) {
+            anyhow::bail!("duplicate note ID {}", note.note_id);
+        }
+        if note.source_turn_ids.len() != note.source_commit_ids.len()
+            || note.source_turn_ids.len() != note.source_timestamps.len()
+        {
+            anyhow::bail!("source vectors are not parallel for note {}", note.note_id);
+        }
+        if note.embedding.is_empty() || note.embedding.iter().any(|value| !value.is_finite()) {
+            anyhow::bail!("embedding for note {} is empty or non-finite", note.note_id);
+        }
+        match embedding_dim {
+            Some(expected) if expected != note.embedding.len() => {
+                anyhow::bail!("embedding dimension mismatch at note {}", note.note_id)
+            }
+            None => embedding_dim = Some(note.embedding.len()),
+            _ => {}
+        }
+        if !note.norm.is_finite() || note.norm < 0.0 {
+            anyhow::bail!("invalid embedding norm for note {}", note.note_id);
+        }
+        let computed_norm = note
+            .embedding
+            .iter()
+            .map(|value| value * value)
+            .sum::<f32>()
+            .sqrt();
+        if (note.norm - computed_norm).abs() > 1e-4 * computed_norm.max(1.0) {
+            anyhow::bail!("embedding norm mismatch for note {}", note.note_id);
+        }
+        for &(target, score) in &note.related_note_links {
+            if !note_ids.contains(&target) {
+                // Endpoint validation is repeated after all IDs are collected below.
+                continue;
+            }
+            if !score.is_finite() {
+                anyhow::bail!("non-finite related-link score on note {}", note.note_id);
+            }
+        }
+    }
+
+    for note in &serial.notes {
+        for &target in &note.structural_links {
+            if !note_ids.contains(&target) {
+                anyhow::bail!(
+                    "structural link from {} targets unknown note {}",
+                    note.note_id,
+                    target
+                );
+            }
+        }
+        for &(target, score) in &note.related_note_links {
+            if !note_ids.contains(&target) {
+                anyhow::bail!(
+                    "related link from {} targets unknown note {}",
+                    note.note_id,
+                    target
+                );
+            }
+            if !score.is_finite() {
+                anyhow::bail!("non-finite related-link score on note {}", note.note_id);
+            }
+        }
+    }
+
+    if let Some(labels) = &serial.cluster_labels {
+        if labels.len() != serial.notes.len() {
+            anyhow::bail!("cluster-label length does not match note count");
+        }
+    }
+    if let Some(centroids) = &serial.cluster_centroids {
+        let dimension = embedding_dim.ok_or_else(|| anyhow::anyhow!("centroids require notes"))?;
+        for (cluster, centroid) in centroids {
+            if centroid.len() != dimension || centroid.iter().any(|value| !value.is_finite()) {
+                anyhow::bail!("invalid centroid dimension or value for cluster {cluster}");
+            }
+        }
+    }
+    if let Some(norms) = &serial.cluster_centroid_norms {
+        let centroids = serial
+            .cluster_centroids
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("centroid norms require centroids"))?;
+        for (cluster, norm) in norms {
+            let centroid = centroids
+                .get(cluster)
+                .ok_or_else(|| anyhow::anyhow!("centroid norm has unknown cluster {cluster}"))?;
+            let computed = centroid
+                .iter()
+                .map(|value| value * value)
+                .sum::<f32>()
+                .sqrt();
+            if !norm.is_finite() || (*norm - computed).abs() > 1e-4 * computed.max(1.0) {
+                anyhow::bail!("centroid norm mismatch for cluster {cluster}");
+            }
+        }
+    }
+    if let Some(links) = &serial.long_range_links {
+        for &(source, target, score) in links {
+            if !note_ids.contains(&source) || !note_ids.contains(&target) {
+                anyhow::bail!("long-range link targets an unknown note");
+            }
+            if !score.is_finite() {
+                anyhow::bail!("long-range link score is non-finite");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod persistence_tests {
+    use super::{validate_serial_smg_data, SerializableNote, SerializableSMG};
+    use std::collections::HashMap;
+
+    fn note(note_id: u32) -> SerializableNote {
+        SerializableNote {
+            note_id,
+            raw_content: String::new(),
+            embedding: vec![1.0, 0.0],
+            norm: 1.0,
+            source_turn_ids: vec![1],
+            source_commit_ids: vec![None],
+            source_timestamps: vec![1],
+            related_note_links: vec![],
+            symbol_id: None,
+            ast_node_type: None,
+            file_path: None,
+            structural_links: vec![],
+        }
+    }
+
+    fn serial(notes: Vec<SerializableNote>) -> SerializableSMG {
+        SerializableSMG {
+            metadata: HashMap::from([(
+                String::from("format_version"),
+                String::from("spectral-cortex-v1"),
+            )]),
+            notes,
+            cluster_labels: None,
+            cluster_centroids: None,
+            cluster_centroid_norms: None,
+            long_range_links: None,
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_ids_and_misaligned_sources() {
+        assert!(validate_serial_smg_data(&serial(vec![note(1), note(1)])).is_err());
+        let mut invalid = note(1);
+        invalid.source_timestamps.clear();
+        assert!(validate_serial_smg_data(&serial(vec![invalid])).is_err());
+    }
+
+    #[test]
+    fn rejects_inconsistent_labels_links_and_centroids() {
+        let mut invalid = serial(vec![note(1)]);
+        invalid.cluster_labels = Some(vec![]);
+        assert!(validate_serial_smg_data(&invalid).is_err());
+
+        let mut invalid = serial(vec![note(1)]);
+        invalid.cluster_centroids = Some(HashMap::from([(0, vec![1.0])]));
+        assert!(validate_serial_smg_data(&invalid).is_err());
+
+        let mut invalid = serial(vec![note(1)]);
+        invalid.long_range_links = Some(vec![(1, 99, 1.0)]);
+        assert!(validate_serial_smg_data(&invalid).is_err());
+    }
 }
