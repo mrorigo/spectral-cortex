@@ -77,6 +77,24 @@ fn apply_score_boost(score: f32, boost: f32) -> f32 {
     (score * boost.max(0.0)).clamp(0.0, 1.0)
 }
 
+/// Compute a bounded cosine score directly from two embedding slices.
+fn cosine_score(
+    note_embedding: &[f32],
+    note_norm: f32,
+    query_embedding: &Array1<f32>,
+    query_norm: f32,
+) -> f32 {
+    if note_norm == 0.0 || query_norm == 0.0 {
+        return 0.0;
+    }
+    let dot: f32 = note_embedding
+        .iter()
+        .zip(query_embedding.iter())
+        .map(|(note_value, query_value)| note_value * query_value)
+        .sum();
+    normalize_semantic_score(dot / (note_norm * query_norm))
+}
+
 /// Return whether a note satisfies every requested metadata filter.
 fn matches_metadata_filters(
     note: &SMGNote,
@@ -637,15 +655,7 @@ impl SpectralMemoryGraph {
             })
             .map(|(i, nid)| {
                 let note = &self.notes[nid];
-                // Use ndarray operations for efficient dot product computation
-                let note_arr = Array1::from(note.embedding.clone());
-                let dot = note_arr.dot(&query_arr);
-                let cosine = if note.norm == 0.0 || norm_q == 0.0 {
-                    0.0
-                } else {
-                    dot / (note.norm * norm_q)
-                };
-                let raw_sim = normalize_semantic_score(cosine);
+                let raw_sim = cosine_score(&note.embedding, note.norm, &query_arr, norm_q);
 
                 // Hybrid scoring: boost based on symbol/file metadata if query matches
                 let mut score = raw_sim;
@@ -810,15 +820,7 @@ impl SpectralMemoryGraph {
             })
             .map(|(i, nid)| {
                 let note = &self.notes[nid];
-                // Use ndarray operations for efficient dot product computation
-                let note_arr = Array1::from(note.embedding.clone());
-                let dot = note_arr.dot(&query_arr);
-                let cosine = if note.norm == 0.0 || norm_q == 0.0 {
-                    0.0
-                } else {
-                    dot / (note.norm * norm_q)
-                };
-                let raw_sim = normalize_semantic_score(cosine);
+                let raw_sim = cosine_score(&note.embedding, note.norm, &query_arr, norm_q);
 
                 // Hybrid scoring: boost based on symbol/file metadata if query matches
                 let mut score = raw_sim;
@@ -1093,7 +1095,7 @@ impl SpectralMemoryGraph {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_score_boost, expanded_candidate_limit, matches_metadata_filters,
+        apply_score_boost, cosine_score, expanded_candidate_limit, matches_metadata_filters,
         normalize_semantic_score, resolve_filtered_note_indices, SMGNote, SpectralBuildConfig,
         SpectralMemoryGraph, CANDIDATE_EXPANSION, MAX_RESULT_LIMIT,
     };
@@ -1200,6 +1202,15 @@ mod tests {
         );
         assert!(expanded_candidate_limit(MAX_RESULT_LIMIT + 1).is_err());
         assert!(expanded_candidate_limit(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn direct_slice_cosine_matches_expected_score() {
+        let query = Array1::from_vec(vec![1.0, 1.0]);
+        let score = cosine_score(&[1.0, 0.0], 1.0, &query, 2.0_f32.sqrt());
+
+        assert!((score - 2.0_f32.sqrt() / 2.0).abs() < 1e-6);
+        assert_eq!(cosine_score(&[1.0, 0.0], 0.0, &query, 1.0), 0.0);
     }
 
     #[test]
