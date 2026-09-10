@@ -249,6 +249,7 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
 fn validate_serial_smg_data(serial: &SerializableSMG) -> Result<()> {
     let mut note_ids = HashSet::with_capacity(serial.notes.len());
     let mut embedding_dim = None;
+    let mut previous_note_id = None;
     for note in &serial.notes {
         if !note_ids.insert(note.note_id) {
             anyhow::bail!("duplicate note ID {}", note.note_id);
@@ -256,6 +257,10 @@ fn validate_serial_smg_data(serial: &SerializableSMG) -> Result<()> {
         if note.note_id == u32::MAX {
             anyhow::bail!("note ID {} cannot be loaded", u32::MAX);
         }
+        if previous_note_id.is_some_and(|previous| note.note_id <= previous) {
+            anyhow::bail!("persisted notes must be sorted by note ID");
+        }
+        previous_note_id = Some(note.note_id);
         if note.source_turn_ids.len() != note.source_commit_ids.len()
             || note.source_turn_ids.len() != note.source_timestamps.len()
         {
@@ -406,6 +411,7 @@ mod persistence_tests {
         invalid.source_timestamps.clear();
         assert!(validate_serial_smg_data(&serial(vec![invalid])).is_err());
         assert!(validate_serial_smg_data(&serial(vec![note(u32::MAX)])).is_err());
+        assert!(validate_serial_smg_data(&serial(vec![note(2), note(1)])).is_err());
     }
 
     #[test]
