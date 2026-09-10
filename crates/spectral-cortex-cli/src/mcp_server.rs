@@ -10,9 +10,10 @@ use rmcp::{
     model::*,
     schemars, tool_handler,
     transport::stdio,
-    ServerHandler, ServiceExt,
+    ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use serde::Deserialize;
+use serde_json::json;
 use spectral_cortex::{load_smg_json, SpectralMemoryGraph};
 
 const DEFAULT_TOP_K: usize = 5;
@@ -91,6 +92,19 @@ impl ServerHandler for SpectralCortexMcpServer {
 
 #[rmcp::tool_router]
 impl SpectralCortexMcpServer {
+    fn success_result(markdown: String) -> CallToolResult {
+        let mut result = CallToolResult::structured(json!({ "markdown": markdown }));
+        result.content = vec![ContentBlock::text(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("markdown"))
+                .and_then(|value| value.as_str())
+                .unwrap_or_default(),
+        )];
+        result
+    }
+
     /// Construct a new server instance.
     pub fn new(smg_path: String, smg: SpectralMemoryGraph) -> Self {
         Self {
@@ -104,10 +118,13 @@ impl SpectralCortexMcpServer {
     #[rmcp::tool(
         description = "Run semantic query against an SMG and return token-efficient markdown results"
     )]
-    fn query_graph(&self, Parameters(input): Parameters<QueryGraphInput>) -> String {
+    fn query_graph(
+        &self,
+        Parameters(input): Parameters<QueryGraphInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.query_graph_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
@@ -115,28 +132,37 @@ impl SpectralCortexMcpServer {
     #[rmcp::tool(
         description = "Inspect one note by id and return compact markdown with related notes"
     )]
-    fn inspect_note(&self, Parameters(input): Parameters<InspectNoteInput>) -> String {
+    fn inspect_note(
+        &self,
+        Parameters(input): Parameters<InspectNoteInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.inspect_note_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
     /// List long-range links from the graph.
     #[rmcp::tool(description = "List long-range spectral links as compact markdown")]
-    fn long_range_links(&self, Parameters(input): Parameters<LongRangeLinksInput>) -> String {
+    fn long_range_links(
+        &self,
+        Parameters(input): Parameters<LongRangeLinksInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.long_range_links_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
     /// Return a small summary of graph size and available structures.
     #[rmcp::tool(description = "Return compact summary metadata for an SMG")]
-    fn graph_summary(&self, Parameters(input): Parameters<GraphSummaryInput>) -> String {
+    fn graph_summary(
+        &self,
+        Parameters(input): Parameters<GraphSummaryInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.graph_summary_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
@@ -145,19 +171,22 @@ impl SpectralCortexMcpServer {
     fn get_structural_hotspots(
         &self,
         Parameters(input): Parameters<StructuralHotspotsInput>,
-    ) -> String {
+    ) -> Result<CallToolResult, McpError> {
         match self.get_structural_hotspots_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 
     /// Retrieve chronological change history for a single symbol.
     #[rmcp::tool(description = "Retrieve timeline of a symbol's evolution")]
-    fn inspect_symbol_history(&self, Parameters(input): Parameters<SymbolHistoryInput>) -> String {
+    fn inspect_symbol_history(
+        &self,
+        Parameters(input): Parameters<SymbolHistoryInput>,
+    ) -> Result<CallToolResult, McpError> {
         match self.inspect_symbol_history_impl(input) {
-            Ok(output) => output,
-            Err(err) => format!("Error: {err}"),
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
 }
@@ -411,4 +440,24 @@ pub fn run_mcp_server(smg_path: &Path) -> Result<()> {
         service.waiting().await?;
         Ok::<(), anyhow::Error>(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SpectralCortexMcpServer;
+
+    #[test]
+    fn successful_results_include_markdown_and_structured_content() {
+        let result = SpectralCortexMcpServer::success_result("# Graph Summary".into());
+
+        assert_eq!(result.is_error, Some(false));
+        assert_eq!(result.content.len(), 1);
+        assert_eq!(
+            result
+                .structured_content
+                .and_then(|value| value.get("markdown").cloned())
+                .and_then(|value| value.as_str().map(str::to_owned)),
+            Some("# Graph Summary".into())
+        );
+    }
 }
