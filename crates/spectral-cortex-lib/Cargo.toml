@@ -13,9 +13,6 @@ path = "src/lib.rs"
 [dependencies]
 once_cell = "1.19"
 anyhow = "1.0"
-# The real embedding runtime is enabled by default so the CLI and library use the
-# real MiniLM embedder without requiring an explicit feature flag.
-rust_embed = { git = "https://github.com/mrorigo/rust-embed.git", branch = "bugfix/infinite-recursion" }
 ndarray = { version = "0.16.1", features = ["rayon"] }
 nalgebra = "0.34.1"
 linfa = { version = "0.8.1", default-features = false }
@@ -26,12 +23,11 @@ rayon = "1.11.0"
 nalgebra-sparse = "0.10.0"
 rand = "0.8"
 num = "0.4"
-model2vec-rs = { version = "0.2.1", optional = true }
+model2vec-rs = "0.2.1"
 
 [features]
-# Default features: none. The crate selects the real MiniLM embedder by default
-# at compile time (the source enables the fake embedder only for `cfg(test)` or
-# when the `fake-embed` feature is explicitly enabled).
+# The production embedder is always Model2Vec. Tests select the deterministic
+# fake backend through `cfg(test)` or the `fake-embed` feature.
 default = []
 
 # Optional fake embedder for deterministic CI/tests or lightweight local builds.
@@ -40,9 +36,6 @@ default = []
 # for `cfg(test)` (so unit/integration tests remain deterministic).
 fake-embed = []
 
-# Optional Model2Vec backend. The backend downloads models from Hugging Face
-# unless the caller supplies a local model directory.
-model2vec-embedder = ["dep:model2vec-rs"]
 
 [dev-dependencies]
 

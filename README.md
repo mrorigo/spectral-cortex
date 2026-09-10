@@ -176,7 +176,7 @@ The typical flow for an agent using the SMG as memory:
 
 Why this is suited to agents
 - Small and self-contained: you can run entirely on a developer machine or container.
-- Deterministic local embedder available for tests; real MiniLM used by default for realistic retrieval.
+- Model2Vec embeddings are used in production, with `grybsh/m2v-MiniLM-L6-v2` as the default checkpoint.
 - Outputs structured JSON that an agent can parse to build prompts or context windows.
 - Temporal re-ranking biases results toward recent, likely more actionable history — useful for agents that should prefer recent fixes or regression-causing commits.
 
@@ -361,16 +361,15 @@ Extensibility & agent hooks
 Testing & development
 ---------------------
 
-Optional Model2Vec embeddings
------------------------------
-Build the CLI with the optional backend and select the same model during ingest
-and query:
+Model2Vec embeddings
+--------------------
+Model2Vec is the sole production embedding backend. The default checkpoint is
+`grybsh/m2v-MiniLM-L6-v2`; select another Hugging Face model or local model
+directory with `--model-name`:
 
 ```bash
-cargo run -p spectral-cortex --features model2vec-embedder -- ingest \
-  --repo . --model-name minishlab/potion-base-8M --batch-size 1024
-cargo run -p spectral-cortex --features model2vec-embedder -- query \
-  --smg smg.json --query "search text" --model-name minishlab/potion-base-8M
+cargo run -p spectral-cortex -- ingest --repo .
+cargo run -p spectral-cortex -- query --smg smg.json --query "search text"
 ```
 
 `MODEL2VEC_MODEL_NAME` and `MODEL2VEC_NORMALIZE` can be used instead of the
@@ -383,7 +382,7 @@ SMG's compatibility contract.
 ```bash
 cargo test -p spectral-cortex
 ```
-- Use deterministic fake embedder for tests (the project auto-selects a deterministic fake embedder under `cfg(test)` so CI is reproducible).
+- Tests use the deterministic fake embedder with the `fake-embed` feature.
 - Linting & formatting:
 ```bash
 cargo fmt
@@ -392,7 +391,7 @@ cargo clippy -- -D warnings
 
 Developer notes
 ---------------
-- The embedder bundles MiniLM assets via a companion `rust_embed` repo; no network fetch is required at runtime.
+- Model2Vec loads checkpoints from the Hugging Face Hub on first use, or from a local model directory.
 - Default settings assume agents should prefer recent context; tune via CLI or library `TemporalConfig` for domain needs (e.g., security audits vs. active feature work).
 - If you plan to serve the SMG from a shared service, snapshot `smg.json` and load it into worker processes to avoid repeated rebuilds.
 

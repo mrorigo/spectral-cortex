@@ -117,7 +117,7 @@ struct IngestArgs {
     #[arg(long, default_value = "100")]
     cache_size: usize,
 
-    /// Use Model2Vec instead of the default MiniLM backend.
+    /// Select the Model2Vec checkpoint used for embeddings.
     #[arg(long)]
     model_name: Option<String>,
 
@@ -307,7 +307,7 @@ struct QueryArgs {
     #[arg(long, default_value = "0")]
     cache_size: usize,
 
-    /// Use Model2Vec for query embeddings. This must match the model used at ingest.
+    /// Model2Vec checkpoint for query embeddings. This must match ingestion.
     #[arg(long)]
     model_name: Option<String>,
 
@@ -430,25 +430,15 @@ fn main() -> Result<()> {
 /// Run the `mcp` subcommand.
 #[allow(unused_variables)]
 fn run_mcp(args: McpArgs) -> Result<()> {
-    if let Some(model_name) = args
-        .model_name
-        .or_else(|| std::env::var("MODEL2VEC_MODEL_NAME").ok())
-    {
-        #[cfg(feature = "model2vec-embedder")]
-        embed::init_model2vec(embed::Model2VecConfig {
-            model_name,
-            normalize: Some(args.normalize),
-            batch_size: args.batch_size,
-            subfolder: args.subfolder,
-        })?;
-        #[cfg(not(feature = "model2vec-embedder"))]
-        {
-            eprintln!("warning: Model2Vec is unavailable; falling back to MiniLM");
-            embed::init(4, 0)?;
-        }
-    } else {
-        embed::init(4, 0)?;
-    }
+    embed::init_model2vec(embed::Model2VecConfig {
+        model_name: args
+            .model_name
+            .or_else(|| std::env::var("MODEL2VEC_MODEL_NAME").ok())
+            .unwrap_or_else(|| embed::DEFAULT_MODEL_NAME.into()),
+        normalize: Some(args.normalize),
+        batch_size: args.batch_size,
+        subfolder: args.subfolder,
+    })?;
     let result = run_mcp_server(&args.smg);
     let _ = embed::shutdown();
     result
@@ -553,20 +543,12 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     let cache_size = args.cache_size;
     let init_handle = std::thread::spawn(move || {
         if let Some(model_name) = model_name {
-            #[cfg(feature = "model2vec-embedder")]
-            {
-                return embed::init_model2vec(embed::Model2VecConfig {
-                    model_name,
-                    normalize: Some(normalize),
-                    batch_size,
-                    subfolder,
-                });
-            }
-            #[cfg(not(feature = "model2vec-embedder"))]
-            {
-                eprintln!("warning: Model2Vec is unavailable; falling back to MiniLM");
-                return embed::init(workers, cache_size);
-            }
+            return embed::init_model2vec(embed::Model2VecConfig {
+                model_name,
+                normalize: Some(normalize),
+                batch_size,
+                subfolder,
+            });
         }
         embed::init(workers, cache_size)
     });
@@ -1011,7 +993,6 @@ fn run_query(args: QueryArgs) -> Result<()> {
     let _start_total = Instant::now();
     let _ = _start_total; // suppress unused warning
     if let Some(model_name) = model_name {
-        #[cfg(feature = "model2vec-embedder")]
         embed::init_model2vec(embed::Model2VecConfig {
             model_name,
             normalize: Some(
@@ -1023,11 +1004,6 @@ fn run_query(args: QueryArgs) -> Result<()> {
             batch_size: args.batch_size,
             subfolder: args.subfolder.clone(),
         })?;
-        #[cfg(not(feature = "model2vec-embedder"))]
-        {
-            eprintln!("warning: Model2Vec is unavailable; falling back to MiniLM");
-            embed::init(args.workers, args.cache_size)?;
-        }
     } else {
         embed::init(args.workers, args.cache_size)
             .with_context(|| "initializing embedding pool")?;

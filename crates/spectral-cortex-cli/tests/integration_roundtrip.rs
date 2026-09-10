@@ -5,8 +5,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Integration test: ingest -> build -> save -> load -> query roundtrip.
 ///
-/// This test uses the deterministic fake embedder (the crate's default when the
-/// `real-embed` feature is not enabled) so it is stable and suitable for CI.
+/// This test uses the deterministic fake embedder through the CLI dev feature
+/// so it is stable and suitable for CI.
 ///
 /// The test:
 /// 1. Constructs a small set of synthetic `ConversationTurn` entries.

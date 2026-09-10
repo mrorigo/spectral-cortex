@@ -47,7 +47,6 @@ rayon = "1.11.0"
 
 [features]
 fake-embed = []
-model2vec-embedder = ["spectral-cortex/model2vec-embedder"]
 # Default features enable the git2 backend and progress bars for a pleasant UX.
 default = ["git2-backend", "progress"]
 
@@ -58,6 +57,8 @@ git2-backend = ["git2"]
 progress = ["indicatif"]
 
 [dev-dependencies]
+# Integration tests must not download a Hugging Face checkpoint.
+spectral-cortex = { package = "spectral-cortex-lib", path = "../spectral-cortex-lib", features = ["fake-embed"] }
 rmcp = { version = "3.2.0", features = ["client"] }
 tempfile = "3"
 
