@@ -125,6 +125,7 @@ fn test_sparse_fused_similarity_matches_thresholded_dense_reference() {
         );
     }
     notes.get_mut(&1).unwrap().structural_links = vec![2];
+    notes.get_mut(&2).unwrap().structural_links = vec![1];
 
     let mut dense = compute_fused_similarity_matrix(&embeddings, &order, &notes, 0.5, 0.25, None);
     sparsify_adj(&mut dense, 0.5);

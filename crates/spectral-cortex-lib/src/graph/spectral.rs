@@ -317,13 +317,13 @@ pub fn compute_sparse_fused_similarity_matrix(
                             .sum::<f32>()
                             / (norms[i] * norms[j])
                     };
-                    let fused = if structural_neighbors[i].contains(&order[j])
-                        || structural_neighbors[j].contains(&order[i])
-                    {
-                        alpha * cosine + beta
-                    } else {
-                        cosine
-                    };
+                    let mut fused = cosine;
+                    if structural_neighbors[i].contains(&order[j]) {
+                        fused = alpha * fused + beta;
+                    }
+                    if structural_neighbors[j].contains(&order[i]) {
+                        fused = alpha * fused + beta;
+                    }
                     (fused >= threshold).then_some((j, fused))
                 })
                 .collect()
