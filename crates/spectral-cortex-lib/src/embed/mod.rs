@@ -48,7 +48,9 @@ mod real {
 
         let pool = EmbeddingPool::new(config)?;
 
-        let mut guard = POOL.lock().unwrap();
+        let mut guard = POOL
+            .lock()
+            .map_err(|_| anyhow::anyhow!("embedding pool lock is poisoned"))?;
         *guard = Some(Arc::new(pool));
 
         eprintln!(
@@ -62,7 +64,9 @@ mod real {
     /// Embed a single piece of text, returning a plain `Vec<f32>`.
     pub fn get_embedding(text: &str) -> Result<Vec<f32>> {
         let pool: Arc<EmbeddingPool> = {
-            let guard = POOL.lock().unwrap();
+            let guard = POOL
+                .lock()
+                .map_err(|_| anyhow::anyhow!("embedding pool lock is poisoned"))?;
             guard
                 .as_ref()
                 .cloned()
@@ -70,7 +74,11 @@ mod real {
         };
 
         let results = pool.embed_batch(vec![text.to_string()])?;
-        Ok(results.into_iter().next().unwrap().to_vec())
+        results
+            .into_iter()
+            .next()
+            .map(|embedding| embedding.to_vec())
+            .ok_or_else(|| anyhow::anyhow!("embedding service returned no result"))
     }
 
     /// Embed a batch of texts using the worker pool with progress reporting.
@@ -89,7 +97,9 @@ mod real {
         }
 
         let pool: Arc<EmbeddingPool> = {
-            let guard = POOL.lock().unwrap();
+            let guard = POOL
+                .lock()
+                .map_err(|_| anyhow::anyhow!("embedding pool lock is poisoned"))?;
             guard
                 .as_ref()
                 .cloned()
@@ -102,9 +112,9 @@ mod real {
         // Use a smaller chunk size for more frequent progress updates.
         // Concurrency from rayon and the underlying pool will still ensure high throughput.
         let total = texts.len();
-        let chunk_size = 32; 
+        let chunk_size = 32;
         let chunks: Vec<_> = texts.chunks(chunk_size).collect();
-        
+
         let completed = Arc::new(AtomicUsize::new(0));
         let progress_cb = progress.clone();
 
@@ -140,16 +150,18 @@ mod real {
 
     /// Shutdown the pool gracefully.
     pub fn shutdown() -> Result<()> {
-        let mut guard = POOL.lock().unwrap();
+        let mut guard = POOL
+            .lock()
+            .map_err(|_| anyhow::anyhow!("embedding pool lock is poisoned"))?;
         if let Some(arc_pool) = guard.take() {
             // Attempt to gain ownership of the pool to call its `shutdown(self)` method.
-            // If other Arcs still exist, we can't call `shutdown(self)` directly, 
+            // If other Arcs still exist, we can't call `shutdown(self)` directly,
             // but in the context of this CLI, we shouldn't have leaked other Arcs.
             match Arc::try_unwrap(arc_pool) {
                 Ok(pool) => pool.shutdown()?,
                 Err(_) => {
-                    // Fallback: If for some reason other references exist, we can't 
-                    // call the ownership-taking shutdown. 
+                    // Fallback: If for some reason other references exist, we can't
+                    // call the ownership-taking shutdown.
                     anyhow::bail!("Cannot shutdown EmbeddingPool: other references still exist.");
                 }
             }
@@ -176,7 +188,9 @@ mod fake {
     /// Initialise the fake embedder (no-op but mirrors the real init API).
     pub fn init(_workers: usize, _cache_size: usize) -> Result<()> {
         // Acquire and immediately release the lock to mimic any potential setup cost.
-        let _g = FAKE_LOCK.lock().unwrap();
+        let _g = FAKE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("fake embedding lock is poisoned"))?;
         Ok(())
     }
 
@@ -201,7 +215,9 @@ mod fake {
 
     /// Embed a single string deterministically.
     pub fn get_embedding(text: &str) -> Result<Vec<f32>> {
-        let _g = FAKE_LOCK.lock().unwrap();
+        let _g = FAKE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("fake embedding lock is poisoned"))?;
         Ok(deterministic_embedding(text))
     }
 
@@ -210,7 +226,9 @@ mod fake {
         texts: &[String],
         progress: Option<crate::graph::ProgressCallback>,
     ) -> Result<Vec<Vec<f32>>> {
-        let _g = FAKE_LOCK.lock().unwrap();
+        let _g = FAKE_LOCK
+            .lock()
+            .map_err(|_| anyhow::anyhow!("fake embedding lock is poisoned"))?;
         let mut res = Vec::with_capacity(texts.len());
         let total = texts.len();
 

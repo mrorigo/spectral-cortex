@@ -519,12 +519,12 @@ impl SpectralMemoryGraph {
         sparsify_adj(&mut sim, config.adj_sparse_threshold);
 
         // 3b) Convert to sparse matrix and drop dense background to save memory
-        let sim_sparse = to_sparse(&sim);
+        let sim_sparse = to_sparse(&sim)?;
         drop(sim); // Free up the large dense matrix (e.g. 25GB for 80k notes)
 
         // 4) Normalized Laplacian (L_sym wrapper).
         report_progress(4, TOTAL_STEPS, "Computing normalized Laplacian".to_string());
-        let lap = normalized_laplacian_sparse(&sim_sparse);
+        let lap = normalized_laplacian_sparse(&sim_sparse)?;
 
         // 5) Eigen-decomposition.
         report_progress(5, TOTAL_STEPS, "Performing eigen-decomposition".to_string());
@@ -708,7 +708,7 @@ impl SpectralMemoryGraph {
                 };
                 centroid_scores.push((*c, c_sim));
             }
-            centroid_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            centroid_scores.sort_by(|a, b| b.1.total_cmp(&a.1));
             let top_clusters: std::collections::HashSet<usize> =
                 centroid_scores.iter().take(3).map(|(c, _)| *c).collect();
 
@@ -723,7 +723,7 @@ impl SpectralMemoryGraph {
         }
 
         // Rank notes by score and take top candidate_note_k notes.
-        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        scores.sort_by(|a, b| b.1.total_cmp(&a.1));
 
         // Expand top notes into candidates using parallel iteration for better performance
         let candidates: Vec<crate::temporal::Candidate> = scores
@@ -874,7 +874,7 @@ impl SpectralMemoryGraph {
                 };
                 centroid_scores.push((*c, c_sim));
             }
-            centroid_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+            centroid_scores.sort_by(|a, b| b.1.total_cmp(&a.1));
             let top_clusters: std::collections::HashSet<usize> =
                 centroid_scores.iter().take(3).map(|(c, _)| *c).collect();
 
@@ -891,7 +891,7 @@ impl SpectralMemoryGraph {
         }
 
         // Rank notes by score and take top candidate_note_k notes.
-        scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        scores.sort_by(|a, b| b.1.total_cmp(&a.1));
 
         // Expand top notes into candidates using parallel iteration for better performance
         let candidates: Vec<crate::temporal::Candidate> = scores
@@ -1021,8 +1021,12 @@ impl SpectralMemoryGraph {
                 }
 
                 // Get the earliest timestamp for this note
-                let note_min_ts = *note.source_timestamps.iter().min().unwrap();
-                let note_max_ts = *note.source_timestamps.iter().max().unwrap();
+                let Some(note_min_ts) = note.source_timestamps.iter().min().copied() else {
+                    return false;
+                };
+                let Some(note_max_ts) = note.source_timestamps.iter().max().copied() else {
+                    return false;
+                };
 
                 // Apply time filters
                 if let Some(start) = time_start {

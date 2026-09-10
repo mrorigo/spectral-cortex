@@ -1,5 +1,6 @@
-use nalgebra_sparse::CsrMatrix;
 use nalgebra::{ComplexField, DMatrix, DVector, DVectorView, RealField};
+use nalgebra_sparse::CsrMatrix;
+use num::Zero;
 
 use crate::lanzcos::{HermitianEigen, Order};
 
@@ -18,7 +19,12 @@ where
 
     /// Computes the Eigen decomposition of an Hermitian matrix
     fn eigsh(&self, iterations: usize, order: Order) -> HermitianEigen<T> {
-        HermitianEigen::<T>::new(self, iterations, order, RealField::min_value().unwrap())
+        HermitianEigen::<T>::new(
+            self,
+            iterations,
+            order,
+            RealField::min_value().unwrap_or_else(T::RealField::zero),
+        )
     }
 }
 
@@ -64,15 +70,15 @@ impl Hermitian<f32> for SparseNormalizedLaplacian<f32> {
         let n = self.w_norm.nrows();
         let mut wv = DVector::zeros(n);
         let v_owned = v.into_owned();
-        
+
         // Manual spmv for reliability across nalgebra-sparse versions
         let row_offsets = self.w_norm.row_offsets();
         let col_indices = self.w_norm.col_indices();
         let values = self.w_norm.values();
-        
+
         for i in 0..n {
             let start = row_offsets[i];
-            let end = row_offsets[i+1];
+            let end = row_offsets[i + 1];
             let mut sum = 0.0f32;
             for k in start..end {
                 sum += values[k] * v_owned[col_indices[k]];

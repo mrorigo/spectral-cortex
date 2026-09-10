@@ -231,7 +231,7 @@ pub fn sparsify_adj(w: &mut Array2<f32>, threshold: f32) {
 }
 
 /// Convert a dense adjacency matrix to a sparse `CsrMatrix`.
-pub fn to_sparse(w: &Array2<f32>) -> CsrMatrix<f32> {
+pub fn to_sparse(w: &Array2<f32>) -> Result<CsrMatrix<f32>> {
     let n = w.nrows();
 
     // Process rows in parallel to collect non-zeros.
@@ -263,7 +263,8 @@ pub fn to_sparse(w: &Array2<f32>) -> CsrMatrix<f32> {
         row_offsets.push(col_indices.len());
     }
 
-    CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values).expect("valid CSR data")
+    CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values)
+        .map_err(|error| anyhow::anyhow!("invalid CSR data: {error}"))
 }
 
 /// Compute degree vector `d = W · 1` (length n).
@@ -278,10 +279,15 @@ pub fn to_sparse(w: &Array2<f32>) -> CsrMatrix<f32> {
 pub fn degree_vector(w: &Array2<f32>) -> Array1<f32> {
     let n = w.nrows();
     let mut degree = Array1::zeros(n);
-    let degree_slice = degree.as_slice_mut().expect("Standard layout");
-    degree_slice.par_iter_mut().enumerate().for_each(|(i, d)| {
-        *d = w.row(i).sum();
-    });
+    if let Some(degree_slice) = degree.as_slice_mut() {
+        degree_slice.par_iter_mut().enumerate().for_each(|(i, d)| {
+            *d = w.row(i).sum();
+        });
+    } else {
+        for (i, d) in degree.iter_mut().enumerate() {
+            *d = w.row(i).sum();
+        }
+    }
     degree
 }
 
@@ -323,7 +329,7 @@ pub fn normalized_laplacian(w: &Array2<f32>) -> Array2<f32> {
 ///
 /// A wrapper `SparseNormalizedLaplacian` that implements the `Hermitian` trait
 /// for the Lanczos solver without storing the full identity matrix.
-pub fn normalized_laplacian_sparse(w: &CsrMatrix<f32>) -> SparseNormalizedLaplacian<f32> {
+pub fn normalized_laplacian_sparse(w: &CsrMatrix<f32>) -> Result<SparseNormalizedLaplacian<f32>> {
     let n = w.nrows();
 
     // 1) Parallel compute degree vector from CSR data
@@ -374,9 +380,9 @@ pub fn normalized_laplacian_sparse(w: &CsrMatrix<f32>) -> SparseNormalizedLaplac
 
     let w_norm =
         CsrMatrix::try_from_csr_data(n, n, row_offsets.to_vec(), col_indices.to_vec(), new_values)
-            .expect("valid CSR data");
+            .map_err(|error| anyhow::anyhow!("invalid normalized CSR data: {error}"))?;
 
-    SparseNormalizedLaplacian { w_norm }
+    Ok(SparseNormalizedLaplacian { w_norm })
 }
 
 /// Compute eigenvalues and eigenvectors of a symmetric matrix.

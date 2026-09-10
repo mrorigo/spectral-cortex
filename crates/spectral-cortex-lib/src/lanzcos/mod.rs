@@ -58,7 +58,9 @@ where
 {
     let v = DVector::<f64>::from_fn(dim, |_, _| rand::random::<f64>()).normalize();
 
-    DVector::<T>::from_fn(dim, |i, _| num::FromPrimitive::from_f64(v[i]).unwrap())
+    DVector::<T>::from_fn(dim, |i, _| {
+        num::FromPrimitive::from_f64(v[i]).unwrap_or_else(T::zero)
+    })
 }
 
 impl<T> HermitianEigen<T>
@@ -174,8 +176,10 @@ where
         eig.eigenvalues.iter().copied().enumerate().collect();
 
     match order {
-        Order::Smallest => eigvalues_index.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap()),
-        Order::Largest => eigvalues_index.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap()),
+        Order::Smallest => eigvalues_index
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)),
+        Order::Largest => eigvalues_index
+            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)),
     }
 
     let mut sorted_eigenvectors = DMatrix::<T>::zeros(dim, dim);
