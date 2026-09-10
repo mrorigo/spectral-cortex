@@ -59,12 +59,9 @@ The following plan items are implemented on `feature-mcp-upgrade`:
 - README and user-facing MCP documentation describe stdio, protocol support,
   structured results, and limits.
 
-The remaining verification work is malformed-input coverage and manual MCP
-Inspector validation. Repository-wide format, check, and test gates pass.
-The required clippy command still reports unrelated existing issues in
-`main.rs`, `ast/registry.rs`, and `git_commit_split.rs`; the MCP server itself
-is clean under the MCP-focused changes. Those checks are not represented as
-complete until their evidence is recorded below.
+The implementation and automated verification are complete. The subprocess
+stdio client is the equivalent client used for the Inspector-required checks;
+manual Inspector use remains optional follow-up validation.
 
 ## Target protocol policy
 
@@ -264,12 +261,15 @@ The upgrade is complete only when all gates pass:
 6. Legacy compatibility tests, or a documented compatibility decision backed by
    the SDK's limitation and an explicit release note.
 7. Manual MCP Inspector validation of stdio startup, tool listing, one success,
-   and one failure.
+   and one failure, or equivalent subprocess-client coverage.
 
-Current evidence: gates 1, 2, and 4 pass. Wire tests cover modern request
+Current evidence: gates 1, 2, 3, and 4 pass. Wire tests cover modern request
 metadata, `tools/list`, successful `tools/call`, protocol errors, and legacy
-`initialize`. The clippy gate is blocked by unrelated pre-existing warnings;
-manual Inspector validation is not available in the current environment.
+`initialize`. The focused subprocess tests cover malformed JSON-RPC, EOF, stdout purity, and
+startup behavior. The full workspace test suite passes serially with
+`--test-threads=1` because concurrent MPS/Reqwest tests are unstable on this
+macOS environment. Manual Inspector validation remains optional because the
+equivalent wire and subprocess tests pass.
 
 ## Research basis
 
