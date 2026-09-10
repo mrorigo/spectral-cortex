@@ -1,234 +1,202 @@
 <!doctype html>
 <html lang="en">
-    <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Spectral Cortex | SMG Explorer</title>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-        <link
-            href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
-            rel="stylesheet"
-        />
-        <link rel="stylesheet" href="./styles.css" />
-    </head>
-    <body>
-        <div class="mesh" aria-hidden="true"></div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#10110f" />
+    <title>Spectral Cortex — Memory Atlas</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell" id="app">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Spectral Cortex home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span><strong>Spectral</strong> Cortex</span>
+        </a>
 
-        <header class="topbar">
-            <div class="container topbar-inner">
-                <div class="brand-wrap">
-                    <div class="logo" aria-hidden="true"></div>
-                    <div>
-                        <p class="eyebrow">Spectral Cortex</p>
-                        <h1>SMG Explorer</h1>
-                    </div>
-                </div>
-                <div class="actions">
-                    <label class="btn btn-ghost" for="file-input"
-                        >Load JSON</label
-                    >
-                    <input
-                        id="file-input"
-                        type="file"
-                        accept="application/json,.json"
-                    />
-                    <button id="save-btn" class="btn btn-primary" disabled>
-                        Save JSON
-                    </button>
-                </div>
+        <div class="source-status" id="sourceStatus" aria-live="polite">
+          <span class="status-dot"></span>
+          <span id="sourceName">Awaiting SMG JSON</span>
+        </div>
+
+        <div class="top-actions">
+          <button class="quiet-button keyboard-search" id="focusSearch" type="button">
+            Search memory <kbd>⌘ K</kbd>
+          </button>
+          <button class="load-button" id="loadButton" type="button">
+            <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 2v10m0 0 4-4m-4 4L6 8M3 15v2h14v-2" /></svg>
+            Open SMG
+          </button>
+          <input id="fileInput" type="file" accept="application/json,.json" hidden />
+        </div>
+      </header>
+
+      <aside class="rail" aria-label="Primary navigation">
+        <div class="rail-group">
+          <button class="rail-button is-active" data-view="atlas" type="button" aria-label="Atlas view" aria-pressed="true">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7" cy="7" r="2"/><circle cx="17" cy="6" r="2"/><circle cx="16" cy="17" r="2"/><circle cx="6" cy="17" r="2"/><path d="m8.8 7.4 6.3-.9m1.4 1.4-.3 7.1m-2 1.5-6.2.2M6.3 15l.5-6"/></svg>
+            <span>Atlas</span>
+          </button>
+          <button class="rail-button" data-view="chronicle" type="button" aria-label="Chronicle view" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4v16m0-13h5m-5 5h11M5 17h8"/><circle cx="18" cy="12" r="2"/><circle cx="15" cy="17" r="2"/></svg>
+            <span>Chronicle</span>
+          </button>
+        </div>
+        <div class="rail-footer"><span>SMG</span><small>v1</small></div>
+      </aside>
+
+      <aside class="library-panel">
+        <div class="panel-heading">
+          <p class="eyebrow">Memory index</p>
+          <h1 id="viewTitle">Atlas</h1>
+        </div>
+
+        <label class="search-field" for="searchInput">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
+          <input id="searchInput" type="search" placeholder="Commit, symbol, file…" autocomplete="off" />
+          <span id="resultCount">0</span>
+        </label>
+
+        <div class="browse-modes" id="browseModes" role="tablist" aria-label="Browse memories by">
+          <button class="is-active" data-browse="events" type="button" role="tab" aria-selected="true">Events</button>
+          <button data-browse="symbols" type="button" role="tab" aria-selected="false">Symbols</button>
+          <button data-browse="hotspots" type="button" role="tab" aria-selected="false">Hotspots</button>
+        </div>
+
+        <section class="time-filter" aria-label="Temporal filter">
+          <div class="section-label"><span>Time window</span><output id="timeWindowValue">All history</output></div>
+          <div class="time-presets" id="timePresets">
+            <button class="is-active" data-days="0" type="button">All</button>
+            <button data-days="30" type="button">30d</button>
+            <button data-days="90" type="button">90d</button>
+            <button data-days="365" type="button">1y</button>
+          </div>
+          <div class="date-inputs">
+            <label>From<input id="timeStart" type="date" /></label>
+            <span>→</span>
+            <label>To<input id="timeEnd" type="date" /></label>
+          </div>
+        </section>
+
+        <div class="filter-block">
+          <div class="section-label"><span>Clusters</span><button id="clearFilters" type="button">Clear</button></div>
+          <div class="cluster-list" id="clusterList"></div>
+        </div>
+
+        <div class="filter-block facet-block">
+          <div class="section-label"><span>Edge signal</span></div>
+          <div class="segmented" id="edgeFilter" role="group" aria-label="Edge type">
+            <button class="is-active" data-edge="all" type="button">All</button>
+            <button data-edge="semantic" type="button">Semantic</button>
+            <button data-edge="structural" type="button">Structural</button>
+          </div>
+          <label class="threshold-control" for="strengthThreshold">
+            <span>Semantic strength</span>
+            <output id="thresholdValue" for="strengthThreshold">≥ 0.00</output>
+            <input id="strengthThreshold" type="range" min="0" max="1" step="0.05" value="0" />
+          </label>
+          <label class="threshold-control" for="structuralThreshold">
+            <span>Structural degree</span>
+            <output id="structuralThresholdValue" for="structuralThreshold">≥ 1</output>
+            <input id="structuralThreshold" type="range" min="1" max="1" step="1" value="1" />
+          </label>
+        </div>
+
+        <div class="note-list-heading">
+          <span id="listLabel">Events</span>
+          <button id="sortButton" type="button" aria-label="Reverse note order">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6 3v14m0 0-3-3m3 3 3-3M13 4h4m-4 4h3m-3 4h2"/></svg>
+          </button>
+        </div>
+        <div class="note-list" id="noteList" tabindex="0"></div>
+      </aside>
+
+      <main class="workspace">
+        <section class="metrics" aria-label="Graph metrics">
+          <div><span>Nodes</span><strong id="metricNodes">—</strong></div>
+          <div><span>Symbols</span><strong id="metricSymbols">—</strong></div>
+          <div><span>Structural links</span><strong id="metricStructural">—</strong></div>
+          <div><span>Long-range links</span><strong id="metricLongRange">—</strong></div>
+          <div class="date-range"><span>Memory span</span><strong id="metricRange">—</strong></div>
+        </section>
+
+        <section class="visual-stage" id="visualStage">
+          <div class="stage-toolbar">
+            <div>
+              <p class="eyebrow" id="stageEyebrow">Topology / all memory</p>
+              <h2 id="stageTitle">Relationship field</h2>
             </div>
-        </header>
+            <div class="stage-actions">
+              <div class="graph-modes" id="graphModes" role="tablist" aria-label="Graph mode">
+                <button class="is-active" data-graph-mode="field" type="button" role="tab" aria-selected="true">Field</button>
+                <button data-graph-mode="neighborhood" type="button" role="tab" aria-selected="false">Neighborhood</button>
+                <button data-graph-mode="bridges" type="button" role="tab" aria-selected="false">Bridges</button>
+                <button class="analysis-mode" data-graph-mode="matrix" type="button" role="tab" aria-selected="false">Matrix</button>
+              </div>
+              <div class="canvas-actions" id="canvasActions">
+              <button id="fitGraph" type="button" aria-label="Fit graph to view" title="Fit graph to view">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3H3v4m10-4h4v4M7 17H3v-4m10 4h4v-4"/></svg>
+              </button>
+              <button id="toggleLabels" class="is-active" type="button" aria-label="Toggle node labels" title="Toggle node labels">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h8M4 15h10"/></svg>
+              </button>
+              </div>
+            </div>
+          </div>
+          <div class="mode-controls" id="modeControls" hidden>
+            <label for="neighborhoodDepth">Depth <output id="neighborhoodDepthValue">2</output><input id="neighborhoodDepth" type="range" min="1" max="5" step="1" value="2" /></label>
+            <label for="neighborhoodBudget">Edges / node <output id="neighborhoodBudgetValue">8</output><input id="neighborhoodBudget" type="range" min="1" max="20" step="1" value="8" /></label>
+          </div>
+          <canvas id="graphCanvas" tabindex="0" aria-label="Interactive memory relationship graph"></canvas>
+          <div class="timeline" id="timeline" hidden></div>
+          <div class="graph-key" id="graphKey">
+            <span><i class="edge-line semantic"></i> semantic</span>
+            <span><i class="edge-line structural"></i> structural</span>
+            <span><i class="node-dot"></i> memory note</span>
+          </div>
+          <div class="stage-message" id="stageMessage">
+            <div class="loader-mark"><i></i><i></i><i></i></div>
+            <h2>Reading the cortex</h2>
+            <p>Mapping notes, symbols, and long-range associations.</p>
+          </div>
+        </section>
+      </main>
 
-        <main class="container app">
-            <section class="status panel">
-                <div><b>File:</b> <span id="file-name">None</span></div>
-                <div><b>Notes:</b> <span id="note-count">0</span></div>
-                <div><b>Dirty:</b> <span id="dirty-flag">No</span></div>
-                <div>
-                    <b>Validation:</b>
-                    <span id="validation-summary">No file loaded</span>
-                </div>
-            </section>
+      <aside class="inspector" id="inspector">
+        <div class="empty-inspector" id="emptyInspector">
+          <span class="empty-glyph"><i></i><i></i><i></i></span>
+          <p class="eyebrow">Inspector</p>
+          <h2>Select a memory</h2>
+          <p>Choose a node or note to trace its history, symbol, and relationships.</p>
+        </div>
+        <div class="note-inspector" id="noteInspector" hidden>
+          <div class="inspector-header">
+            <p class="eyebrow">Memory <span id="detailId"></span></p>
+            <button id="closeInspector" type="button" aria-label="Close inspector">×</button>
+          </div>
+          <h2 id="detailContent"></h2>
+          <div class="detail-chips" id="detailChips"></div>
+          <dl class="detail-grid">
+            <div><dt>Recorded</dt><dd id="detailDate"></dd></div>
+            <div><dt>Cluster</dt><dd id="detailCluster"></dd></div>
+            <div class="wide"><dt>File</dt><dd id="detailFile"></dd></div>
+            <div class="wide"><dt>Symbol</dt><dd id="detailSymbol"></dd></div>
+            <div class="wide"><dt>Commit</dt><dd><code id="detailCommit"></code><button id="copyCommit" type="button">Copy</button></dd></div>
+          </dl>
+          <section class="connections">
+            <div class="section-label"><span>Connections</span><b id="connectionCount">0</b></div>
+            <div id="connectionList"></div>
+          </section>
+        </div>
+      </aside>
+    </div>
 
-            <section class="workspace">
-                <aside class="panel rail">
-                    <h2>Explore</h2>
-                    <div class="field">
-                        <label for="search-input">Search</label>
-                        <input
-                            id="search-input"
-                            type="text"
-                            placeholder="note_id, context, file, symbol, commit"
-                        />
-                    </div>
-                    <div class="field">
-                        <label for="sort-select">Sort</label>
-                        <select id="sort-select">
-                            <option value="id_asc">Note ID (asc)</option>
-                            <option value="id_desc">Note ID (desc)</option>
-                            <option value="timestamp_desc">
-                                Newest timestamp
-                            </option>
-                        </select>
-                    </div>
-                    <div class="field checkbox-row">
-                        <input id="show-long-range" type="checkbox" checked />
-                        <label for="show-long-range"
-                            >Show long-range links</label
-                        >
-                    </div>
-                    <p id="list-meta" class="mono muted">No notes loaded</p>
-                    <div
-                        id="note-list"
-                        class="note-list"
-                        aria-live="polite"
-                    ></div>
-                </aside>
+    <div class="drop-zone" id="dropZone" aria-hidden="true">
+      <div><span>Drop SMG JSON</span><small>Release to map this memory graph</small></div>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-                <section class="panel graph-panel">
-                    <div class="graph-header">
-                        <h2>Force Graph</h2>
-                        <div class="graph-header-actions">
-                            <button
-                                id="animate-btn"
-                                class="btn btn-ghost graph-animate-btn"
-                                type="button"
-                            >
-                                Play
-                            </button>
-                            <p id="graph-subtitle" class="muted">
-                                Selected note neighborhood
-                            </p>
-                        </div>
-                    </div>
-                    <div class="graph-controls">
-                        <div class="field">
-                            <label for="view-mode-select">View Mode</label>
-                            <select id="view-mode-select">
-                                <option value="neighborhood">
-                                    Neighborhood
-                                </option>
-                                <option value="cluster_map">Cluster Map</option>
-                                <option value="long_range">
-                                    Long-Range Links
-                                </option>
-                                <option value="cluster_matrix">
-                                    Cluster Matrix
-                                </option>
-                            </select>
-                        </div>
-                        <div class="field slider-field">
-                            <label for="related-limit-slider">
-                                Related / node:
-                                <span id="related-limit-value" class="mono"
-                                    >3</span
-                                >
-                            </label>
-                            <input
-                                id="related-limit-slider"
-                                type="range"
-                                min="1"
-                                max="50"
-                                step="1"
-                                value="3"
-                            />
-                        </div>
-                        <div class="field slider-field">
-                            <label for="depth-slider">
-                                Expansion depth:
-                                <span id="depth-value" class="mono">1</span>
-                            </label>
-                            <input
-                                id="depth-slider"
-                                type="range"
-                                min="1"
-                                max="9"
-                                step="1"
-                                value="1"
-                            />
-                        </div>
-                        <div class="field slider-field">
-                            <label for="min-score-slider">
-                                Min edge threshold (norm):
-                                <span id="min-score-value" class="mono"
-                                    >0.30</span
-                                >
-                            </label>
-                            <input
-                                id="min-score-slider"
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.01"
-                                value="0.30"
-                            />
-                        </div>
-                        <div class="field slider-field">
-                            <label for="long-range-topk-slider">
-                                Long-range top K:
-                                <span id="long-range-topk-value" class="mono"
-                                    >120</span
-                                >
-                            </label>
-                            <input
-                                id="long-range-topk-slider"
-                                type="range"
-                                min="10"
-                                max="10000"
-                                step="10"
-                                value="120"
-                            />
-                        </div>
-                    </div>
-                    <div class="score-panel">
-                        <div class="score-panel-head">
-                            <span class="mono">Edge score distribution</span>
-                            <span id="score-meta" class="muted">No graph</span>
-                        </div>
-                        <div id="score-histogram" class="score-histogram"></div>
-                    </div>
-                    <div id="graph-root" class="graph-root"></div>
-                </section>
-
-                <aside class="panel editor">
-                    <h2>Editor</h2>
-                    <p id="selected-note-meta" class="mono muted">
-                        No note selected
-                    </p>
-
-
-                    <div class="field">
-                        <label for="raw-input">Raw Content</label>
-                        <textarea id="raw-input" rows="6" disabled></textarea>
-                    </div>
-
-                    <div class="field">
-                        <label for="related-input"
-                            >Related Note IDs (comma/space/newline)</label
-                        >
-                        <textarea
-                            id="related-input"
-                            rows="4"
-                            disabled
-                        ></textarea>
-                    </div>
-
-                    <div class="meta-grid" id="readonly-meta"></div>
-
-                    <div class="editor-actions">
-                        <button id="apply-btn" class="btn btn-primary" disabled>
-                            Apply Changes
-                        </button>
-                        <button id="delete-btn" class="btn btn-danger" disabled>
-                            Delete Note
-                        </button>
-                    </div>
-                </aside>
-            </section>
-        </main>
-
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.js"></script>
-        <script src="./app.js"></script>
-    </body>
+    <script defer src="./app.js"></script>
+  </body>
 </html>

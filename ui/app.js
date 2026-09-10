@@ -1,2252 +1,857 @@
-(() => {
-  const state = {
-    fileName: null,
-    graph: null,
-    notesById: new Map(),
-    reverseRelated: new Map(),
-    longRangeById: new Map(),
-    selectedNoteId: null,
-    dirty: false,
-    filters: { query: "", sort: "id_asc" },
-    graphControls: {
-      relatedLimit: 3,
-      depth: 1,
-      viewMode: "neighborhood",
-      minScore: 0.3,
-      longRangeTopK: 120,
-    },
-    validation: { errors: [], warnings: [] },
-    clusterById: new Map(),
-    clusterCounts: new Map(),
-    graphAnimation: {
-      enabled: false,
-      simulation: null,
-      mode: "neighborhood",
-    },
-  };
+const COLORS = ["#eda34a", "#52bfc0", "#c783c5", "#9bc66d", "#e66f4d", "#718fd2", "#d6c158", "#56b18a"];
+const state = {
+  data: null,
+  notes: [],
+  noteById: new Map(),
+  edges: [],
+  filtered: [],
+  cluster: null,
+  edgeType: "all",
+  graphMode: "field",
+  neighborhoodDepth: 2,
+  neighborhoodBudget: 8,
+  minStrength: 0,
+  minStructuralDegree: 1,
+  structuralDegreeById: new Map(),
+  browseMode: "events",
+  timeStart: 0,
+  timeEnd: Number.POSITIVE_INFINITY,
+  query: "",
+  selectedId: null,
+  view: "atlas",
+  newestFirst: true,
+  labels: true,
+  semanticDerived: false,
+  graph: { nodes: [], transform: { x: 0, y: 0, scale: 1 }, drag: null },
+};
 
-  const LIMIT_LIST_RENDER = 500;
-  const GRAPH_NODE_CAP = 10000;
-  const CLUSTER_MAP_NODE_CAP = 10000;
-  const DEFAULT_ALPHA_DECAY = 0.00228;
-  const CLUSTER_PALETTE = [
-    "#1cffd8",
-    "#62a8ff",
-    "#ff71cf",
-    "#b066ff",
-    "#ffb347",
-    "#7bff8a",
-    "#59f0ff",
-    "#ff8bf8",
-    "#ffe16b",
-    "#8c9fff",
-    "#4cf7be",
-    "#ff9070",
-  ];
+const el = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
+const canvas = el.graphCanvas;
+const ctx = canvas.getContext("2d");
 
-  const els = {
-    fileInput: document.getElementById("file-input"),
-    saveBtn: document.getElementById("save-btn"),
-    fileName: document.getElementById("file-name"),
-    noteCount: document.getElementById("note-count"),
-    dirtyFlag: document.getElementById("dirty-flag"),
-    validationSummary: document.getElementById("validation-summary"),
-    searchInput: document.getElementById("search-input"),
-    sortSelect: document.getElementById("sort-select"),
-    showLongRange: document.getElementById("show-long-range"),
-    relatedLimitSlider: document.getElementById("related-limit-slider"),
-    relatedLimitValue: document.getElementById("related-limit-value"),
-    depthSlider: document.getElementById("depth-slider"),
-    depthValue: document.getElementById("depth-value"),
-    viewModeSelect: document.getElementById("view-mode-select"),
-    minScoreSlider: document.getElementById("min-score-slider"),
-    minScoreValue: document.getElementById("min-score-value"),
-    longRangeTopKSlider: document.getElementById("long-range-topk-slider"),
-    longRangeTopKValue: document.getElementById("long-range-topk-value"),
-    scoreHistogram: document.getElementById("score-histogram"),
-    scoreMeta: document.getElementById("score-meta"),
-    animateBtn: document.getElementById("animate-btn"),
-    graphSubtitle: document.getElementById("graph-subtitle"),
-    listMeta: document.getElementById("list-meta"),
-    noteList: document.getElementById("note-list"),
-    graphRoot: document.getElementById("graph-root"),
-    selectedNoteMeta: document.getElementById("selected-note-meta"),
-    // Removed contextInput as it's now redundant
-    rawInput: document.getElementById("raw-input"),
-    relatedInput: document.getElementById("related-input"),
-    readonlyMeta: document.getElementById("readonly-meta"),
-    applyBtn: document.getElementById("apply-btn"),
-    deleteBtn: document.getElementById("delete-btn"),
-  };
+const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
+const formatNumber = (value) => new Intl.NumberFormat("en").format(value ?? 0);
+const timestampOf = (note) => Math.max(0, ...(note.source_timestamps ?? [0]));
+const formatDate = (timestamp, style = "medium") => timestamp ? new Intl.DateTimeFormat("en", style === "short" ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" }).format(new Date(timestamp * 1000)) : "Unknown";
+const basename = (path) => path?.split("/").pop() ?? "No file";
+const clusterOf = (note) => Number(state.data?.cluster_labels?.[note.__index] ?? 0);
+const colorOf = (note) => COLORS[clusterOf(note) % COLORS.length];
+const hash = (value) => [...String(value)].reduce((acc, char) => Math.imul(acc ^ char.charCodeAt(0), 16777619), 2166136261) >>> 0;
 
-  function init() {
-    els.fileInput.addEventListener("change", onFileChange);
-    els.saveBtn.addEventListener("click", onSave);
-    els.searchInput.addEventListener("input", onFilterChange);
-    els.sortSelect.addEventListener("change", onFilterChange);
-    els.showLongRange.addEventListener("change", () => renderGraph());
-    els.relatedLimitSlider.addEventListener("input", onGraphControlChange);
-    els.depthSlider.addEventListener("input", onGraphControlChange);
-    els.viewModeSelect.addEventListener("change", onGraphControlChange);
-    els.minScoreSlider.addEventListener("input", onGraphControlChange);
-    els.longRangeTopKSlider.addEventListener("input", onGraphControlChange);
-    els.animateBtn.addEventListener("click", onToggleAnimation);
-    els.applyBtn.addEventListener("click", applyEditorChanges);
-    els.deleteBtn.addEventListener("click", deleteSelectedNote);
-
-    window.addEventListener("beforeunload", (event) => {
-      if (!state.dirty) {
-        return;
-      }
-      event.preventDefault();
-      event.returnValue = "";
-    });
-
-    window.addEventListener("keydown", (event) => {
-      const isSave =
-        (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s";
-      if (isSave) {
-        event.preventDefault();
-        if (!els.saveBtn.disabled) {
-          onSave();
-        }
-      }
-    });
-
-    syncStatus();
-    renderList();
-    syncGraphControls();
-    syncAnimateButton();
-    renderGraphEmpty("Load an SMG JSON file to visualize the graph.");
+function validateGraph(data) {
+  if (!data || !Array.isArray(data.notes)) throw new Error("This file has no SMG notes array.");
+  if (!data.notes.every((note) => Number.isInteger(note.note_id) && typeof note.raw_content === "string")) {
+    throw new Error("One or more notes do not match the SMG v1 shape.");
   }
+}
 
-  function onToggleAnimation() {
-    state.graphAnimation.enabled = !state.graphAnimation.enabled;
-    syncAnimateButton();
-    applyAnimationState();
-  }
-
-  function onGraphControlChange() {
-    state.graphControls.relatedLimit = Number.parseInt(
-      els.relatedLimitSlider.value,
-      10,
-    );
-    state.graphControls.depth = Number.parseInt(els.depthSlider.value, 10);
-    state.graphControls.viewMode = String(els.viewModeSelect.value || "");
-    state.graphControls.minScore = Number.parseFloat(els.minScoreSlider.value);
-    state.graphControls.longRangeTopK = Number.parseInt(
-      els.longRangeTopKSlider.value,
-      10,
-    );
-    syncGraphControls();
-    renderGraph();
-  }
-
-  function syncGraphControls() {
-    els.viewModeSelect.value = state.graphControls.viewMode;
-    els.relatedLimitSlider.value = String(state.graphControls.relatedLimit);
-    els.depthSlider.value = String(state.graphControls.depth);
-    els.minScoreSlider.value = String(state.graphControls.minScore);
-    els.longRangeTopKSlider.value = String(state.graphControls.longRangeTopK);
-    els.relatedLimitValue.textContent = String(
-      state.graphControls.relatedLimit,
-    );
-    els.depthValue.textContent = String(state.graphControls.depth);
-    els.minScoreValue.textContent = state.graphControls.minScore.toFixed(2);
-    els.longRangeTopKValue.textContent = String(
-      state.graphControls.longRangeTopK,
-    );
-    syncControlAvailability();
-  }
-
-  function syncControlAvailability() {
-    const mode = state.graphControls.viewMode;
-    const isNeighborhood = mode === "neighborhood";
-    const isClusterMap = mode === "cluster_map";
-    const isLongRange = mode === "long_range";
-    const isClusterMatrix = mode === "cluster_matrix";
-
-    // Neighborhood + cluster map use related budget, long-range-only mode does not.
-    els.relatedLimitSlider.disabled = isLongRange || isClusterMatrix;
-    // Depth only affects neighborhood expansion.
-    els.depthSlider.disabled = !isNeighborhood;
-    // Min score affects all graph modes.
-    els.minScoreSlider.disabled = false;
-    // Long-range top-K affects cluster map, long-range, and cluster-matrix views.
-    els.longRangeTopKSlider.disabled = isNeighborhood;
-    // Long-range toggle is irrelevant in long-range-only mode.
-    els.showLongRange.disabled = isLongRange;
-    if (isLongRange) {
-      els.showLongRange.checked = true;
-    }
-
-    // Keep mode relationships explicit for readability in dev tools.
-    els.relatedLimitSlider.dataset.modeActive = String(
-      isNeighborhood || isClusterMap,
-    );
-    els.depthSlider.dataset.modeActive = String(isNeighborhood);
-    els.longRangeTopKSlider.dataset.modeActive = String(
-      isClusterMap || isLongRange || isClusterMatrix,
-    );
-
-    const forceMode = !isClusterMatrix;
-    els.animateBtn.disabled = !forceMode;
-    if (!forceMode && state.graphAnimation.enabled) {
-      state.graphAnimation.enabled = false;
-    }
-    syncAnimateButton();
-  }
-
-  function syncAnimateButton() {
-    if (!els.animateBtn) {
-      return;
-    }
-    els.animateBtn.textContent = state.graphAnimation.enabled
-      ? "Pause"
-      : "Play";
-    els.animateBtn.classList.toggle("active", state.graphAnimation.enabled);
-    els.animateBtn.title = state.graphAnimation.enabled
-      ? "Pause continuous graph animation"
-      : "Play continuous graph animation";
-  }
-
-  function applyAnimationState() {
-    const simulation = state.graphAnimation.simulation;
-    if (!simulation) {
-      return;
-    }
-    if (state.graphAnimation.mode === "cluster_matrix") {
-      simulation.stop();
-      return;
-    }
-    if (state.graphAnimation.enabled) {
-      simulation.alphaDecay(DEFAULT_ALPHA_DECAY);
-      simulation.alphaMin(0);
-      simulation.alpha(2.722).alphaTarget(0.13).restart();
-      return;
-    }
-    simulation.alphaDecay(DEFAULT_ALPHA_DECAY);
-    simulation.alphaMin(0.1);
-    simulation.alphaTarget(0.01);
-    simulation.stop();
-  }
-
-  function onFileChange(event) {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const parsed = JSON.parse(String(reader.result));
-        loadGraph(parsed, file.name);
-      } catch (error) {
-        state.graph = null;
-        state.validation = {
-          errors: ["Invalid JSON syntax."],
-          warnings: [],
-        };
-        syncStatus();
-        renderList();
-        renderGraphEmpty("JSON parsing failed.");
-        setEditorEnabled(false);
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  function loadGraph(graph, fileName) {
-    state.fileName = fileName;
-    state.graph = graph;
-    state.dirty = false;
-
-    state.validation = validateGraph(graph);
-    buildIndexes();
-
-    const firstNote = Array.isArray(graph.notes) ? graph.notes[0] : null;
-    state.selectedNoteId = firstNote ? firstNote.note_id : null;
-
-    syncStatus();
-    renderList();
-    renderEditor();
-    renderGraph();
-  }
-
-  function validateGraph(graph) {
-    const errors = [];
-    const warnings = [];
-
-    if (!graph || typeof graph !== "object") {
-      errors.push("Root JSON must be an object.");
-      return { errors, warnings };
-    }
-
-    if (!Array.isArray(graph.notes)) {
-      errors.push("`notes` must be an array.");
-      return { errors, warnings };
-    }
-
-    const requiredKeys = [
-      "metadata",
-      "notes",
-      "cluster_labels",
-      "cluster_centroids",
-      "cluster_centroid_norms",
-      "long_range_links",
-    ];
-
-    for (const key of requiredKeys) {
-      if (!(key in graph)) {
-        warnings.push(`Missing top-level key: ${key}`);
-      }
-    }
-
-    const ids = new Set();
-    for (const note of graph.notes) {
-      if (typeof note?.note_id !== "number") {
-        errors.push("Each note must include numeric `note_id`.");
-        continue;
-      }
-      if (ids.has(note.note_id)) {
-        errors.push(`Duplicate note_id: ${note.note_id}`);
-      }
-      ids.add(note.note_id);
-
-      if (!Array.isArray(note.related_note_links)) {
-        errors.push(
-          `note ${note.note_id} is missing \`related_note_links\` array.`,
-        );
-      } else {
-        for (const entry of note.related_note_links) {
-          const valid =
-            Array.isArray(entry) &&
-            entry.length === 2 &&
-            typeof entry[0] === "number" &&
-            typeof entry[1] === "number";
-          if (!valid) {
-            errors.push(
-              `note ${note.note_id} has invalid related_note_links entries; expected [number, number].`,
-            );
-            break;
-          }
-        }
-      }
-    }
-
-    if (
-      Array.isArray(graph.cluster_labels) &&
-      graph.cluster_labels.length !== graph.notes.length
-    ) {
-      warnings.push("`cluster_labels` length does not match `notes` length.");
-    }
-
-    if (Array.isArray(graph.long_range_links)) {
-      for (const link of graph.long_range_links) {
-        const valid =
-          Array.isArray(link) &&
-          link.length === 3 &&
-          typeof link[0] === "number" &&
-          typeof link[1] === "number" &&
-          typeof link[2] === "number";
-        if (!valid) {
-          warnings.push(
-            "Some `long_range_links` entries are not [number, number, number].",
-          );
-          break;
-        }
-      }
+async function normalizeGraph(data) {
+  validateGraph(data);
+  state.data = data;
+  state.notes = data.notes.map((note, index) => ({ ...note, __index: index }));
+  state.noteById = new Map(state.notes.map((note) => [note.note_id, note]));
+  configureTimeFilter();
+  const edgeMap = new Map();
+  const addEdge = (source, target, type, weight = 1, longRange = false) => {
+    if (source === target || !state.noteById.has(source) || !state.noteById.has(target)) return;
+    const [a, b] = source < target ? [source, target] : [target, source];
+    const key = `${a}:${b}:${type}`;
+    const existing = edgeMap.get(key);
+    if (existing) {
+      existing.longRange = existing.longRange || longRange;
+      if (existing.weight < weight) existing.weight = weight;
     } else {
-      warnings.push("`long_range_links` should be an array.");
+      edgeMap.set(key, { source: a, target: b, type, weight, longRange });
     }
-
-    return { errors, warnings };
+  };
+  for (const note of state.notes) {
+    for (const link of note.related_note_links ?? []) addEdge(note.note_id, Number(link[0]), "semantic", Number(link[1] ?? 1));
+    for (const target of note.structural_links ?? []) addEdge(note.note_id, Number(target), "structural", 1);
   }
-
-  function buildIndexes() {
-    state.notesById = new Map();
-    state.reverseRelated = new Map();
-    state.longRangeById = new Map();
-    state.clusterById = new Map();
-    state.clusterCounts = new Map();
-
-    if (!state.graph || !Array.isArray(state.graph.notes)) {
-      return;
-    }
-
-    for (const note of state.graph.notes) {
-      if (typeof note.note_id === "number") {
-        state.notesById.set(note.note_id, note);
-        state.reverseRelated.set(note.note_id, new Map());
-        state.longRangeById.set(note.note_id, []);
-      }
-    }
-
-    if (Array.isArray(state.graph.cluster_labels)) {
-      for (const [idx, note] of state.graph.notes.entries()) {
-        if (typeof note?.note_id !== "number") {
-          continue;
-        }
-        const clusterId = Number.parseInt(state.graph.cluster_labels[idx], 10);
-        if (!Number.isInteger(clusterId)) {
-          continue;
-        }
-        state.clusterById.set(note.note_id, clusterId);
-        state.clusterCounts.set(
-          clusterId,
-          (state.clusterCounts.get(clusterId) || 0) + 1,
-        );
-      }
-    }
-
-    for (const note of state.graph.notes) {
-      const srcId = note.note_id;
-      const related = Array.isArray(note.related_note_links)
-        ? note.related_note_links
-        : [];
-      for (const entry of related) {
-        if (!Array.isArray(entry) || entry.length !== 2) {
-          continue;
-        }
-        const [dstId, score] = entry;
-        if (!state.reverseRelated.has(dstId)) {
-          state.validation.warnings.push(
-            `note ${srcId} references missing related note ${dstId}`,
-          );
-          continue;
-        }
-        state.reverseRelated.get(dstId).set(srcId, score);
-      }
-    }
-
-    const longLinks = Array.isArray(state.graph.long_range_links)
-      ? state.graph.long_range_links
-      : [];
-    for (const entry of longLinks) {
-      if (!Array.isArray(entry) || entry.length !== 3) {
-        continue;
-      }
-      const [a, b, score] = entry;
-      if (!state.longRangeById.has(a) || !state.longRangeById.has(b)) {
-        continue;
-      }
-      state.longRangeById.get(a).push({ other: b, score });
-      state.longRangeById.get(b).push({ other: a, score });
-    }
+  for (const link of data.long_range_links ?? []) addEdge(Number(link[0]), Number(link[1]), "semantic", Number(link[2] ?? 1), true);
+  state.semanticDerived = false;
+  if (![...edgeMap.values()].some((edge) => edge.type === "semantic")) {
+    showDerivationState();
+    for (const link of await deriveSemanticLinks(state.notes)) addEdge(link.source, link.target, "semantic", link.weight);
+    state.semanticDerived = true;
   }
+  state.edges = [...edgeMap.values()];
+  configureStrengthThreshold();
+  configureStructuralThreshold();
+  state.cluster = null;
+  state.browseMode = "events";
+  el.browseModes.querySelectorAll("button").forEach((button) => {
+    const active = button.dataset.browse === state.browseMode;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  el.listLabel.textContent = "Events";
+  state.query = "";
+  state.selectedId = null;
+  el.searchInput.value = "";
+  buildGraphLayout();
+  applyFilters();
+  renderMetrics();
+  renderClusters();
+  renderInspector();
+  el.stageMessage.hidden = true;
+}
 
-  function syncStatus() {
-    const notes = Array.isArray(state.graph?.notes) ? state.graph.notes : [];
-    const errCount = state.validation.errors.length;
-    const warnCount = state.validation.warnings.length;
+function showDerivationState() {
+  el.stageMessage.hidden = false;
+  el.stageMessage.querySelector("h2").textContent = "Mapping semantic neighborhoods";
+  el.stageMessage.querySelector("p").textContent = "No persisted semantic links found; deriving local cosine similarity from embeddings.";
+  el.stageMessage.querySelector(".loader-mark").style.animation = "";
+}
 
-    els.fileName.textContent = state.fileName || "None";
-    els.noteCount.textContent = String(notes.length);
-    els.dirtyFlag.textContent = state.dirty ? "Yes" : "No";
-    els.saveBtn.disabled = !state.graph || errCount > 0;
-
-    if (!state.graph) {
-      els.validationSummary.textContent = "No file loaded";
-      return;
-    }
-
-    if (errCount > 0) {
-      els.validationSummary.textContent = `${errCount} error(s), ${warnCount} warning(s)`;
-      return;
-    }
-
-    if (warnCount > 0) {
-      els.validationSummary.textContent = `Valid with ${warnCount} warning(s)`;
-      return;
-    }
-
-    els.validationSummary.textContent = "Valid";
-  }
-
-  function onFilterChange() {
-    state.filters.query = els.searchInput.value.trim();
-    state.filters.sort = els.sortSelect.value;
-    renderList();
-  }
-
-  function getFilteredNotes() {
-    const notes = Array.isArray(state.graph?.notes)
-      ? [...state.graph.notes]
-      : [];
-    const query = state.filters.query.toLowerCase();
-
-    let filtered = notes;
-    if (query) {
-      filtered = notes.filter((note) => {
-        const noteId = String(note.note_id ?? "").toLowerCase();
-        const raw = String(note.raw_content ?? "").toLowerCase();
-        const commits = Array.isArray(note.source_commit_ids)
-          ? note.source_commit_ids.join(" ").toLowerCase()
-          : "";
-        const symbol = String(note.symbol_id ?? "").toLowerCase();
-        const fileMatch = String(note.file_path ?? "").toLowerCase();
-        return (
-          noteId.includes(query) ||
-          raw.includes(query) ||
-          commits.includes(query) ||
-          symbol.includes(query) ||
-          fileMatch.includes(query)
-        );
-      });
-    }
-
-    filtered.sort((a, b) => {
-      if (state.filters.sort === "id_desc") {
-        return (b.note_id ?? 0) - (a.note_id ?? 0);
-      }
-      if (state.filters.sort === "timestamp_desc") {
-        const aTs = Array.isArray(a.source_timestamps)
-          ? Math.max(0, ...a.source_timestamps)
-          : 0;
-        const bTs = Array.isArray(b.source_timestamps)
-          ? Math.max(0, ...b.source_timestamps)
-          : 0;
-        return bTs - aTs;
-      }
-      return (a.note_id ?? 0) - (b.note_id ?? 0);
-    });
-
-    return filtered;
-  }
-
-  function renderList() {
-    const notes = getFilteredNotes();
-    const shown = notes.slice(0, LIMIT_LIST_RENDER);
-
-    els.noteList.innerHTML = "";
-
-    if (!state.graph) {
-      els.listMeta.textContent = "No notes loaded";
-      return;
-    }
-
-    if (notes.length === 0) {
-      els.listMeta.textContent = "No results";
-      return;
-    }
-
-    els.listMeta.textContent = `Showing ${shown.length}/${notes.length}`;
-
-    for (const note of shown) {
-      const button = document.createElement("button");
-      button.className = "note-item";
-      button.type = "button";
-      if (note.note_id === state.selectedNoteId) {
-        button.classList.add("active");
-      }
-      button.addEventListener("click", () => {
-        state.selectedNoteId = note.note_id;
-        renderList();
-        renderEditor();
-        renderGraph();
-      });
-
-      const idLine = document.createElement("span");
-      idLine.className = "note-id";
-      idLine.textContent = `#${note.note_id}`;
-
-      const snippet = document.createElement("span");
-      snippet.className = "note-snippet";
-      snippet.textContent = summarize(
-        note.raw_content || "",
-        90,
-      );
-
-      button.append(idLine, snippet);
-      els.noteList.appendChild(button);
-    }
-  }
-
-  function renderEditor() {
-    const note = state.notesById.get(state.selectedNoteId);
-    if (!note) {
-      setEditorEnabled(false);
-      els.selectedNoteMeta.textContent = "No note selected";
-      els.contextInput.value = "";
-      els.rawInput.value = "";
-      els.relatedInput.value = "";
-      els.readonlyMeta.innerHTML = "";
-      return;
-    }
-
-    setEditorEnabled(true);
-
-    els.selectedNoteMeta.textContent = `note_id=${note.note_id}`;
-    els.rawInput.value = String(note.raw_content ?? "");
-    els.relatedInput.value = Array.isArray(note.related_note_links)
-      ? note.related_note_links
-          .map((entry) =>
-            Array.isArray(entry) && entry.length === 2
-              ? `${entry[0]}:${entry[1].toFixed(3)}`
-              : "",
-          )
-          .filter(Boolean)
-          .join(", ")
-      : "";
-
-    const sourceTurns = Array.isArray(note.source_turn_ids)
-      ? note.source_turn_ids.length
-      : 0;
-    const sourceCommits = Array.isArray(note.source_commit_ids)
-      ? note.source_commit_ids.length
-      : 0;
-    const sourceTimes = Array.isArray(note.source_timestamps)
-      ? note.source_timestamps.length
-      : 0;
-    const embedDim = Array.isArray(note.embedding) ? note.embedding.length : 0;
-
-    els.readonlyMeta.innerHTML = "";
-    for (const [key, value, fullWidth] of [
-      ["Symbol ID", note.symbol_id || "none", true],
-      ["Node Type", note.ast_node_type || "none", true],
-      ["File Path", note.file_path || "none", true],
-      ["Embedding Dim", String(embedDim)],
-      ["Norm", String(note.norm ?? "n/a")],
-      ["Source Turns", String(sourceTurns)],
-      ["Source Commits", String(sourceCommits)],
-      ["Source Timestamps", String(sourceTimes)],
-      [
-        "Inbound Links",
-        String(state.reverseRelated.get(note.note_id)?.size ?? 0),
-      ],
-    ]) {
-      const cell = document.createElement("div");
-      cell.className = "meta-cell";
-      if (fullWidth) {
-        cell.classList.add("full-width");
-      }
-      cell.innerHTML = `<span class="meta-key">${key}</span>${value}`;
-      els.readonlyMeta.appendChild(cell);
-    }
-  }
-
-  function setEditorEnabled(enabled) {
-    els.rawInput.disabled = !enabled;
-    els.relatedInput.disabled = !enabled;
-    els.applyBtn.disabled = !enabled;
-    els.deleteBtn.disabled = !enabled;
-  }
-
-  function applyEditorChanges() {
-    const note = state.notesById.get(state.selectedNoteId);
-    if (!note) {
-      return;
-    }
-
-    const parsedLinks = parseRelatedLinks(els.relatedInput.value);
-    const deduped = new Map();
-    for (const [id, score] of parsedLinks) {
-      const prev = deduped.get(id);
-      deduped.set(id, prev === undefined ? score : Math.max(prev, score));
-    }
-    const existing = [];
-    const dropped = [];
-    for (const [id, score] of deduped.entries()) {
-      if (state.notesById.has(id)) {
-        existing.push([id, score]);
-      } else {
-        dropped.push(id);
-      }
-    }
-
-    note.raw_content = els.rawInput.value;
-    note.related_note_links = existing;
-
-    if (dropped.length > 0) {
-      state.validation.warnings.push(
-        `Dropped missing related links for ${note.note_id}: ${dropped.join(", ")}`,
-      );
-    }
-
-    state.dirty = true;
-    buildIndexes();
-    syncStatus();
-    renderList();
-    renderEditor();
-    renderGraph();
-  }
-
-  function parseRelatedLinks(text) {
-    return text
-      .split(/[\s,]+/)
-      .map((chunk) => chunk.trim())
-      .filter(Boolean)
-      .map((chunk) => {
-        const [idPart, scorePart] = chunk.split(":");
-        const id = Number.parseInt(idPart, 10);
-        const score =
-          scorePart === undefined ? 0 : Number.parseFloat(scorePart.trim());
-        if (!Number.isInteger(id)) {
-          return null;
-        }
-        if (!Number.isFinite(score)) {
-          return null;
-        }
-        return [id, score];
-      })
-      .filter((entry) => entry !== null);
-  }
-
-  function deleteSelectedNote() {
-    const id = state.selectedNoteId;
-    if (!state.notesById.has(id)) {
-      return;
-    }
-
-    const note = state.notesById.get(id);
-    const outbound = Array.isArray(note.related_note_links)
-      ? note.related_note_links.length
-      : 0;
-    const inbound = state.reverseRelated.get(id)?.size ?? 0;
-    const ok = window.confirm(
-      `Delete note ${id}?\n\nOutbound links: ${outbound}\nInbound links: ${inbound}\n\nThis cannot be undone.`,
-    );
-    if (!ok) {
-      return;
-    }
-
-    const notes = state.graph.notes;
-    const idx = notes.findIndex((n) => n.note_id === id);
-    if (idx < 0) {
-      return;
-    }
-
-    notes.splice(idx, 1);
-
-    if (
-      Array.isArray(state.graph.cluster_labels) &&
-      idx < state.graph.cluster_labels.length
-    ) {
-      state.graph.cluster_labels.splice(idx, 1);
-    }
-
-    for (const item of notes) {
-      if (!Array.isArray(item.related_note_links)) {
-        item.related_note_links = [];
-        continue;
-      }
-      item.related_note_links = item.related_note_links.filter(
-        (entry) =>
-          Array.isArray(entry) && entry.length === 2 && entry[0] !== id,
-      );
-    }
-
-    if (Array.isArray(state.graph.long_range_links)) {
-      state.graph.long_range_links = state.graph.long_range_links.filter(
-        (entry) => {
-          if (!Array.isArray(entry) || entry.length !== 3) {
-            return false;
-          }
-          return entry[0] !== id && entry[1] !== id;
-        },
-      );
-    }
-
-    state.dirty = true;
-    buildIndexes();
-
-    if (state.graph.notes.length > 0) {
-      const safeIndex = Math.min(idx, state.graph.notes.length - 1);
-      state.selectedNoteId = state.graph.notes[safeIndex].note_id;
-    } else {
-      state.selectedNoteId = null;
-    }
-
-    syncStatus();
-    renderList();
-    renderEditor();
-    renderGraph();
-  }
-
-  function onSave() {
-    if (!state.graph) {
-      return;
-    }
-
-    state.validation = validateGraph(state.graph);
-    syncStatus();
-
-    if (state.validation.errors.length > 0) {
-      window.alert(
-        `Cannot save due to validation errors:\n- ${state.validation.errors.join("\n- ")}`,
-      );
-      return;
-    }
-
-    const baseName = (state.fileName || "smg.json").replace(/\.json$/i, "");
-    const outName = `${baseName}-edited.json`;
-    const payload = JSON.stringify(state.graph, null, 2);
-    const blob = new Blob([payload], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = outName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-
-    URL.revokeObjectURL(url);
-    state.dirty = false;
-    syncStatus();
-  }
-
-  function renderGraph() {
-    if (!window.d3) {
-      renderGraphEmpty("D3 failed to load from CDN.");
-      return;
-    }
-    if (state.graphAnimation.simulation) {
-      state.graphAnimation.simulation.stop();
-      state.graphAnimation.simulation = null;
-    }
-
-    const data = buildGraphData();
-    if (
-      !data ||
-      ((!data.nodes || data.nodes.length === 0) &&
-        data.mode !== "cluster_matrix")
-    ) {
-      renderScoreHistogram([], 0, null);
-      renderGraphEmpty("No graphable data for current mode/filters.");
-      return;
-    }
-    els.graphSubtitle.textContent = data.subtitle;
-    renderScoreHistogram(
-      data.scoreValues || [],
-      data.thresholdRaw || 0,
-      data.scoreDomain || null,
-    );
-    if (data.mode === "cluster_matrix") {
-      state.graphAnimation.mode = data.mode;
-      state.graphAnimation.simulation = null;
-      syncControlAvailability();
-      renderClusterMatrix(data);
-      return;
-    }
-
-    els.graphRoot.innerHTML = "";
-    const width = Math.max(420, els.graphRoot.clientWidth || 640);
-    const height = Math.max(340, els.graphRoot.clientHeight || 520);
-    const pinnedLayer = document.createElement("div");
-    pinnedLayer.className = "graph-pinned-layer";
-    els.graphRoot.appendChild(pinnedLayer);
-    const pinnedCards = new Map();
-    const hoverCard = document.createElement("div");
-    hoverCard.className = "graph-hover-card";
-    hoverCard.setAttribute("aria-hidden", "true");
-    els.graphRoot.appendChild(hoverCard);
-    const legend = document.createElement("div");
-    legend.className = "graph-legend";
-    legend.innerHTML = buildLegendHtml(data.mode);
-    els.graphRoot.appendChild(legend);
-
-    const svg = d3
-      .select(els.graphRoot)
-      .append("svg")
-      .attr("width", width)
-      .attr("height", height)
-      .attr("viewBox", `0 0 ${width} ${height}`);
-
-    const scene = svg.append("g");
-    const minZoomScale =
-      data.mode === "cluster_map"
-        ? 0.01
-        : data.mode === "long_range"
-          ? 0.01
-          : 0.25;
-    const zoomBehavior = d3
-      .zoom()
-      .scaleExtent([minZoomScale, 4])
-      .on("zoom", (event) => {
-        scene.attr("transform", event.transform);
-      });
-    svg.call(zoomBehavior);
-
-    const linkColor = {
-      related_out: "#1cffd8",
-      related_in: "#62a8ff",
-      long_range: "#ff71cf",
+function deriveSemanticLinks(notes) {
+  const vectors = notes.map((note) => note.embedding);
+  const dimensions = vectors[0]?.length ?? 0;
+  if (!dimensions || !vectors.every((vector) => Array.isArray(vector) && vector.length === dimensions)) return Promise.resolve([]);
+  const source = `self.onmessage = ({ data }) => {
+    const { vectors, norms, noteIds, maxPerNode } = data;
+    const best = Array.from({ length: vectors.length }, () => []);
+    const offer = (index, candidate) => {
+      const list = best[index];
+      if (list.length < maxPerNode) { list.push(candidate); return; }
+      let weakest = 0;
+      for (let cursor = 1; cursor < list.length; cursor += 1) if (list[cursor].score < list[weakest].score) weakest = cursor;
+      if (candidate.score > list[weakest].score) list[weakest] = candidate;
     };
-    const nodeColor = {
-      selected: "#ff71cf",
-      outbound: "#1cffd8",
-      inbound: "#62a8ff",
-      expanded: "#b066ff",
-      long_range: "#ffb347",
-      cluster: "#7b8cff",
-    };
-
-    const scoredValues = data.links
-      .map((d) => (Number.isFinite(d.score) ? d.score : 0))
-      .sort((a, b) => a - b);
-    const minScore = scoredValues.length > 0 ? scoredValues[0] : 0;
-    const maxScore =
-      scoredValues.length > 0 ? scoredValues[scoredValues.length - 1] : 1;
-    const normalizeScore = (value) => {
-      const score = Number.isFinite(value) ? value : 0;
-      if (maxScore <= minScore) {
-        return score > 0 ? 1 : 0;
-      }
-      return Math.max(
-        0,
-        Math.min(1, (score - minScore) / (maxScore - minScore)),
-      );
-    };
-
-    const link = scene
-      .append("g")
-      .selectAll("line")
-      .data(data.links)
-      .join("line")
-      .attr("stroke-width", (d) => {
-        const n = normalizeScore(d.score);
-        const base = d.kind === "long_range" ? 1.8 : 1.1;
-        const extra = d.kind === "long_range" ? 2.4 : 1.8;
-        return base + n * extra;
-      })
-      .attr("stroke-opacity", (d) => {
-        const n = normalizeScore(d.score);
-        const base = d.kind === "long_range" ? 0.35 : 0.24;
-        const extra = d.kind === "long_range" ? 0.58 : 0.64;
-        return Math.max(0.05, Math.min(1, base + n * extra));
-      })
-      .attr("stroke", (d) => linkColor[d.kind] || "#8aa");
-
-    // Persist normalized link strength for both rendering and force simulation.
-    for (const entry of data.links) {
-      entry.strengthNorm = normalizeScore(entry.score);
-    }
-
-    const node = scene
-      .append("g")
-      .selectAll("circle")
-      .data(data.nodes)
-      .join("circle")
-      .attr("r", (d) => (d.kind === "selected" ? 11 : 7.5))
-      .attr("fill", (d) => {
-        if (d.kind === "cluster") {
-          return clusterColor(d.clusterId);
-        }
-        return nodeColor[d.kind] || "#6a8";
-      })
-      .attr("stroke", "#2a1749")
-      .attr("stroke-width", 1.2)
-      .style("cursor", "pointer")
-      .on("mouseenter", (event, d) => {
-        const ref = state.notesById.get(d.id);
-        hoverCard.innerHTML = buildNodeHoverCardHtml(ref, d, false);
-        hoverCard.classList.add("visible");
-        positionHoverCard(event, hoverCard, els.graphRoot);
-      })
-      .on("mousemove", (event) => {
-        if (hoverCard.classList.contains("visible")) {
-          positionHoverCard(event, hoverCard, els.graphRoot);
-        }
-      })
-      .on("mouseleave", () => {
-        hideHoverCard(hoverCard);
-      })
-      .on("contextmenu", (event, d) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (pinnedCards.has(d.id)) {
-          pinnedCards.get(d.id).remove();
-          pinnedCards.delete(d.id);
-          return;
-        }
-
-        const ref = state.notesById.get(d.id);
-        const pinCard = document.createElement("div");
-        pinCard.className = "graph-hover-card pinned visible";
-        pinCard.innerHTML = buildNodeHoverCardHtml(ref, d, true);
-        pinnedLayer.appendChild(pinCard);
-        positionHoverCard(event, pinCard, els.graphRoot);
-        pinnedCards.set(d.id, pinCard);
-      })
-      .on("click", (event, d) => {
-        event.stopPropagation();
-        state.selectedNoteId = d.id;
-        renderList();
-        renderEditor();
-        renderGraph();
-      });
-
-    svg.on("click", () => {
-      hideHoverCard(hoverCard);
-    });
-
-    node.append("title").text((d) => {
-      const ref = state.notesById.get(d.id);
-      return `#${d.id}\n${summarize(ref?.context || ref?.raw_content || "", 120)}`;
-    });
-
-    const label = scene
-      .append("g")
-      .selectAll("text")
-      .data(data.nodes)
-      .join("text")
-      .attr("class", "graph-node-label")
-      .attr("dx", 9)
-      .attr("dy", 3)
-      .text((d) => {
-        if (d.kind === "selected") {
-          return `#${d.id}`;
-        }
-        if (data.nodes.length <= 220) {
-          return `#${d.id}`;
-        }
-        return "";
-      });
-
-    const simulation = d3
-      .forceSimulation(data.nodes)
-      .force(
-        "link",
-        d3
-          .forceLink(data.links)
-          .id((d) => d.id)
-          .distance((d) => {
-            const n = Number.isFinite(d.strengthNorm) ? d.strengthNorm : 0;
-            if (d.kind === "long_range") {
-              return 145 - n * 55;
-            }
-            return 90 - n * 45;
-          })
-          .strength((d) => {
-            const n = Number.isFinite(d.strengthNorm) ? d.strengthNorm : 0;
-            const base = d.kind === "long_range" ? 0.08 : 0.15;
-            const extra = d.kind === "long_range" ? 0.22 : 0.45;
-            return base + n * extra;
-          }),
-      )
-      .force(
-        "charge",
-        d3
-          .forceManyBody()
-          .strength(
-            data.mode === "cluster_map"
-              ? -105
-              : data.mode === "long_range"
-                ? -130
-                : -180,
-          ),
-      )
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force(
-        "collision",
-        d3
-          .forceCollide()
-          .radius((d) =>
-            d.kind === "selected" ? 14 : data.mode === "cluster_map" ? 8 : 10,
-          ),
-      )
-      .on("tick", ticked);
-    state.graphAnimation.simulation = simulation;
-    state.graphAnimation.mode = data.mode;
-
-    node.call(
-      d3
-        .drag()
-        .on("start", (event) => {
-          if (!event.active) {
-            simulation.alphaTarget(0.3).restart();
-          }
-          event.subject.fx = event.subject.x;
-          event.subject.fy = event.subject.y;
-        })
-        .on("drag", (event) => {
-          event.subject.fx = event.x;
-          event.subject.fy = event.y;
-        })
-        .on("end", (event) => {
-          if (!event.active) {
-            simulation.alphaTarget(0);
-          }
-          event.subject.fx = null;
-          event.subject.fy = null;
-        }),
-    );
-
-    // Pre-settle briefly, then fit the full neighborhood in view.
-    simulation.stop();
-    for (let i = 0; i < (data.mode === "cluster_map" ? 126 : 80); i += 1) {
-      simulation.tick();
-    }
-    ticked();
-    zoomToFit(
-      svg,
-      zoomBehavior,
-      data.nodes,
-      width,
-      height,
-      data.mode === "cluster_map" ? 44 : data.mode === "long_range" ? 38 : 26,
-      data.mode === "cluster_map"
-        ? 0.05
-        : data.mode === "long_range"
-          ? 0.08
-          : 0.35,
-    );
-    applyAnimationState();
-
-    function ticked() {
-      link
-        .attr("x1", (d) => d.source.x)
-        .attr("y1", (d) => d.source.y)
-        .attr("x2", (d) => d.target.x)
-        .attr("y2", (d) => d.target.y);
-      node.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
-      label.attr("x", (d) => d.x).attr("y", (d) => d.y);
-    }
-  }
-
-  function zoomToFit(
-    svg,
-    zoomBehavior,
-    nodes,
-    width,
-    height,
-    padding,
-    minScale = 0.35,
-  ) {
-    if (!nodes.length) {
-      return;
-    }
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (const n of nodes) {
-      if (!Number.isFinite(n.x) || !Number.isFinite(n.y)) {
-        continue;
-      }
-      if (n.x < minX) minX = n.x;
-      if (n.y < minY) minY = n.y;
-      if (n.x > maxX) maxX = n.x;
-      if (n.y > maxY) maxY = n.y;
-    }
-
-    if (!Number.isFinite(minX) || !Number.isFinite(minY)) {
-      return;
-    }
-
-    const boxW = Math.max(1, maxX - minX);
-    const boxH = Math.max(1, maxY - minY);
-    const fitW = Math.max(1, width - padding * 2);
-    const fitH = Math.max(1, height - padding * 2);
-    const scale = Math.max(
-      minScale,
-      Math.min(4, Math.min(fitW / boxW, fitH / boxH)),
-    );
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-    const tx = width / 2 - centerX * scale;
-    const ty = height / 2 - centerY * scale;
-
-    svg.call(
-      zoomBehavior.transform,
-      d3.zoomIdentity.translate(tx, ty).scale(scale),
-    );
-  }
-
-  function computeScoreDomain(scores) {
-    const clean = Array.isArray(scores)
-      ? scores.filter((v) => Number.isFinite(v))
-      : [];
-    if (clean.length === 0) {
-      return null;
-    }
-    let min = Infinity;
-    let max = -Infinity;
-    for (const v of clean) {
-      if (v < min) min = v;
-      if (v > max) max = v;
-    }
-    return { min, max };
-  }
-
-  function quantile(sortedValues, q) {
-    if (!Array.isArray(sortedValues) || sortedValues.length === 0) {
-      return 0;
-    }
-    const clampedQ = Math.max(0, Math.min(1, q));
-    if (sortedValues.length === 1) {
-      return sortedValues[0];
-    }
-    const pos = clampedQ * (sortedValues.length - 1);
-    const lo = Math.floor(pos);
-    const hi = Math.ceil(pos);
-    if (lo === hi) {
-      return sortedValues[lo];
-    }
-    const w = pos - lo;
-    return sortedValues[lo] * (1 - w) + sortedValues[hi] * w;
-  }
-
-  function computeDistribution(values, options = {}) {
-    const clean = Array.isArray(values)
-      ? values.filter((v) => Number.isFinite(v))
-      : [];
-    if (clean.length === 0) {
-      return null;
-    }
-    const useLog = options.log === true;
-    const transformed = clean
-      .map((v) => (useLog ? Math.log1p(Math.max(0, v)) : v))
-      .sort((a, b) => a - b);
-    const min = transformed[0];
-    const max = transformed[transformed.length - 1];
-    const p10 = quantile(transformed, 0.1);
-    const p90 = quantile(transformed, 0.9);
-    return {
-      useLog,
-      min,
-      max,
-      p10,
-      p90,
-    };
-  }
-
-  function normalizeByDistribution(value, distribution) {
-    if (!distribution || !Number.isFinite(value)) {
-      return 0;
-    }
-    const x = distribution.useLog ? Math.log1p(Math.max(0, value)) : value;
-    const lo = Number.isFinite(distribution.p10)
-      ? distribution.p10
-      : distribution.min;
-    const hi = Number.isFinite(distribution.p90)
-      ? distribution.p90
-      : distribution.max;
-    const span = hi - lo;
-    if (span > 1e-9) {
-      return Math.max(0, Math.min(1, (x - lo) / span));
-    }
-    const fallback = distribution.max - distribution.min;
-    if (fallback > 1e-9) {
-      return Math.max(
-        0,
-        Math.min(
-          1,
-          (x - distribution.min) / (distribution.max - distribution.min),
-        ),
-      );
-    }
-    return 1;
-  }
-
-  function normalizedToRawScore(normalized, domain) {
-    const norm = Math.max(
-      0,
-      Math.min(1, Number.isFinite(normalized) ? normalized : 0),
-    );
-    if (
-      !domain ||
-      !Number.isFinite(domain.min) ||
-      !Number.isFinite(domain.max)
-    ) {
-      return 0;
-    }
-    if (domain.max <= domain.min) {
-      return domain.min;
-    }
-    return domain.min + norm * (domain.max - domain.min);
-  }
-
-  function buildGraphData() {
-    const mode = state.graphControls.viewMode;
-    const selectedId =
-      typeof state.selectedNoteId === "number" ? state.selectedNoteId : null;
-
-    if (mode === "cluster_map") {
-      return buildClusterMapData(selectedId);
-    }
-    if (mode === "long_range") {
-      return buildLongRangeData(selectedId);
-    }
-    if (mode === "cluster_matrix") {
-      return buildClusterMatrixData(selectedId);
-    }
-    if (!state.notesById.has(selectedId)) {
-      return {
-        mode,
-        subtitle: "No selected note",
-        nodes: [],
-        links: [],
-        scoreValues: [],
-        scoreDomain: null,
-        thresholdRaw: 0,
-      };
-    }
-    const neighborhood = buildNeighborhoodData(selectedId);
-    return {
-      mode: "neighborhood",
-      subtitle: `Selected note neighborhood #${selectedId}`,
-      nodes: neighborhood.nodes,
-      links: neighborhood.links,
-      scoreValues: neighborhood.scoreValues,
-      scoreDomain: neighborhood.scoreDomain,
-      thresholdRaw: neighborhood.thresholdRaw,
-    };
-  }
-
-  function buildClusterMapData(selectedId) {
-    const notes = Array.isArray(state.graph?.notes) ? state.graph.notes : [];
-    const sortedIds = notes
-      .map((n) => n?.note_id)
-      .filter((id) => Number.isInteger(id))
-      .sort((a, b) => a - b);
-    if (sortedIds.length === 0) {
-      return {
-        mode: "cluster_map",
-        subtitle: "Cluster map",
-        nodes: [],
-        links: [],
-      };
-    }
-
-    const ordered = [];
-    const seen = new Set();
-    const pushOrdered = (id) => {
-      if (!Number.isInteger(id) || seen.has(id) || !state.notesById.has(id)) {
-        return;
-      }
-      if (ordered.length >= CLUSTER_MAP_NODE_CAP) {
-        return;
-      }
-      seen.add(id);
-      ordered.push(id);
-    };
-
-    if (Number.isInteger(selectedId)) {
-      pushOrdered(selectedId);
-    }
-
-    if (state.clusterCounts.size > 0) {
-      const clusterEntries = Array.from(state.clusterCounts.entries()).sort(
-        (a, b) => a[0] - b[0],
-      );
-      const perClusterCap = Math.max(
-        1,
-        Math.floor(CLUSTER_MAP_NODE_CAP / Math.max(1, clusterEntries.length)),
-      );
-      for (const [clusterId] of clusterEntries) {
-        const clusterIds = sortedIds.filter(
-          (id) => state.clusterById.get(id) === clusterId,
-        );
-        for (const id of clusterIds.slice(0, perClusterCap)) {
-          pushOrdered(id);
-        }
+    for (let left = 0; left < vectors.length; left += 1) {
+      for (let right = left + 1; right < vectors.length; right += 1) {
+        let dot = 0;
+        for (let dimension = 0; dimension < vectors[left].length; dimension += 1) dot += vectors[left][dimension] * vectors[right][dimension];
+        const score = dot / ((norms[left] || 1) * (norms[right] || 1));
+        if (score >= 0.9995) continue;
+        offer(left, { index: right, score });
+        offer(right, { index: left, score });
       }
     }
-
-    for (const id of sortedIds) {
-      if (ordered.length >= CLUSTER_MAP_NODE_CAP) {
-        break;
-      }
-      pushOrdered(id);
-    }
-    const allowed = new Set(ordered);
-    const nodes = ordered.map((id) => ({
-      id,
-      kind: id === selectedId ? "selected" : "cluster",
-      clusterId: state.clusterById.get(id),
+    const unique = new Map();
+    best.forEach((links, sourceIndex) => links.forEach(({ index, score }) => {
+      const [left, right] = sourceIndex < index ? [sourceIndex, index] : [index, sourceIndex];
+      const key = left + ":" + right;
+      const existing = unique.get(key);
+      if (existing === undefined || score > existing) unique.set(key, score);
     }));
-
-    const scoreValues = [];
-    const perNodeBudget = Math.max(
-      1,
-      Math.min(3, state.graphControls.relatedLimit),
-    );
-    for (const srcId of ordered) {
-      const note = state.notesById.get(srcId);
-      if (!note || !Array.isArray(note.related_note_links)) {
-        continue;
-      }
-      const related = note.related_note_links
-        .filter(
-          (entry) =>
-            Array.isArray(entry) &&
-            entry.length === 2 &&
-            Number.isInteger(entry[0]) &&
-            Number.isFinite(entry[1]),
-        )
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, perNodeBudget);
-      for (const [, score] of related) {
-        scoreValues.push(score);
-      }
-    }
-    if (els.showLongRange.checked) {
-      const topK = Math.max(
-        1,
-        Math.min(220, state.graphControls.longRangeTopK),
-      );
-      const longLinks = Array.isArray(state.graph?.long_range_links)
-        ? state.graph.long_range_links
-        : [];
-      for (const entry of longLinks
-        .filter(
-          (e) =>
-            Array.isArray(e) &&
-            e.length === 3 &&
-            Number.isInteger(e[0]) &&
-            Number.isInteger(e[1]) &&
-            Number.isFinite(e[2]),
-        )
-        .sort((a, b) => b[2] - a[2])
-        .slice(0, topK)) {
-        scoreValues.push(entry[2]);
-      }
-    }
-    const scoreDomain = computeScoreDomain(scoreValues);
-    const minScore = normalizedToRawScore(
-      state.graphControls.minScore,
-      scoreDomain,
-    );
-    const edgeSet = new Set();
-    const links = [];
-
-    for (const srcId of ordered) {
-      const note = state.notesById.get(srcId);
-      if (!note || !Array.isArray(note.related_note_links)) {
-        continue;
-      }
-      const related = note.related_note_links
-        .filter(
-          (entry) =>
-            Array.isArray(entry) &&
-            entry.length === 2 &&
-            Number.isInteger(entry[0]) &&
-            Number.isFinite(entry[1]) &&
-            entry[1] >= minScore,
-        )
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, perNodeBudget);
-
-      for (const [dstId, score] of related) {
-        if (!allowed.has(dstId)) {
-          continue;
-        }
-        const a = Math.min(srcId, dstId);
-        const b = Math.max(srcId, dstId);
-        const edgeKey = `${a}:${b}:related`;
-        if (edgeSet.has(edgeKey)) {
-          continue;
-        }
-        edgeSet.add(edgeKey);
-        links.push({
-          source: srcId,
-          target: dstId,
-          kind: "related_out",
-          score,
-        });
-      }
-    }
-
-    if (els.showLongRange.checked) {
-      const topK = Math.max(
-        1,
-        Math.min(220, state.graphControls.longRangeTopK),
-      );
-      const longLinks = Array.isArray(state.graph?.long_range_links)
-        ? state.graph.long_range_links
-        : [];
-      const filteredLong = longLinks
-        .filter(
-          (entry) =>
-            Array.isArray(entry) &&
-            entry.length === 3 &&
-            Number.isInteger(entry[0]) &&
-            Number.isInteger(entry[1]) &&
-            Number.isFinite(entry[2]) &&
-            entry[2] >= minScore,
-        )
-        .sort((a, b) => b[2] - a[2])
-        .slice(0, topK);
-      for (const [a, b, score] of filteredLong) {
-        if (!allowed.has(a) || !allowed.has(b)) {
-          continue;
-        }
-        const edgeKey = `${Math.min(a, b)}:${Math.max(a, b)}:long`;
-        if (edgeSet.has(edgeKey)) {
-          continue;
-        }
-        edgeSet.add(edgeKey);
-        links.push({ source: a, target: b, kind: "long_range", score });
-      }
-    }
-
-    const suffix =
-      sortedIds.length > ordered.length
-        ? ` (showing ${ordered.length}/${sortedIds.length} nodes)`
-        : "";
-    return {
-      mode: "cluster_map",
-      subtitle: `Global cluster map${suffix}`,
-      nodes,
-      links,
-      scoreValues,
-      scoreDomain,
-      thresholdRaw: minScore,
-    };
-  }
-
-  function buildLongRangeData(selectedId) {
-    const topK = Math.max(1, state.graphControls.longRangeTopK);
-    const longLinks = Array.isArray(state.graph?.long_range_links)
-      ? state.graph.long_range_links
-      : [];
-    const scoreValues = longLinks
-      .filter(
-        (entry) =>
-          Array.isArray(entry) &&
-          entry.length === 3 &&
-          Number.isInteger(entry[0]) &&
-          Number.isInteger(entry[1]) &&
-          Number.isFinite(entry[2]),
-      )
-      .map((entry) => entry[2]);
-    const scoreDomain = computeScoreDomain(scoreValues);
-    const minScore = normalizedToRawScore(
-      state.graphControls.minScore,
-      scoreDomain,
-    );
-    const filtered = longLinks
-      .filter(
-        (entry) =>
-          Array.isArray(entry) &&
-          entry.length === 3 &&
-          Number.isInteger(entry[0]) &&
-          Number.isInteger(entry[1]) &&
-          Number.isFinite(entry[2]) &&
-          entry[2] >= minScore,
-      )
-      .sort((a, b) => b[2] - a[2])
-      .slice(0, topK);
-
-    const nodeKinds = new Map();
-    for (const [a, b] of filtered) {
-      if (state.notesById.has(a)) {
-        nodeKinds.set(a, "long_range");
-      }
-      if (state.notesById.has(b)) {
-        nodeKinds.set(b, "long_range");
-      }
-    }
-    if (Number.isInteger(selectedId) && nodeKinds.has(selectedId)) {
-      nodeKinds.set(selectedId, "selected");
-    }
-
-    const nodes = Array.from(nodeKinds.entries()).map(([id, kind]) => ({
-      id,
-      kind,
-      clusterId: state.clusterById.get(id),
+    self.postMessage([...unique.entries()].map(([key, weight]) => {
+      const [left, right] = key.split(":").map(Number);
+      return { source: noteIds[left], target: noteIds[right], weight };
     }));
-    const links = filtered.map(([a, b, score]) => ({
-      source: a,
-      target: b,
-      kind: "long_range",
-      score,
-    }));
+  };`;
+  if (typeof Worker === "undefined") return Promise.resolve([]);
+  try {
+    return new Promise((resolve) => {
+      const workerUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+      const worker = new Worker(workerUrl);
+      worker.addEventListener("message", ({ data }) => {
+        worker.terminate();
+        URL.revokeObjectURL(workerUrl);
+        resolve(data);
+      }, { once: true });
+      worker.addEventListener("error", () => {
+        worker.terminate();
+        URL.revokeObjectURL(workerUrl);
+        resolve([]);
+      }, { once: true });
+      worker.postMessage({
+        vectors,
+        norms: notes.map((note) => Number(note.norm ?? 1)),
+        noteIds: notes.map((note) => note.note_id),
+        maxPerNode: 5,
+      });
+    });
+  } catch {
+    return Promise.resolve([]);
+  }
+}
 
+function buildGraphLayout() {
+  const clusters = [...new Set(state.notes.map(clusterOf))].sort((a, b) => a - b);
+  const times = state.notes.map(timestampOf).filter(Boolean);
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
+  const degreeById = new Map();
+  for (const edge of state.edges) {
+    degreeById.set(edge.source, (degreeById.get(edge.source) ?? 0) + 1);
+    degreeById.set(edge.target, (degreeById.get(edge.target) ?? 0) + 1);
+  }
+  state.graph.nodes = state.notes.map((note) => {
+    const cluster = clusterOf(note);
+    const ci = Math.max(0, clusters.indexOf(cluster));
+    const angle = (ci / Math.max(1, clusters.length)) * Math.PI * 2 - Math.PI / 2;
+    const seed = hash(note.note_id);
+    const radius = 130 + (seed % 210);
+    const timeBias = maxTime > minTime ? ((timestampOf(note) - minTime) / (maxTime - minTime) - .5) * 210 : 0;
     return {
-      mode: "long_range",
-      subtitle: `Long-range links (top ${topK})`,
-      nodes,
-      links,
-      scoreValues,
-      scoreDomain,
-      thresholdRaw: minScore,
+      id: note.note_id,
+      note,
+      x: Math.cos(angle) * 330 + Math.cos((seed % 628) / 100) * radius + timeBias * .25,
+      y: Math.sin(angle) * 240 + Math.sin((seed % 628) / 100) * radius * .68 - timeBias * .18,
+      degree: degreeById.get(note.note_id) ?? 0,
     };
+  });
+  [...state.graph.nodes]
+    .sort((left, right) => right.degree - left.degree)
+    .forEach((node, index) => { node.labelRank = index; });
+  fitGraph();
+}
+
+function configureStrengthThreshold() {
+  const weights = state.edges.filter((edge) => edge.type === "semantic").map((edge) => edge.weight).sort((left, right) => left - right);
+  const hasWeights = weights.length > 0;
+  const semanticButton = el.edgeFilter.querySelector('[data-edge="semantic"]');
+  const min = hasWeights ? Math.floor(Math.min(...weights) * 100) / 100 : 0;
+  const max = hasWeights ? Math.ceil(Math.max(...weights) * 100) / 100 : 1;
+  const initial = state.semanticDerived && hasWeights ? weights[Math.floor((weights.length - 1) * .75)] : min;
+  if (!hasWeights && state.edgeType === "semantic") state.edgeType = "all";
+  state.minStrength = initial;
+  el.strengthThreshold.min = String(min);
+  el.strengthThreshold.max = String(max);
+  el.strengthThreshold.step = "0.01";
+  el.strengthThreshold.value = String(initial);
+  semanticButton.disabled = !hasWeights;
+  el.edgeFilter.querySelectorAll("button").forEach((button) => button.classList.toggle("is-active", button.dataset.edge === state.edgeType));
+  el.thresholdValue.textContent = hasWeights ? `≥ ${initial.toFixed(2)}` : "No semantic links";
+  updateSemanticThresholdInteractivity(hasWeights);
+}
+
+function updateSemanticThresholdInteractivity(hasSemantic = state.edges.some((edge) => edge.type === "semantic")) {
+  const disabled = !hasSemantic || state.edgeType === "structural";
+  el.strengthThreshold.disabled = disabled;
+  el.thresholdValue.style.opacity = disabled ? ".45" : "1";
+}
+
+function configureStructuralThreshold() {
+  state.structuralDegreeById = new Map(state.notes.map((note) => [note.note_id, 0]));
+  for (const edge of state.edges.filter((edge) => edge.type === "structural")) {
+    state.structuralDegreeById.set(edge.source, (state.structuralDegreeById.get(edge.source) ?? 0) + 1);
+    state.structuralDegreeById.set(edge.target, (state.structuralDegreeById.get(edge.target) ?? 0) + 1);
   }
+  const max = Math.max(0, ...state.structuralDegreeById.values());
+  const hasStructuralLinks = max > 0;
+  state.minStructuralDegree = 1;
+  el.structuralThreshold.min = "1";
+  el.structuralThreshold.max = String(Math.max(1, max));
+  el.structuralThreshold.value = "1";
+  el.structuralThresholdValue.textContent = hasStructuralLinks ? "≥ 1" : "No structural links";
+  updateStructuralThresholdInteractivity(hasStructuralLinks);
+}
 
-  function buildClusterMatrixData(selectedId) {
-    const clusters = Array.from(state.clusterCounts.keys()).sort(
-      (a, b) => a - b,
-    );
-    if (clusters.length === 0) {
-      return {
-        mode: "cluster_matrix",
-        subtitle: "Cluster matrix unavailable (missing cluster labels)",
-        clusters: [],
-        matrix: new Map(),
-        maxCount: 0,
-        maxMean: 0,
-        scoreValues: [],
-        scoreDomain: null,
-        thresholdRaw: 0,
-      };
-    }
+function updateStructuralThresholdInteractivity(hasStructural = state.edges.some((edge) => edge.type === "structural")) {
+  const disabled = !hasStructural || state.edgeType === "semantic";
+  el.structuralThreshold.disabled = disabled;
+  el.structuralThresholdValue.style.opacity = disabled ? ".45" : "1";
+}
 
-    const scoreValues = [];
-    const matrix = new Map();
-    const edgeSet = new Set();
+function dateInputValue(timestamp) {
+  if (!timestamp) return "";
+  const date = new Date(timestamp * 1000);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
 
-    const addClusterEdge = (srcId, dstId, score, relationKind) => {
-      if (!Number.isInteger(srcId) || !Number.isInteger(dstId)) {
-        return;
-      }
-      if (!Number.isFinite(score)) {
-        return;
-      }
-      const a = Math.min(srcId, dstId);
-      const b = Math.max(srcId, dstId);
-      const edgeKey = `${a}:${b}:${relationKind}`;
-      if (edgeSet.has(edgeKey)) {
-        return;
-      }
-      edgeSet.add(edgeKey);
-
-      const ca = state.clusterById.get(srcId);
-      const cb = state.clusterById.get(dstId);
-      if (!Number.isInteger(ca) || !Number.isInteger(cb)) {
-        return;
-      }
-      scoreValues.push(score);
-      const c0 = Math.min(ca, cb);
-      const c1 = Math.max(ca, cb);
-      const key = `${c0}:${c1}`;
-      if (!matrix.has(key)) {
-        matrix.set(key, {
-          count: 0,
-          sum: 0,
-          max: 0,
-          sampleSrc: srcId,
-          sampleDst: dstId,
-        });
-      }
-      const stat = matrix.get(key);
-      stat.count += 1;
-      stat.sum += score;
-      if (score > stat.max) {
-        stat.max = score;
-      }
-    };
-
-    for (const note of state.graph?.notes || []) {
-      const srcId = note?.note_id;
-      if (!Number.isInteger(srcId) || !Array.isArray(note.related_note_links)) {
-        continue;
-      }
-      for (const entry of note.related_note_links) {
-        if (
-          Array.isArray(entry) &&
-          entry.length === 2 &&
-          Number.isInteger(entry[0]) &&
-          Number.isFinite(entry[1])
-        ) {
-          addClusterEdge(srcId, entry[0], entry[1], "related");
-        }
-      }
-    }
-
-    if (
-      els.showLongRange.checked &&
-      Array.isArray(state.graph?.long_range_links)
-    ) {
-      const topK = Math.max(1, state.graphControls.longRangeTopK);
-      const longLinks = state.graph.long_range_links
-        .filter(
-          (entry) =>
-            Array.isArray(entry) &&
-            entry.length === 3 &&
-            Number.isInteger(entry[0]) &&
-            Number.isInteger(entry[1]) &&
-            Number.isFinite(entry[2]),
-        )
-        .sort((a, b) => b[2] - a[2])
-        .slice(0, topK);
-      for (const [a, b, score] of longLinks) {
-        addClusterEdge(a, b, score, "long");
-      }
-    }
-
-    const scoreDomain = computeScoreDomain(scoreValues);
-    const thresholdRaw = normalizedToRawScore(
-      state.graphControls.minScore,
-      scoreDomain,
-    );
-
-    let maxCount = 0;
-    let maxMean = 0;
-    const visibleCounts = [];
-    const visibleMeans = [];
-    for (const stat of matrix.values()) {
-      if (!stat || stat.max < thresholdRaw) {
-        continue;
-      }
-      if (stat.count > maxCount) {
-        maxCount = stat.count;
-      }
-      const mean = stat.sum / Math.max(1, stat.count);
-      visibleCounts.push(stat.count);
-      visibleMeans.push(mean);
-      if (mean > maxMean) {
-        maxMean = mean;
-      }
-    }
-    const countDistribution = computeDistribution(visibleCounts, { log: true });
-    const meanDistribution = computeDistribution(visibleMeans, { log: false });
-
-    const selectedCluster = Number.isInteger(selectedId)
-      ? state.clusterById.get(selectedId)
-      : null;
-    const suffix = els.showLongRange.checked
-      ? ` (related + long-range top ${state.graphControls.longRangeTopK})`
-      : " (related only)";
-    return {
-      mode: "cluster_matrix",
-      subtitle: `Cluster-to-cluster matrix${suffix}`,
-      clusters,
-      matrix,
-      maxCount,
-      maxMean,
-      countDistribution,
-      meanDistribution,
-      selectedCluster,
-      scoreValues,
-      scoreDomain,
-      thresholdRaw,
-    };
+function configureTimeFilter() {
+  const times = state.notes.map(timestampOf).filter(Boolean);
+  const min = Math.min(...times);
+  const max = Math.max(...times);
+  if (!times.length) {
+    state.timeStart = 0;
+    state.timeEnd = Number.POSITIVE_INFINITY;
+    el.timeStart.disabled = true;
+    el.timeEnd.disabled = true;
+    el.timeWindowValue.textContent = "No timestamps";
+    return;
   }
+  const minValue = dateInputValue(min);
+  const maxValue = dateInputValue(max);
+  el.timeStart.disabled = false;
+  el.timeEnd.disabled = false;
+  el.timeStart.min = minValue;
+  el.timeStart.max = maxValue;
+  el.timeEnd.min = minValue;
+  el.timeEnd.max = maxValue;
+  el.timeStart.value = "";
+  el.timeEnd.value = "";
+  state.timeStart = 0;
+  state.timeEnd = Number.POSITIVE_INFINITY;
+  el.timeWindowValue.textContent = "All history";
+  el.timePresets.querySelectorAll("button").forEach((button) => button.classList.toggle("is-active", button.dataset.days === "0"));
+}
 
-  function renderClusterMatrix(data) {
-    els.graphRoot.innerHTML = "";
+function applyTimeWindow(startValue, endValue, label) {
+  state.timeStart = startValue ? new Date(`${startValue}T00:00:00`).getTime() / 1000 : 0;
+  state.timeEnd = endValue ? new Date(`${endValue}T23:59:59`).getTime() / 1000 : Number.POSITIVE_INFINITY;
+  el.timeWindowValue.textContent = label;
+  applyFilters();
+}
 
-    if (!Array.isArray(data.clusters) || data.clusters.length === 0) {
-      renderGraphEmpty("Cluster labels missing; cannot build cluster matrix.");
-      return;
-    }
+function applyFilters() {
+  const terms = state.query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+  state.filtered = state.notes.filter((note) => {
+    if (state.cluster !== null && clusterOf(note) !== state.cluster) return false;
+    const timestamp = timestampOf(note);
+    if (timestamp && (timestamp < state.timeStart || timestamp > state.timeEnd)) return false;
+    if (!timestamp && (state.timeStart > 0 || Number.isFinite(state.timeEnd))) return false;
+    if (!terms.length) return true;
+    const haystack = [note.raw_content, note.symbol_id, note.file_path, note.ast_node_type, ...(note.source_commit_ids ?? [])].filter(Boolean).join(" ").toLocaleLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
+  renderNoteList();
+  if (state.view === "chronicle") renderTimeline();
+  drawGraph();
+}
 
-    const wrap = document.createElement("div");
-    wrap.className = "cluster-matrix-wrap";
+function renderMetrics() {
+  const symbols = new Set(state.notes.map((note) => note.symbol_id).filter(Boolean));
+  const structural = state.edges.filter((edge) => edge.type === "structural").length;
+  const times = state.notes.map(timestampOf).filter(Boolean).sort((a, b) => a - b);
+  el.metricNodes.textContent = formatNumber(state.notes.length);
+  el.metricSymbols.textContent = formatNumber(symbols.size);
+  el.metricStructural.textContent = formatNumber(structural);
+  el.metricLongRange.textContent = formatNumber(state.data.long_range_links?.length ?? 0);
+  el.metricRange.textContent = times.length ? `${formatDate(times[0], "short")} ${new Date(times[0] * 1000).getFullYear()} — ${formatDate(times.at(-1), "short")} ${new Date(times.at(-1) * 1000).getFullYear()}` : "No timestamps";
+}
 
-    const table = document.createElement("table");
-    table.className = "cluster-matrix";
+function renderClusters() {
+  const counts = new Map();
+  for (const note of state.notes) counts.set(clusterOf(note), (counts.get(clusterOf(note)) ?? 0) + 1);
+  el.clusterList.innerHTML = [...counts.entries()].sort(([a], [b]) => a - b).map(([cluster, count]) => `
+    <button class="cluster-button${state.cluster === cluster ? " is-active" : ""}" style="--cluster-color:${COLORS[cluster % COLORS.length]}" data-cluster="${cluster}" type="button">
+      <i></i><span>Cluster ${String(cluster + 1).padStart(2, "0")}</span><b>${count}</b>
+    </button>`).join("");
+}
 
-    const thead = document.createElement("thead");
-    const headRow = document.createElement("tr");
-    const corner = document.createElement("th");
-    corner.className = "cluster-matrix-corner mono";
-    corner.textContent = "C↔C";
-    headRow.appendChild(corner);
-    for (const cid of data.clusters) {
-      const th = document.createElement("th");
-      th.className = "cluster-matrix-header mono";
-      th.textContent = `C${cid}`;
-      if (cid === data.selectedCluster) {
-        th.classList.add("selected");
-      }
-      headRow.appendChild(th);
-    }
-    thead.appendChild(headRow);
-    table.appendChild(thead);
+function renderNoteList() {
+  const notes = [...state.filtered].sort((a, b) => (timestampOf(b) - timestampOf(a)) * (state.newestFirst ? 1 : -1));
+  let items;
+  if (state.browseMode === "symbols") items = symbolItems(notes);
+  else if (state.browseMode === "hotspots") items = hotspotItems(notes);
+  else items = eventItems(notes);
+  const visible = items.slice(0, 180);
+  el.resultCount.textContent = formatNumber(items.length);
+  el.noteList.innerHTML = visible.length ? visible.map((item) => `
+    <button class="note-row${state.selectedId === item.note.note_id ? " is-active" : ""}" style="--cluster-color:${colorOf(item.note)}" data-note-id="${item.note.note_id}" type="button">
+      <div class="note-row-content">
+        <h3>${escapeHtml(item.title)}</h3>
+        <span class="note-meta"><time>${escapeHtml(item.meta)}</time><span>${escapeHtml(item.detail)}</span></span>
+      </div>
+    </button>`).join("") : `<div class="list-empty">No ${state.browseMode} match this combination.<br>Clear a filter or try a broader term.</div>`;
+}
 
-    const tbody = document.createElement("tbody");
-    for (const r of data.clusters) {
-      const tr = document.createElement("tr");
-      const rowHead = document.createElement("th");
-      rowHead.className = "cluster-matrix-header mono";
-      rowHead.textContent = `C${r}`;
-      if (r === data.selectedCluster) {
-        rowHead.classList.add("selected");
-      }
-      tr.appendChild(rowHead);
-
-      for (const c of data.clusters) {
-        const key = `${Math.min(r, c)}:${Math.max(r, c)}`;
-        const stat = data.matrix.get(key);
-        const td = document.createElement("td");
-        td.className = "cluster-matrix-cell";
-        if (!stat || stat.max < data.thresholdRaw) {
-          td.classList.add("empty");
-          td.textContent = "·";
-          tr.appendChild(td);
-          continue;
-        }
-        const mean = stat.sum / Math.max(1, stat.count);
-        const countNorm = Math.pow(
-          normalizeByDistribution(stat.count, data.countDistribution),
-          0.8,
-        );
-        const meanNorm = Math.pow(
-          normalizeByDistribution(mean, data.meanDistribution),
-          0.8,
-        );
-        const strength = Math.max(
-          0,
-          Math.min(1, 0.65 * meanNorm + 0.35 * countNorm),
-        );
-        td.style.background = `linear-gradient(135deg, rgba(28,255,216,${
-          0.1 + 0.64 * meanNorm
-        }), rgba(98,168,255,${0.1 + 0.56 * countNorm}))`;
-        td.style.borderColor = `rgba(176, 102, 255, ${0.24 + 0.42 * strength})`;
-        td.style.boxShadow = `inset 0 0 ${Math.round(4 + 10 * strength)}px rgba(160,120,255,${
-          0.08 + 0.2 * strength
-        })`;
-        td.innerHTML = `<span class="mono">${stat.count}</span><small>${mean.toFixed(3)}</small>`;
-        td.title = `Clusters C${r} ↔ C${c}\nlinks=${stat.count}\nmean=${mean.toFixed(
-          4,
-        )}\nmax=${stat.max.toFixed(4)}\nintensity=${strength.toFixed(3)}`;
-        td.addEventListener("click", () => {
-          const candidate = Number.isInteger(stat.sampleSrc)
-            ? stat.sampleSrc
-            : stat.sampleDst;
-          if (Number.isInteger(candidate) && state.notesById.has(candidate)) {
-            state.selectedNoteId = candidate;
-            renderList();
-            renderEditor();
-          }
-        });
-        tr.appendChild(td);
-      }
-      tbody.appendChild(tr);
-    }
-    table.appendChild(tbody);
-
-    const legend = document.createElement("div");
-    legend.className = "cluster-matrix-meta muted";
-    legend.textContent =
-      `Cells show link count and mean similarity. ` +
-      `Intensity uses normalized count/log-count and mean quantiles. ` +
-      `Threshold >= ${data.thresholdRaw.toFixed(3)}.`;
-
-    wrap.appendChild(table);
-    wrap.appendChild(legend);
-    els.graphRoot.appendChild(wrap);
+function eventItems(notes) {
+  const groups = new Map();
+  for (const note of notes) {
+    const commit = note.source_commit_ids?.find(Boolean);
+    const key = commit ?? `${timestampOf(note)}:${note.raw_content}`;
+    if (!groups.has(key)) groups.set(key, { note, title: note.raw_content, meta: formatDate(timestampOf(note), "short"), detail: `${groups.size + 1} event`, count: 0 });
+    groups.get(key).count += 1;
   }
+  return [...groups.values()].map((item) => ({ ...item, detail: `${item.count} ${item.count === 1 ? "note" : "notes"}` })).sort((a, b) => timestampOf(b.note) - timestampOf(a.note));
+}
 
-  function clusterColor(clusterId) {
-    const cid = Number.parseInt(clusterId, 10);
-    if (!Number.isInteger(cid) || cid < 0) {
-      return "#7b8cff";
-    }
-    return CLUSTER_PALETTE[cid % CLUSTER_PALETTE.length];
+function symbolItems(notes) {
+  const groups = new Map();
+  for (const note of notes) {
+    const key = note.symbol_id ?? note.file_path ?? `note:${note.note_id}`;
+    if (!groups.has(key)) groups.set(key, { note, title: key, meta: formatDate(timestampOf(note), "short"), detail: "", count: 0, degree: state.structuralDegreeById.get(note.note_id) ?? 0 });
+    const item = groups.get(key);
+    item.count += 1;
+    item.degree = Math.max(item.degree, state.structuralDegreeById.get(note.note_id) ?? 0);
+    if (timestampOf(note) > timestampOf(item.note)) item.note = note;
   }
+  return [...groups.values()].map((item) => ({ ...item, detail: `${item.count} ${item.count === 1 ? "event" : "events"} · ${basename(item.note.file_path)}` })).sort((a, b) => timestampOf(b.note) - timestampOf(a.note));
+}
 
-  function buildLegendHtml(mode) {
-    if (mode === "cluster_map") {
-      const clusterRows = Array.from(state.clusterCounts.entries())
-        .sort((a, b) => a[0] - b[0])
-        .slice(0, 8)
-        .map(
-          ([clusterId, count]) =>
-            `<div class="legend-row"><span class="legend-swatch" style="--swatch:${clusterColor(clusterId)}"></span>Cluster ${clusterId} (${count})</div>`,
-        )
-        .join("");
-      return `
-        <div class="legend-title">Legend</div>
-        <div class="legend-row"><span class="legend-swatch" style="--swatch:#ff71cf"></span>Selected node</div>
-        <div class="legend-row"><span class="legend-swatch line" style="--swatch:#1cffd8"></span>Related links</div>
-        <div class="legend-row"><span class="legend-swatch line" style="--swatch:#ff71cf"></span>Long-range links</div>
-        ${clusterRows}
-      `;
-    }
-    if (mode === "long_range") {
-      return `
-        <div class="legend-title">Legend</div>
-        <div class="legend-row"><span class="legend-swatch" style="--swatch:#ff71cf"></span>Selected node</div>
-        <div class="legend-row"><span class="legend-swatch" style="--swatch:#ffb347"></span>Long-range node</div>
-        <div class="legend-row"><span class="legend-swatch line" style="--swatch:#ff71cf"></span>Long-range link</div>
-      `;
-    }
-    return `
-      <div class="legend-title">Legend</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#ff71cf"></span>Selected node</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#1cffd8"></span>Outbound / related out</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#62a8ff"></span>Inbound / related in</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#b066ff"></span>Expanded node</div>
-      <div class="legend-row"><span class="legend-swatch" style="--swatch:#ffb347"></span>Long-range node</div>
-      <div class="legend-row"><span class="legend-swatch line" style="--swatch:#ff71cf"></span>Long-range link</div>
-    `;
+function hotspotItems(notes) {
+  return symbolItems(notes).sort((a, b) => {
+    const aScore = (state.structuralDegreeById.get(a.note.note_id) ?? 0) * 10 + a.count;
+    const bScore = (state.structuralDegreeById.get(b.note.note_id) ?? 0) * 10 + b.count;
+    return bScore - aScore;
+  }).map((item) => ({ ...item, meta: `degree ${state.structuralDegreeById.get(item.note.note_id) ?? 0}`, detail: `${item.count} ${item.count === 1 ? "change" : "changes"}` }));
+}
+
+function renderTimeline() {
+  const groups = new Map();
+  const sorted = [...state.filtered].sort((a, b) => timestampOf(b) - timestampOf(a)).slice(0, 300);
+  for (const note of sorted) {
+    const date = new Date(timestampOf(note) * 1000);
+    const key = timestampOf(note) ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}` : "unknown";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(note);
   }
+  el.timeline.innerHTML = [...groups.entries()].map(([key, notes]) => {
+    const label = key === "unknown" ? "Unknown" : new Intl.DateTimeFormat("en", { month: "short", year: "numeric" }).format(new Date(`${key}-01T00:00:00`));
+    return `<section class="timeline-group"><time class="timeline-date">${label}</time><div class="timeline-items">${notes.map((note) => `
+      <button class="timeline-item" data-note-id="${note.note_id}" style="--cluster-color:${colorOf(note)}" type="button">
+        <strong>${escapeHtml(note.raw_content)}</strong><small>${escapeHtml(note.symbol_id ?? basename(note.file_path))}</small>
+      </button>`).join("")}</div></section>`;
+  }).join("") || `<div class="list-empty">No memories to place on the chronicle.</div>`;
+}
 
-  function renderScoreHistogram(values, thresholdRaw, scoreDomain) {
-    if (!els.scoreHistogram || !els.scoreMeta) {
-      return;
-    }
-    const scores = Array.isArray(values)
-      ? values.filter((v) => Number.isFinite(v))
-      : [];
-    if (scores.length === 0) {
-      els.scoreHistogram.innerHTML = "";
-      els.scoreMeta.textContent = "No edges";
-      return;
-    }
-    const domain = scoreDomain || computeScoreDomain(scores);
-    if (!domain) {
-      els.scoreHistogram.innerHTML = "";
-      els.scoreMeta.textContent = "No edges";
-      return;
-    }
-    const bins = new Array(20).fill(0);
-    const span = Math.max(1e-9, domain.max - domain.min);
-    const normThreshold = Math.max(
-      0,
-      Math.min(1, (thresholdRaw - domain.min) / span),
-    );
-    for (const score of scores) {
-      const normalized = Math.max(0, Math.min(1, (score - domain.min) / span));
-      const idx = Math.min(19, Math.floor(normalized * 20));
-      bins[idx] += 1;
-    }
-    const maxBin = Math.max(...bins, 1);
-    els.scoreHistogram.innerHTML = bins
-      .map((count, idx) => {
-        const x = idx / 20;
-        const h = Math.max(8, Math.round((count / maxBin) * 100));
-        const active = x + 1 / 20 >= normThreshold ? " active" : "";
-        return `<span class="score-bar${active}" style="height:${h}%"></span>`;
-      })
-      .join("");
-    const above = scores.filter((s) => s >= thresholdRaw).length;
-    els.scoreMeta.textContent =
-      `${scores.length} edges, ${above} >= ${thresholdRaw.toFixed(3)} ` +
-      `(range ${domain.min.toFixed(3)}-${domain.max.toFixed(3)})`;
-  }
+function connectionsFor(note) {
+  return state.edges.filter((edge) => edge.source === note.note_id || edge.target === note.note_id).map((edge) => ({ ...edge, otherId: edge.source === note.note_id ? edge.target : edge.source })).sort((a, b) => (a.type === b.type ? b.weight - a.weight : a.type === "semantic" ? -1 : 1));
+}
 
-  function buildNeighborhoodData(selectedId) {
-    const nodes = [];
-    const links = [];
-    const nodeKinds = new Map([[selectedId, "selected"]]);
-    const depth = Math.max(1, Math.min(3, state.graphControls.depth));
-    const relatedLimit = Math.max(1, state.graphControls.relatedLimit);
-    const scoreValues = [];
-    const selectedNote = state.notesById.get(selectedId);
-    if (selectedNote && Array.isArray(selectedNote.related_note_links)) {
-      for (const entry of selectedNote.related_note_links.slice(
-        0,
-        relatedLimit,
-      )) {
-        if (
-          Array.isArray(entry) &&
-          entry.length === 2 &&
-          Number.isFinite(entry[1])
-        ) {
-          scoreValues.push(entry[1]);
-        }
-      }
-    }
-    const selectedInbound = Array.from(
-      state.reverseRelated.get(selectedId)?.entries() || [],
-    ).slice(0, relatedLimit);
-    for (const entry of selectedInbound) {
-      if (
-        Array.isArray(entry) &&
-        entry.length === 2 &&
-        Number.isFinite(entry[1])
-      ) {
-        scoreValues.push(entry[1]);
-      }
-    }
-    const selectedLongRange = (state.longRangeById.get(selectedId) || []).slice(
-      0,
-      Math.min(relatedLimit, state.graphControls.longRangeTopK, 50),
-    );
-    for (const entry of selectedLongRange) {
-      if (entry && Number.isFinite(entry.score)) {
-        scoreValues.push(entry.score);
-      }
-    }
-    const initialDomain = computeScoreDomain(scoreValues);
-    const thresholdRaw = normalizedToRawScore(
-      state.graphControls.minScore,
-      initialDomain,
-    );
-    const visitedDepth = new Map([[selectedId, 0]]);
-    const queue = [{ id: selectedId, depth: 0 }];
-    const edgeSet = new Set();
+function renderInspector() {
+  const note = state.noteById.get(state.selectedId);
+  el.emptyInspector.hidden = Boolean(note);
+  el.noteInspector.hidden = !note;
+  el.inspector.classList.toggle("is-open", Boolean(note));
+  if (!note) return;
+  const cluster = clusterOf(note);
+  const connections = connectionsFor(note);
+  el.detailId.textContent = `#${note.note_id}`;
+  el.detailContent.textContent = note.raw_content;
+  el.detailDate.textContent = formatDate(timestampOf(note));
+  el.detailCluster.innerHTML = `<span style="color:${COLORS[cluster % COLORS.length]}">●</span> Cluster ${String(cluster + 1).padStart(2, "0")}`;
+  el.detailFile.textContent = note.file_path ?? "Not recorded";
+  el.detailSymbol.textContent = note.symbol_id ?? "Not recorded";
+  el.detailCommit.textContent = note.source_commit_ids?.find(Boolean)?.slice(0, 12) ?? "Not recorded";
+  el.detailChips.innerHTML = [note.ast_node_type && `<span class="detail-chip accent">${escapeHtml(note.ast_node_type)}</span>`, note.symbol_id && `<span class="detail-chip">symbol</span>`, `${note.embedding?.length ?? 0} dimensions`].filter(Boolean).map((chip) => typeof chip === "string" && chip.startsWith("<") ? chip : `<span class="detail-chip">${chip}</span>`).join("");
+  el.connectionCount.textContent = connections.length;
+  el.connectionList.innerHTML = connections.slice(0, 30).map((connection) => {
+    const other = state.noteById.get(connection.otherId);
+    return `<button class="connection-row" data-note-id="${connection.otherId}" style="--connection-color:${colorOf(other)}" type="button"><i></i><span>${escapeHtml(other.raw_content)}</span><small>${connection.type}${connection.type === "semantic" ? ` ${connection.weight.toFixed(2)}` : ""}</small></button>`;
+  }).join("") || `<div class="list-empty">This memory has no recorded connections.</div>`;
+}
 
-    const pushNode = (id, kind) => {
-      if (!state.notesById.has(id)) {
-        return;
-      }
-      if (!nodeKinds.has(id)) {
-        nodeKinds.set(id, kind);
-        return;
-      }
-      const rank = {
-        selected: 4,
-        outbound: 3,
-        inbound: 3,
-        expanded: 2,
-        long_range: 1,
-      };
-      if (rank[kind] > (rank[nodeKinds.get(id)] || 0)) {
-        nodeKinds.set(id, kind);
-      }
-    };
+function selectNote(id) {
+  if (!state.noteById.has(id)) return;
+  state.selectedId = id;
+  if (state.graphMode === "neighborhood") el.stageMessage.hidden = true;
+  renderInspector();
+  el.inspector.scrollTop = 0;
+  renderNoteList();
+  drawGraph();
+}
 
-    while (queue.length > 0) {
+function selectClickedNote(event) {
+  const target = event.target instanceof Element ? event.target.closest("[data-note-id]") : null;
+  if (target) selectNote(Number(target.dataset.noteId));
+}
+
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.max(1, Math.round(rect.width * dpr));
+  canvas.height = Math.max(1, Math.round(rect.height * dpr));
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawGraph();
+}
+
+function screenPosition(node) {
+  const rect = canvas.getBoundingClientRect();
+  const { x, y, scale } = state.graph.transform;
+  return { x: rect.width / 2 + x + node.x * scale, y: rect.height / 2 + y + node.y * scale };
+}
+
+function projectGraph() {
+  const filtered = new Set(state.filtered.map((note) => note.note_id));
+  let edges = state.edges;
+  if (state.graphMode === "bridges") edges = edges.filter((edge) => edge.longRange);
+  if (state.graphMode === "neighborhood") {
+    if (state.selectedId === null) return { visible: new Set(), edges: [] };
+    const distance = new Map([[state.selectedId, 0]]);
+    const queue = [state.selectedId];
+    while (queue.length) {
       const current = queue.shift();
-      if (!current || current.depth >= depth) {
-        continue;
-      }
-      const srcId = current.id;
-      const note = state.notesById.get(srcId);
-      if (!note) {
-        continue;
-      }
-
-      const outbound = Array.isArray(note.related_note_links)
-        ? note.related_note_links
-            .filter(
-              (entry) =>
-                Array.isArray(entry) &&
-                entry.length === 2 &&
-                Number.isInteger(entry[0]) &&
-                Number.isFinite(entry[1]),
-            )
-            .sort((a, b) => b[1] - a[1])
-        : [];
-      const inbound = Array.from(
-        state.reverseRelated.get(srcId)?.entries() || [],
-      )
-        .filter(
-          (entry) =>
-            Array.isArray(entry) &&
-            entry.length === 2 &&
-            Number.isInteger(entry[0]) &&
-            Number.isFinite(entry[1]),
-        )
-        .sort((a, b) => b[1] - a[1] || a[0] - b[0]);
-      const budget = Math.max(0, relatedLimit);
-      let used = 0;
-
-      for (const [, score] of outbound.slice(0, budget)) {
-        scoreValues.push(score);
-      }
-      for (const [, score] of inbound.slice(0, budget)) {
-        scoreValues.push(score);
-      }
-      for (const [dstId, score] of outbound) {
-        if (used >= budget) {
-          break;
-        }
-        if (!state.notesById.has(dstId)) {
-          continue;
-        }
-        used += 1;
-        if (score < thresholdRaw) {
-          continue;
-        }
-        pushNode(dstId, current.depth === 0 ? "outbound" : "expanded");
-        const edgeKey = `${srcId}->${dstId}:out`;
-        if (!edgeSet.has(edgeKey)) {
-          edgeSet.add(edgeKey);
-          links.push({
-            source: srcId,
-            target: dstId,
-            kind: "related_out",
-            score,
-          });
-        }
-        const nextDepth = current.depth + 1;
-        if (
-          !visitedDepth.has(dstId) ||
-          nextDepth < (visitedDepth.get(dstId) ?? Number.MAX_SAFE_INTEGER)
-        ) {
-          visitedDepth.set(dstId, nextDepth);
-          queue.push({ id: dstId, depth: nextDepth });
-        }
-      }
-
-      for (const [dstId, score] of inbound) {
-        if (used >= budget) {
-          break;
-        }
-        if (!state.notesById.has(dstId)) {
-          continue;
-        }
-        used += 1;
-        if (score < thresholdRaw) {
-          continue;
-        }
-        pushNode(dstId, current.depth === 0 ? "inbound" : "expanded");
-        const edgeKey = `${dstId}->${srcId}:in`;
-        if (!edgeSet.has(edgeKey)) {
-          edgeSet.add(edgeKey);
-          links.push({
-            source: dstId,
-            target: srcId,
-            kind: "related_in",
-            score,
-          });
-        }
-        const nextDepth = current.depth + 1;
-        if (
-          !visitedDepth.has(dstId) ||
-          nextDepth < (visitedDepth.get(dstId) ?? Number.MAX_SAFE_INTEGER)
-        ) {
-          visitedDepth.set(dstId, nextDepth);
-          queue.push({ id: dstId, depth: nextDepth });
-        }
+      if (distance.get(current) >= state.neighborhoodDepth) continue;
+      for (const edge of state.edges) {
+        if (edge.source !== current && edge.target !== current) continue;
+        const other = edge.source === current ? edge.target : edge.source;
+        if (filtered.has(other) && !distance.has(other)) { distance.set(other, distance.get(current) + 1); queue.push(other); }
       }
     }
-
-    if (els.showLongRange.checked) {
-      const longRange = (state.longRangeById.get(selectedId) || [])
-        .filter((entry) => Number.isFinite(entry.score))
-        .sort((a, b) => b.score - a.score);
-      const longRangeLimit = Math.min(
-        relatedLimit,
-        50,
-        state.graphControls.longRangeTopK,
-      );
-      for (const entry of longRange.slice(0, longRangeLimit)) {
-        scoreValues.push(entry.score);
-      }
-      for (const entry of longRange.slice(0, longRangeLimit)) {
-        if (entry.score < thresholdRaw) {
-          continue;
-        }
-        pushNode(entry.other, "long_range");
-        links.push({
-          source: selectedId,
-          target: entry.other,
-          kind: "long_range",
-          score: Number.isFinite(entry.score) ? entry.score : 0,
-        });
-      }
-    }
-
-    const allIds = Array.from(nodeKinds.keys()).slice(0, GRAPH_NODE_CAP);
-    const allowed = new Set(allIds);
-
-    for (const id of allIds) {
-      nodes.push({ id, kind: nodeKinds.get(id) });
-    }
-
-    const filteredLinks = links.filter(
-      (l) => allowed.has(l.source) && allowed.has(l.target),
-    );
-
-    const scoreDomain = computeScoreDomain(scoreValues);
-    const thresholdRawFinal = normalizedToRawScore(
-      state.graphControls.minScore,
-      scoreDomain,
-    );
-    return {
-      nodes,
-      links: filteredLinks,
-      scoreValues,
-      scoreDomain,
-      thresholdRaw: thresholdRawFinal,
-    };
+    const visible = new Set(distance.keys());
+    edges = edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target));
+    const budget = new Map();
+    const budgetEdges = [...edges].sort((left, right) => right.weight - left.weight).filter((edge) => {
+      const sourceCount = budget.get(edge.source) ?? 0;
+      const targetCount = budget.get(edge.target) ?? 0;
+      if (sourceCount >= state.neighborhoodBudget || targetCount >= state.neighborhoodBudget) return false;
+      budget.set(edge.source, sourceCount + 1);
+      budget.set(edge.target, targetCount + 1);
+      return true;
+    });
+    return { visible, edges: budgetEdges };
   }
-
-  function renderGraphEmpty(message) {
-    if (els.graphSubtitle) {
-      els.graphSubtitle.textContent = "No graph data";
-    }
-    renderScoreHistogram([], 0, null);
-    els.graphRoot.innerHTML = `<div class="graph-empty">${message}</div>`;
+  if (state.graphMode === "bridges") {
+    const visible = new Set();
+    edges.forEach((edge) => { if (filtered.has(edge.source) && filtered.has(edge.target)) { visible.add(edge.source); visible.add(edge.target); } });
+    return { visible, edges: edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target)) };
   }
+  return { visible: filtered, edges: edges.filter((edge) => filtered.has(edge.source) && filtered.has(edge.target)) };
+}
 
-  function buildNodeHoverCardHtml(note, nodeRef, isPinned) {
-    if (!note) {
-      return `<div class="hover-title">#${nodeRef.id}</div><p class="hover-snippet">Missing note payload.</p>`;
-    }
-    const relatedCount = Array.isArray(note.related_note_links)
-      ? note.related_note_links.length
-      : 0;
-    const sourceCommits = Array.isArray(note.source_commit_ids)
-      ? note.source_commit_ids
-          .filter((id) => typeof id === "string" && id.trim().length > 0)
-          .map((id) => id.trim().slice(0, 8))
-      : [];
-    const sourceTimes = Array.isArray(note.source_timestamps)
-      ? note.source_timestamps
-          .filter((ts) => Number.isFinite(ts))
-          .map((ts) => formatTimestamp(ts))
-      : [];
-    const kind = nodeRef.kind || "node";
-    const commitText =
-      sourceCommits.length > 0 ? summarizeList(sourceCommits, 3) : "none";
-    const timeText =
-      sourceTimes.length > 0 ? summarizeList(sourceTimes, 2) : "none";
-    const symText = note.symbol_id ? summarize(note.symbol_id, 32) : "none";
-    const fileText = note.file_path ? summarize(note.file_path, 32) : "none";
-    return `
-      <div class="hover-title">#${note.note_id} <span class="hover-kind">${kind}</span></div>
-      <p class="hover-snippet">${summarize(note.raw_content || "", 160)}</p>
-      <div class="hover-meta">
-        <span>file: ${fileText}</span>
-        <span>symbol: ${symText}</span>
-      </div>
-      <div class="hover-meta">
-        <span>related: ${relatedCount}</span>
-        <span>commits: ${commitText}</span>
-      </div>
-    `;
+function drawGraph() {
+  if (!state.data || state.view !== "atlas") return;
+  if (state.graphMode === "neighborhood" && state.selectedId === null) {
+    el.stageMessage.hidden = false;
+    el.stageMessage.querySelector("h2").textContent = "Select a memory";
+    el.stageMessage.querySelector("p").textContent = "Neighborhood mode begins with a selected node.";
+    el.stageMessage.querySelector(".loader-mark").style.animation = "none";
+    return;
   }
-
-  function hideHoverCard(card) {
-    card.classList.remove("visible");
+  if (state.graphMode === "bridges" && !state.edges.some((edge) => edge.longRange)) {
+    el.stageMessage.hidden = false;
+    el.stageMessage.querySelector("h2").textContent = "No persisted bridges";
+    el.stageMessage.querySelector("p").textContent = "This SMG does not contain long-range links.";
+    el.stageMessage.querySelector(".loader-mark").style.animation = "none";
+    return;
   }
-
-  function positionHoverCard(event, card, root) {
-    const rootRect = root.getBoundingClientRect();
-    const cardRect = card.getBoundingClientRect();
-    const margin = 14;
-    let x = event.clientX - rootRect.left + 12;
-    let y = event.clientY - rootRect.top + 12;
-
-    if (x + cardRect.width > rootRect.width - margin) {
-      x = event.clientX - rootRect.left - cardRect.width - 12;
-    }
-    if (x < margin) {
-      x = margin;
-    }
-    if (y + cardRect.height > rootRect.height - margin) {
-      y = event.clientY - rootRect.top - cardRect.height - 12;
-    }
-    if (y < margin) {
-      y = margin;
-    }
-
-    card.style.left = `${Math.round(x)}px`;
-    card.style.top = `${Math.round(y)}px`;
+  if (state.graphMode === "matrix") return drawMatrix();
+  const rect = canvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  const projection = projectGraph();
+  const visible = projection.visible;
+  const selectedConnections = state.selectedId === null ? new Set() : new Set(connectionsFor(state.noteById.get(state.selectedId)).map((edge) => edge.otherId));
+  const nodeMap = new Map(state.graph.nodes.map((node) => [node.id, node]));
+  const edgeTypes = state.graphMode === "bridges" ? new Set(["semantic"]) : state.edgeType === "all" ? new Set(["semantic", "structural"]) : new Set([state.edgeType]);
+  ctx.save();
+  for (const edge of projection.edges) {
+    const emphasized = state.selectedId !== null && (edge.source === state.selectedId || edge.target === state.selectedId);
+    if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
+    if (!emphasized && !edgeTypes.has(edge.type)) continue;
+    if (!emphasized && edge.type === "semantic" && edge.weight < state.minStrength) continue;
+    if (!emphasized && edge.type === "structural" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
+    const from = screenPosition(nodeMap.get(edge.source));
+    const to = screenPosition(nodeMap.get(edge.target));
+    const focusedType = state.edgeType === edge.type;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.strokeStyle = edge.type === "structural"
+      ? `rgba(82,191,192,${emphasized ? .86 : focusedType ? .52 : .14})`
+      : `rgba(237,163,74,${emphasized ? .86 : focusedType ? .42 : .16})`;
+    ctx.lineWidth = emphasized ? 1.6 : edge.type === "structural" ? focusedType ? 1.1 : .6 : focusedType ? Math.max(.65, edge.weight) : Math.max(.4, edge.weight);
+    ctx.setLineDash(edge.type === "structural" ? focusedType ? [5, 4] : [2, 4] : []);
+    ctx.stroke();
   }
-
-  function formatTimestamp(epochSeconds) {
-    const value = Number(epochSeconds);
-    if (!Number.isFinite(value) || value <= 0) {
-      return "n/a";
+  ctx.setLineDash([]);
+  const nodes = state.graph.nodes.filter((node) => visible.has(node.id));
+  for (const node of nodes) {
+    const point = screenPosition(node);
+    if (point.x < -30 || point.y < -30 || point.x > rect.width + 30 || point.y > rect.height + 30) continue;
+    const selected = node.id === state.selectedId;
+    const related = selectedConnections.has(node.id);
+    const radius = (selected ? 7 : Math.min(5, 2.2 + Math.sqrt(node.degree) * .35)) * Math.max(.75, Math.min(1.25, state.graph.transform.scale));
+    if (selected || related) {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius + (selected ? 7 : 4), 0, Math.PI * 2);
+      ctx.fillStyle = selected ? `${colorOf(node.note)}22` : "rgba(255,255,255,.035)";
+      ctx.fill();
     }
-    const dt = new Date(value * 1000);
-    if (Number.isNaN(dt.getTime())) {
-      return "n/a";
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = colorOf(node.note);
+    ctx.globalAlpha = state.selectedId === null || selected || related ? .96 : .24;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    const labelBudget = state.graph.transform.scale >= 1.7 ? Number.POSITIVE_INFINITY : state.graph.transform.scale >= 1.15 ? 80 : 28;
+    if (state.labels && (selected || node.labelRank < labelBudget)) {
+      const label = node.note.symbol_id?.split(":").at(-1) ?? node.note.raw_content;
+      ctx.font = selected ? "600 11px SFMono-Regular, monospace" : "10px SFMono-Regular, monospace";
+      ctx.fillStyle = selected ? "#f5f0e6" : "rgba(245,240,230,.72)";
+      ctx.fillText(label.slice(0, 34), point.x + radius + 6, point.y + 3);
     }
-    return dt.toISOString().slice(0, 10);
   }
+  ctx.restore();
+}
 
-  function summarizeList(values, maxItems) {
-    if (!Array.isArray(values) || values.length === 0) {
-      return "none";
-    }
-    const shown = values.slice(0, maxItems);
-    const extra = values.length - shown.length;
-    return extra > 0 ? `${shown.join(", ")} +${extra}` : shown.join(", ");
+function drawMatrix() {
+  const rect = canvas.getBoundingClientRect();
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  const clusters = [...new Set(state.filtered.map(clusterOf))].sort((a, b) => a - b);
+  if (!clusters.length) return;
+  const counts = new Map();
+  const visible = new Set(state.filtered.map((note) => note.note_id));
+  for (const edge of state.edges) {
+    if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
+    if (state.edgeType !== "all" && edge.type !== state.edgeType) continue;
+    if (edge.type === "semantic" && edge.weight < state.minStrength) continue;
+    if (edge.type === "structural" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
+    const source = clusterOf(state.noteById.get(edge.source));
+    const target = clusterOf(state.noteById.get(edge.target));
+    const key = `${source}:${target}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    if (source !== target) counts.set(`${target}:${source}`, (counts.get(`${target}:${source}`) ?? 0) + 1);
   }
+  const max = Math.max(1, ...counts.values());
+  const size = Math.min(rect.width, rect.height) * .62;
+  const cell = size / clusters.length;
+  const left = rect.width / 2 - size / 2;
+  const top = rect.height / 2 - size / 2 + 20;
+  ctx.font = "10px SFMono-Regular, monospace";
+  ctx.textAlign = "center";
+  clusters.forEach((cluster, index) => {
+    const x = left + index * cell + cell / 2;
+    ctx.fillStyle = COLORS[cluster % COLORS.length];
+    ctx.fillText(`C${String(cluster + 1).padStart(2, "0")}`, x, top - 14);
+    ctx.fillText(`C${String(cluster + 1).padStart(2, "0")}`, left - 25, top + index * cell + cell / 2 + 3);
+  });
+  clusters.forEach((source, row) => clusters.forEach((target, column) => {
+    const count = counts.get(`${source}:${target}`) ?? 0;
+    ctx.fillStyle = count ? `rgba(237,163,74,${.08 + .8 * count / max})` : "rgba(255,255,255,.025)";
+    ctx.fillRect(left + column * cell + 1, top + row * cell + 1, cell - 2, cell - 2);
+    if (count) { ctx.fillStyle = "#f5f0e6"; ctx.font = "10px SFMono-Regular, monospace"; ctx.fillText(String(count), left + column * cell + cell / 2, top + row * cell + cell / 2 + 3); }
+  }));
+  ctx.textAlign = "start";
+}
 
-  function summarize(text, max) {
-    const compact = String(text || "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (compact.length <= max) {
-      return compact;
-    }
-    return `${compact.slice(0, max - 1)}…`;
+function fitGraph() {
+  const rect = canvas.getBoundingClientRect();
+  if (!state.graph.nodes.length || !rect.width) return;
+  const xs = state.graph.nodes.map((node) => node.x);
+  const ys = state.graph.nodes.map((node) => node.y);
+  const width = Math.max(1, Math.max(...xs) - Math.min(...xs));
+  const height = Math.max(1, Math.max(...ys) - Math.min(...ys));
+  state.graph.transform = { x: 0, y: 20, scale: Math.min((rect.width - 110) / width, (rect.height - 135) / height, 1.05) };
+  drawGraph();
+}
+
+function setView(view) {
+  state.view = view;
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    const active = button.dataset.view === view;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  const atlas = view === "atlas";
+  canvas.hidden = !atlas;
+  el.graphKey.hidden = !atlas;
+  el.canvasActions.hidden = !atlas;
+  el.timeline.hidden = atlas;
+  el.viewTitle.textContent = atlas ? "Atlas" : "Chronicle";
+  el.stageEyebrow.textContent = atlas ? "Topology / all memory" : "Temporal record / newest first";
+  el.stageTitle.textContent = atlas ? "Relationship field" : "Project chronicle";
+  el.listLabel.textContent = atlas ? `${state.browseMode[0].toUpperCase()}${state.browseMode.slice(1)}` : "Visible memories";
+  if (atlas) requestAnimationFrame(() => { setGraphMode(state.graphMode); resizeCanvas(); }); else renderTimeline();
+}
+
+function setGraphMode(mode) {
+  state.graphMode = mode;
+  el.graphModes.querySelectorAll("button").forEach((button) => {
+    const active = button.dataset.graphMode === mode;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  el.modeControls.hidden = mode !== "neighborhood";
+  el.graphKey.hidden = mode === "matrix" || state.view !== "atlas";
+  el.canvasActions.hidden = mode === "matrix" || state.view !== "atlas";
+  if (mode === "matrix") {
+    el.stageEyebrow.textContent = "Analysis / cluster relationships";
+    el.stageTitle.textContent = "Cluster matrix";
+  } else if (mode === "neighborhood") {
+    el.stageEyebrow.textContent = "Topology / selected neighborhood";
+    el.stageTitle.textContent = "Local relationship field";
+  } else if (mode === "bridges") {
+    el.stageEyebrow.textContent = "Topology / persisted long-range links";
+    el.stageTitle.textContent = "Bridge network";
+  } else {
+    el.stageEyebrow.textContent = "Topology / all memory";
+    el.stageTitle.textContent = "Relationship field";
   }
+  if (mode === "neighborhood" && state.selectedId === null) {
+    el.stageMessage.hidden = false;
+    el.stageMessage.querySelector("h2").textContent = "Select a memory";
+    el.stageMessage.querySelector("p").textContent = "Neighborhood mode begins with a selected node.";
+    el.stageMessage.querySelector(".loader-mark").style.animation = "none";
+  } else if (mode === "bridges" && !state.edges.some((edge) => edge.longRange)) {
+    el.stageMessage.hidden = false;
+    el.stageMessage.querySelector("h2").textContent = "No persisted bridges";
+    el.stageMessage.querySelector("p").textContent = "This SMG does not contain long-range links.";
+    el.stageMessage.querySelector(".loader-mark").style.animation = "none";
+  } else {
+    el.stageMessage.hidden = true;
+  }
+  drawGraph();
+}
 
-  init();
-})();
+async function loadFile(file) {
+  try {
+    const data = JSON.parse(await file.text());
+    await normalizeGraph(data);
+    el.sourceName.textContent = `${file.name} · ${formatNumber(state.notes.length)} memories${state.semanticDerived ? " · local semantic map" : ""}`;
+    el.sourceStatus.classList.remove("is-error");
+    toast(`Mapped ${formatNumber(state.notes.length)} notes from ${file.name}`);
+  } catch (error) {
+    showError(error instanceof Error ? error.message : "Could not read this graph.");
+  }
+}
+
+function showLoadState() {
+  el.sourceName.textContent = "Awaiting SMG JSON";
+  el.stageMessage.hidden = false;
+  el.stageMessage.querySelector("h2").textContent = "Open an SMG graph";
+  el.stageMessage.querySelector("p").textContent = "Choose or drop an smg.json file to begin.";
+  el.stageMessage.querySelector(".loader-mark").style.animation = "none";
+}
+
+function showError(message) {
+  el.sourceStatus.classList.add("is-error");
+  toast(message, true);
+}
+
+let toastTimer;
+function toast(message, error = false) {
+  clearTimeout(toastTimer);
+  el.toast.textContent = message;
+  el.toast.style.borderColor = error ? "var(--danger)" : "var(--signal)";
+  el.toast.classList.add("is-visible");
+  toastTimer = setTimeout(() => el.toast.classList.remove("is-visible"), 2800);
+}
+
+el.loadButton.addEventListener("click", () => el.fileInput.click());
+el.fileInput.addEventListener("change", () => el.fileInput.files?.[0] && loadFile(el.fileInput.files[0]));
+el.focusSearch.addEventListener("click", () => el.searchInput.focus());
+el.searchInput.addEventListener("input", (event) => { state.query = event.target.value; applyFilters(); });
+el.clearFilters.addEventListener("click", () => { state.cluster = null; state.query = ""; el.searchInput.value = ""; renderClusters(); applyFilters(); });
+el.browseModes.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-browse]");
+  if (!button) return;
+  state.browseMode = button.dataset.browse;
+  el.browseModes.querySelectorAll("button").forEach((item) => {
+    const active = item === button;
+    item.classList.toggle("is-active", active);
+    item.setAttribute("aria-selected", String(active));
+  });
+  el.listLabel.textContent = `${state.browseMode[0].toUpperCase()}${state.browseMode.slice(1)}`;
+  renderNoteList();
+});
+el.timePresets.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-days]");
+  if (!button || !state.notes.length) return;
+  const days = Number(button.dataset.days);
+  const max = Math.max(...state.notes.map(timestampOf).filter(Boolean));
+  const end = dateInputValue(max);
+  const start = days ? dateInputValue(max - days * 86_400) : "";
+  el.timeStart.value = start;
+  el.timeEnd.value = days ? end : "";
+  el.timePresets.querySelectorAll("button").forEach((item) => item.classList.toggle("is-active", item === button));
+  applyTimeWindow(start, days ? end : "", days ? `Last ${days} days` : "All history");
+});
+const updateDateWindow = () => {
+  const start = el.timeStart.value;
+  const end = el.timeEnd.value;
+  if (start && end && start > end) return toast("The start date must be before the end date", true);
+  el.timePresets.querySelectorAll("button").forEach((button) => button.classList.remove("is-active"));
+  applyTimeWindow(start, end, start || end ? `${start || "Beginning"} → ${end || "Now"}` : "All history");
+};
+el.timeStart.addEventListener("change", updateDateWindow);
+el.timeEnd.addEventListener("change", updateDateWindow);
+el.clusterList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-cluster]");
+  if (!button) return;
+  const cluster = Number(button.dataset.cluster);
+  state.cluster = state.cluster === cluster ? null : cluster;
+  renderClusters();
+  applyFilters();
+});
+el.edgeFilter.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-edge]");
+  if (!button) return;
+  state.edgeType = button.dataset.edge;
+  el.edgeFilter.querySelectorAll("button").forEach((item) => item.classList.toggle("is-active", item === button));
+  updateSemanticThresholdInteractivity();
+  updateStructuralThresholdInteractivity();
+  drawGraph();
+});
+el.strengthThreshold.addEventListener("input", (event) => {
+  state.minStrength = Number(event.target.value);
+  el.thresholdValue.textContent = `≥ ${state.minStrength.toFixed(2)}`;
+  drawGraph();
+});
+el.structuralThreshold.addEventListener("input", (event) => {
+  state.minStructuralDegree = Number(event.target.value);
+  el.structuralThresholdValue.textContent = `≥ ${state.minStructuralDegree}`;
+  drawGraph();
+});
+el.noteList.addEventListener("click", selectClickedNote);
+el.connectionList.addEventListener("click", selectClickedNote);
+el.visualStage.addEventListener("click", selectClickedNote);
+el.sortButton.addEventListener("click", () => { state.newestFirst = !state.newestFirst; el.sortButton.style.transform = state.newestFirst ? "none" : "scaleY(-1)"; renderNoteList(); });
+el.closeInspector.addEventListener("click", () => { state.selectedId = null; renderInspector(); renderNoteList(); drawGraph(); });
+el.copyCommit.addEventListener("click", async () => {
+  const note = state.noteById.get(state.selectedId);
+  const commit = note?.source_commit_ids?.find(Boolean);
+  if (!commit) return toast("No commit recorded for this memory", true);
+  if (!navigator.clipboard?.writeText) return toast("Clipboard access is unavailable here", true);
+  try {
+    await navigator.clipboard.writeText(commit);
+    toast("Commit hash copied");
+  } catch {
+    toast("Could not copy the commit hash", true);
+  }
+});
+el.fitGraph.addEventListener("click", fitGraph);
+el.toggleLabels.addEventListener("click", () => { state.labels = !state.labels; el.toggleLabels.classList.toggle("is-active", state.labels); drawGraph(); });
+el.neighborhoodDepth.addEventListener("input", (event) => { state.neighborhoodDepth = Number(event.target.value); el.neighborhoodDepthValue.textContent = event.target.value; drawGraph(); });
+el.neighborhoodBudget.addEventListener("input", (event) => { state.neighborhoodBudget = Number(event.target.value); el.neighborhoodBudgetValue.textContent = event.target.value; drawGraph(); });
+el.graphModes.addEventListener("click", (event) => { const button = event.target.closest("[data-graph-mode]"); if (button) setGraphMode(button.dataset.graphMode); });
+document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+
+canvas.addEventListener("pointerdown", (event) => {
+  if (state.graphMode === "matrix") return;
+  canvas.setPointerCapture(event.pointerId);
+  state.graph.drag = { x: event.clientX, y: event.clientY, originX: state.graph.transform.x, originY: state.graph.transform.y, moved: false };
+});
+canvas.addEventListener("pointermove", (event) => {
+  if (!state.graph.drag) return;
+  const dx = event.clientX - state.graph.drag.x;
+  const dy = event.clientY - state.graph.drag.y;
+  if (Math.abs(dx) + Math.abs(dy) > 3) state.graph.drag.moved = true;
+  state.graph.transform.x = state.graph.drag.originX + dx;
+  state.graph.transform.y = state.graph.drag.originY + dy;
+  drawGraph();
+});
+canvas.addEventListener("pointerup", (event) => {
+  if (state.graphMode === "matrix") return;
+  if (!state.graph.drag?.moved) {
+    const rect = canvas.getBoundingClientRect();
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const visible = new Set(state.filtered.map((note) => note.note_id));
+    let nearest = null;
+    let distance = 12;
+    for (const node of state.graph.nodes) {
+      if (!visible.has(node.id)) continue;
+      const screen = screenPosition(node);
+      const nextDistance = Math.hypot(screen.x - point.x, screen.y - point.y);
+      if (nextDistance < distance) { nearest = node; distance = nextDistance; }
+    }
+    if (nearest) {
+      selectNote(nearest.id);
+    } else if (state.selectedId !== null) {
+      state.selectedId = null;
+      renderInspector();
+      renderNoteList();
+      drawGraph();
+    }
+  }
+  state.graph.drag = null;
+});
+canvas.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const oldScale = state.graph.transform.scale;
+  const nextScale = Math.max(.18, Math.min(3.5, oldScale * Math.exp(-event.deltaY * .001)));
+  const px = event.clientX - rect.left - rect.width / 2 - state.graph.transform.x;
+  const py = event.clientY - rect.top - rect.height / 2 - state.graph.transform.y;
+  state.graph.transform.x -= px * (nextScale / oldScale - 1);
+  state.graph.transform.y -= py * (nextScale / oldScale - 1);
+  state.graph.transform.scale = nextScale;
+  drawGraph();
+}, { passive: false });
+
+window.addEventListener("keydown", (event) => {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); el.searchInput.focus(); }
+  if (event.key === "Escape") { state.selectedId = null; renderInspector(); drawGraph(); }
+});
+window.addEventListener("resize", resizeCanvas);
+window.addEventListener("dragenter", (event) => { event.preventDefault(); el.dropZone.classList.add("is-visible"); });
+window.addEventListener("dragover", (event) => event.preventDefault());
+el.dropZone.addEventListener("dragleave", (event) => { if (event.target === el.dropZone) el.dropZone.classList.remove("is-visible"); });
+el.dropZone.addEventListener("drop", (event) => { event.preventDefault(); el.dropZone.classList.remove("is-visible"); const file = event.dataTransfer?.files?.[0]; if (file) loadFile(file); });
+
+new ResizeObserver(resizeCanvas).observe(el.visualStage);
+showLoadState();
