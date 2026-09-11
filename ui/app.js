@@ -101,12 +101,12 @@ async function normalizeGraph(data) {
   const latestByIdentity = new Map();
   for (const note of state.notes) {
     if (!note.symbol_id) continue;
-    const key = `${note.symbol_id}\0${note.file_path ?? ""}`;
+    const key = `${note.symbol_id}\0${note.file_path ?? ""}\0${note.ast_node_type ?? ""}`;
     const current = latestByIdentity.get(key);
     if (!current || timestampOf(note) > timestampOf(current) || (timestampOf(note) === timestampOf(current) && note.note_id > current.note_id)) latestByIdentity.set(key, note);
   }
   for (const note of state.notes) {
-    const key = note.symbol_id ? `${note.symbol_id}\0${note.file_path ?? ""}` : "";
+    const key = note.symbol_id ? `${note.symbol_id}\0${note.file_path ?? ""}\0${note.ast_node_type ?? ""}` : "";
     state.identityRepresentative.set(note.note_id, latestByIdentity.get(key)?.note_id ?? note.note_id);
   }
   configureTimeFilter();
@@ -401,7 +401,7 @@ function applyFilters() {
   }
   state.filtered = state.notes.filter((note) => {
     if (!state.showHistory && note.symbol_id) {
-      const key = `${note.symbol_id}\0${note.file_path ?? ""}`;
+      const key = `${note.symbol_id}\0${note.file_path ?? ""}\0${note.ast_node_type ?? ""}`;
       if (latestSymbols.get(key) !== note) return false;
     }
     if (state.cluster !== null && clusterOf(note) !== state.cluster) return false;
