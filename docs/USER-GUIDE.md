@@ -115,6 +115,12 @@ Numeric limits are validated, not silently expanded: `query_graph.top_k` is
 {}
 ```
 
+To inspect one historical topology snapshot, provide its commit ID:
+
+```json
+{"topology_commit_id":"<commit-sha>"}
+```
+
 `query_graph`
 
 ```json
@@ -408,7 +414,7 @@ Options:
 
 Current format is strict and versioned:
 
-1. `metadata.format_version` must be `spectral-cortex-v1`.
+1. `metadata.format_version` must be `spectral-cortex-v2`.
 2. Legacy formats are rejected.
 
 `notes[*]` includes:
@@ -424,8 +430,11 @@ Current format is strict and versioned:
 9. `ast_node_type`: e.g. "FUNCTION_DEFINITION", "API_DEFINITION"
 10. `file_path`: the path of the source file (from AST or metadata)
 11. `history_links`: IDs of notes representing revisions of the same symbol
-12. `topology_snapshots`: commit-versioned typed code relationships such as calls and imports
 12. `related_note_links`: per-note adjacency list with scores
+
+The top-level `topology_snapshots` array contains commit-versioned symbols and
+typed code relationships such as calls and imports. Older SMGs must be
+regenerated after the format upgrade.
 
 `related_note_links` example:
 
