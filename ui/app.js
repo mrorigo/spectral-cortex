@@ -310,13 +310,15 @@ function stopForceLayout() {
   state.force.session += 1;
   state.force.worker?.terminate();
   state.force.worker = null;
+  state.force.inline = null;
 }
 
 function startForceLayout() {
   if (state.graphMode !== "force" || !state.graph.nodes.length) return;
   stopForceLayout();
   const session = state.force.session;
-  const worker = new Worker("./force-layout.js");
+  let worker;
+  try { worker = new Worker("./force-layout.js"); } catch { startInlineForceLayout(session); return; }
   state.force.worker = worker;
   state.force.status = "layouting";
   if (el.forceStatus) el.forceStatus.textContent = "Layouting";
@@ -329,9 +331,46 @@ function startForceLayout() {
     drawGraph();
     if (data.status !== "running") { worker.terminate(); if (state.force.worker === worker) state.force.worker = null; }
   };
-  worker.onerror = () => { if (session === state.force.session) { state.force.status = "error"; if (el.forceStatus) el.forceStatus.textContent = "Layout unavailable"; } worker.terminate(); };
+  worker.onerror = () => {
+    worker.terminate();
+    if (session === state.force.session && state.graphMode === "force") { state.force.worker = null; startInlineForceLayout(session); }
+  };
   const graph = forceEdges();
   worker.postMessage({ type: "init", nodes: graph.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y, radius: 3 })), edges: graph.edges, width: canvas.clientWidth, height: canvas.clientHeight, seed: state.notes.length, settings: {} });
+}
+
+function startInlineForceLayout(session) {
+  const graph = forceEdges();
+  const nodes = graph.nodes;
+  let tick = 0;
+  let paused = false;
+  state.force.status = "layouting";
+  if (el.forceStatus) el.forceStatus.textContent = "Layouting";
+  const step = () => {
+    if (session !== state.force.session || state.graphMode !== "force") return;
+    if (!paused) {
+      const forces = nodes.map(() => ({ x: 0, y: 0 }));
+      for (let left = 0; left < nodes.length; left += 1) for (let right = left + 1; right < nodes.length; right += 1) {
+        const a = nodes[left], b = nodes[right], dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(1, Math.hypot(dx, dy)), force = 600 / (distance * distance);
+        forces[left].x -= dx / distance * force; forces[left].y -= dy / distance * force; forces[right].x += dx / distance * force; forces[right].y += dy / distance * force;
+      }
+      for (const edge of graph.edges) {
+        const a = nodes.find((node) => node.id === edge.source), b = nodes.find((node) => node.id === edge.target);
+        if (!a || !b) continue;
+        const dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(1, Math.hypot(dx, dy)), force = (distance - 70) * (.01 + edge.normalized_strength * .06);
+        const ai = nodes.indexOf(a), bi = nodes.indexOf(b);
+        forces[ai].x += dx / distance * force; forces[ai].y += dy / distance * force; forces[bi].x -= dx / distance * force; forces[bi].y -= dy / distance * force;
+      }
+      let displacement = 0;
+      nodes.forEach((node, index) => { node.x += forces[index].x * .82; node.y += forces[index].y * .82; displacement = Math.max(displacement, Math.hypot(forces[index].x, forces[index].y)); });
+      tick += 1;
+      drawGraph();
+      if (el.forceStatus) el.forceStatus.textContent = displacement < .25 || tick >= 600 ? (tick >= 600 ? "Iteration cap reached" : "Converged") : `Layouting · ${tick}`;
+      if (displacement >= .25 && tick < 600) requestAnimationFrame(step);
+    }
+  };
+  requestAnimationFrame(step);
+  state.force.inline = { pause: () => { paused = true; }, resume: () => { if (paused) { paused = false; requestAnimationFrame(step); } } };
 }
 
 function configureStrengthThreshold() {
@@ -1025,6 +1064,7 @@ el.restartForce?.addEventListener("click", startForceLayout);
 el.toggleForce?.addEventListener("click", () => {
   state.force.paused = !state.force.paused;
   state.force.worker?.postMessage({ type: state.force.paused ? "pause" : "resume" });
+  if (state.force.paused) state.force.inline?.pause(); else state.force.inline?.resume();
   el.toggleForce.textContent = state.force.paused ? "Resume" : "Pause";
 });
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
