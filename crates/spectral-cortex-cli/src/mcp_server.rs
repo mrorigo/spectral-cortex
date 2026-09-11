@@ -475,7 +475,10 @@ impl SpectralCortexMcpServer {
         out.push_str(&format!("- long_range_links: {}\n", links_count));
         out.push_str(&format!("- cluster_labels: {}\n", cluster_labels));
         out.push_str(&format!("- cluster_centroids: {}\n", centroid_count));
-        out.push_str(&format!("- topology_snapshots: {}\n", smg.topology_snapshots.len()));
+        out.push_str(&format!(
+            "- topology_snapshots: {}\n",
+            smg.topology_snapshots.len()
+        ));
         out.push_str(&format!("- topology_symbols: {}\n", topology_symbols));
         out.push_str(&format!("- topology_edges: {}\n", topology_edges));
         out.push_str(&format!(
