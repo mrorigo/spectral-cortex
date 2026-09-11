@@ -94,7 +94,7 @@
             <button class="is-active" data-edge="all" type="button">All</button>
             <button data-edge="embedding" type="button">Embedding cosine</button>
             <button data-edge="spectral" type="button">Spectral cosine</button>
-            <button data-edge="structural" type="button">Structural</button>
+            <button data-edge="structural" type="button">History</button>
           </div>
           <label class="threshold-control" for="strengthThreshold">
             <span>Embedding cosine strength</span>
@@ -107,7 +107,7 @@
             <input id="spectralThreshold" type="range" min="0" max="1000" step="1" value="0" />
           </label>
           <label class="threshold-control" for="structuralThreshold">
-            <span>Structural degree</span>
+            <span>History degree</span>
             <output id="structuralThresholdValue" for="structuralThreshold">≥ 1</output>
             <input id="structuralThreshold" type="range" min="1" max="1" step="1" value="1" />
           </label>
@@ -127,7 +127,7 @@
         <section class="metrics" aria-label="Graph metrics">
           <div><span>Nodes</span><strong id="metricNodes">—</strong></div>
           <div><span>Symbols</span><strong id="metricSymbols">—</strong></div>
-          <div><span>Structural links</span><strong id="metricStructural">—</strong></div>
+          <div><span>History links</span><strong id="metricStructural">—</strong></div>
           <div><span>Long-range links</span><strong id="metricLongRange">—</strong></div>
           <div class="date-range"><span>Memory span</span><strong id="metricRange">—</strong></div>
         </section>
@@ -164,7 +164,7 @@
           <div class="graph-key" id="graphKey">
             <span><i class="edge-line semantic"></i> embedding cosine</span>
             <span><i class="edge-line spectral"></i> spectral cosine</span>
-            <span><i class="edge-line structural"></i> structural</span>
+            <span><i class="edge-line structural"></i> history</span>
             <span><i class="node-dot"></i> memory note</span>
           </div>
           <div class="stage-message" id="stageMessage">

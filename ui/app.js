@@ -125,7 +125,8 @@ async function normalizeGraph(data) {
   };
   for (const note of state.notes) {
     for (const link of note.related_note_links ?? []) addEdge(note.note_id, Number(link[0]), "spectral", Number(link[1] ?? 1));
-    for (const target of note.structural_links ?? []) addEdge(note.note_id, Number(target), "structural", 1);
+    for (const target of note.history_links ?? []) addEdge(note.note_id, Number(target), "history", 1);
+    for (const link of note.topology_links ?? []) addEdge(note.note_id, Number(link.target_note_id), `topology:${link.relation.toLowerCase()}`, 1);
   }
   for (const link of data.long_range_links ?? []) addEdge(Number(link[0]), Number(link[1]), "spectral", Number(link[2] ?? 1), true);
   state.semanticDerived = false;
