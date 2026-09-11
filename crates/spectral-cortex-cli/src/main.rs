@@ -742,12 +742,32 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     let topology_commit_ids: Vec<String> = turns
         .iter()
         .filter_map(|turn| turn.commit_id.clone())
+        .chain(
+            smg.topology_snapshots
+                .iter()
+                .map(|snapshot| snapshot.commit_id.clone()),
+        )
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
-    smg.topology_snapshots =
-        topology::collect_snapshots(&args.repo, topology_commit_ids, &registry)
-            .with_context(|| "collecting versioned code topology")?;
+    let existing_snapshots = std::mem::take(&mut smg.topology_snapshots);
+    let existing_ids: std::collections::HashSet<_> = existing_snapshots
+        .iter()
+        .map(|snapshot| snapshot.commit_id.clone())
+        .collect();
+    let new_commit_ids = topology_commit_ids
+        .into_iter()
+        .filter(|id| !existing_ids.contains(id));
+    smg.topology_snapshots = existing_snapshots;
+    smg.topology_snapshots.extend(
+        topology::collect_snapshots(&args.repo, new_commit_ids, &registry)
+            .with_context(|| "collecting versioned code topology")?,
+    );
+    smg.topology_snapshots.sort_by(|a, b| {
+        a.timestamp
+            .cmp(&b.timestamp)
+            .then_with(|| a.commit_id.cmp(&b.commit_id))
+    });
     println!(
         "Collected {} code-topology snapshots.",
         smg.topology_snapshots.len()
