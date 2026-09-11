@@ -709,7 +709,7 @@ pub fn compute_centroids_in_embedding_space(
     centroids
 }
 
-/// Detect long-range links: pairs of note ids where spectral similarity is high but embedding similarity is low.
+/// Detect spectral-proximity links where spectral cosine is high but embedding cosine is low.
 ///
 /// # Arguments
 ///
@@ -721,7 +721,7 @@ pub fn compute_centroids_in_embedding_space(
 ///
 /// # Returns
 ///
-/// Vector of `(note_i, note_j, spectral_similarity)` tuples (by id) that should be linked.
+/// Vector of `(note_i, note_j, spectral_cosine)` tuples (by id) that should be linked.
 pub fn detect_long_range_links(
     spec: &Array2<f32>,
     embeddings: &Array2<f32>,

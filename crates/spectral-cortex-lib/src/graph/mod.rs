@@ -145,7 +145,7 @@ pub struct SpectralBuildConfig {
     pub adj_sparse_threshold: f32,
     /// Maximum semantic neighbors retained per note before symmetric union.
     pub max_semantic_neighbors: usize,
-    /// Minimum spectral similarity for long-range link detection.
+    /// Minimum spectral cosine similarity for long-range link detection.
     pub spectral_link_similarity_threshold: f32,
     /// Maximum embedding similarity for long-range link detection.
     pub embed_link_similarity_threshold: f32,
@@ -167,7 +167,7 @@ impl Default for SpectralBuildConfig {
             num_spectral_dims: 8,
             adj_sparse_threshold: 0.2,
             max_semantic_neighbors: 32,
-            spectral_link_similarity_threshold: 0.9,
+            spectral_link_similarity_threshold: 0.98,
             embed_link_similarity_threshold: 0.5,
             max_clusters: 8,
             min_clusters: 2,
