@@ -38,6 +38,7 @@ use spectral_cortex::embed;
 pub mod ast;
 mod git_commit_split;
 mod mcp_server;
+mod topology;
 
 use crate::git_commit_split::{split_commit_message, CommitSplitConfig, CommitSplitStats};
 use crate::mcp_server::run_mcp_server;
@@ -738,6 +739,9 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     // between implementation notes and their corresponding API_DEFINITION if they share the name,
     // or simply link all notes with the same symbol_id.
     smg.resolve_history_links();
+    let topology_links = topology::resolve_call_links(&args.repo, &mut smg, &registry)
+        .with_context(|| "resolving code topology")?;
+    println!("Resolved {} call topology links.", topology_links);
 
     ingest_bar.finish_with_message(format!("Ingested {} turns into the SMG.", smg.notes.len()));
 
