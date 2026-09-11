@@ -515,7 +515,10 @@ fn extract_symbols(
 
     let kind = node.kind();
     if parser.symbol_node_types().contains(&kind) {
-        if let Some(symbol_id) = parser.extract_symbol_id(node, source) {
+        if let Some(parser_symbol_id) = parser.extract_symbol_id(node, source) {
+            // Parser identifiers are usually only names. Qualify them with the
+            // repository-relative path so same-named symbols cannot alias.
+            let symbol_id = format!("{path}::{parser_symbol_id}");
             if !seen_symbols.contains(&symbol_id) {
                 seen_symbols.insert(symbol_id.clone());
 
