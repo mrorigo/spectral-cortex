@@ -50,6 +50,8 @@ fn build_snapshot(
 
     let mut symbols = Vec::new();
     let mut calls = Vec::new();
+    let mut imports = Vec::new();
+    let mut file_symbols: HashMap<String, Vec<String>> = HashMap::new();
     for (path, blob_id) in files {
         let Some(ext) = Path::new(&path).extension().and_then(|e| e.to_str()) else {
             continue;
@@ -71,7 +73,7 @@ fn build_snapshot(
         let Some(ast) = ts.parse(source.as_bytes(), None) else {
             continue;
         };
-        let mut declarations = HashMap::new();
+        let mut declarations: HashMap<String, Vec<String>> = HashMap::new();
         collect_declarations(
             ast.root_node(),
             &source,
@@ -81,6 +83,9 @@ fn build_snapshot(
             &mut symbols,
         );
         collect_calls(ast.root_node(), &source, parser, &declarations, &mut calls);
+        let symbols_in_file: Vec<String> = declarations.values().flatten().cloned().collect();
+        file_symbols.insert(path.clone(), symbols_in_file);
+        collect_imports(ast.root_node(), &source, &path, &mut imports);
     }
 
     let symbol_ids: HashSet<_> = symbols.iter().map(|s| s.symbol_id.as_str()).collect();
@@ -97,6 +102,23 @@ fn build_snapshot(
             });
         }
     }
+    for (source_file, import_text) in imports {
+        let Some(target_file) = resolve_import_path(&source_file, &import_text, &file_symbols)
+        else {
+            continue;
+        };
+        for source in file_symbols.get(&source_file).into_iter().flatten() {
+            for target in file_symbols.get(&target_file).into_iter().flatten() {
+                if source != target {
+                    edges.insert(TopologyEdge {
+                        source_symbol_id: source.clone(),
+                        target_symbol_id: target.clone(),
+                        relation: TopologyRelation::Import,
+                    });
+                }
+            }
+        }
+    }
     symbols.sort_by(|a, b| a.symbol_id.cmp(&b.symbol_id));
     let mut edges: Vec<_> = edges.into_iter().collect();
     edges.sort_by(|a, b| {
@@ -110,18 +132,81 @@ fn build_snapshot(
     })
 }
 
+fn collect_imports(
+    node: tree_sitter::Node,
+    source: &str,
+    path: &str,
+    imports: &mut Vec<(String, String)>,
+) {
+    if matches!(
+        node.kind(),
+        "import_statement" | "import_from_statement" | "use_declaration"
+    ) {
+        if let Ok(text) = node.utf8_text(source.as_bytes()) {
+            imports.push((path.to_string(), text.to_string()));
+        }
+    }
+    for index in 0..node.child_count() {
+        if let Some(child) = node.child(index) {
+            collect_imports(child, source, path, imports);
+        }
+    }
+}
+
+fn resolve_import_path(
+    source_file: &str,
+    import_text: &str,
+    files: &HashMap<String, Vec<String>>,
+) -> Option<String> {
+    let source = Path::new(source_file);
+    let mut candidates = Vec::new();
+    if let Some(quoted) = import_text.split(['\'', '"']).nth(1) {
+        if quoted.starts_with('.') {
+            candidates.extend(module_candidates(&source.parent()?.join(quoted)));
+        } else if !import_text.starts_with("use ") {
+            candidates.push(format!("{}.py", quoted.replace('.', "/")));
+            candidates.push(format!("{}/__init__.py", quoted.replace('.', "/")));
+        }
+    } else if let Some(path) = import_text.strip_prefix("use ") {
+        let module = path.split("::").next().unwrap_or(path).trim();
+        if !module.is_empty() && !matches!(module, "crate" | "self" | "super") {
+            candidates.push(format!("{}.rs", module.replace("::", "/")));
+            candidates.push(format!("{}/mod.rs", module.replace("::", "/")));
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| files.contains_key(candidate))
+}
+
+fn module_candidates(base: &Path) -> Vec<String> {
+    let base = base.to_string_lossy().to_string();
+    let mut candidates = vec![base.clone()];
+    if Path::new(&base).extension().is_none() {
+        candidates.extend([
+            format!("{base}.js"),
+            format!("{base}.jsx"),
+            format!("{base}.ts"),
+            format!("{base}.tsx"),
+            format!("{base}/index.js"),
+            format!("{base}/index.ts"),
+        ]);
+    }
+    candidates
+}
+
 fn collect_declarations(
     node: tree_sitter::Node,
     source: &str,
     parser: &dyn SymbolParser,
     path: &str,
-    out: &mut HashMap<String, String>,
+    out: &mut HashMap<String, Vec<String>>,
     symbols: &mut Vec<TopologySymbol>,
 ) {
     if parser.symbol_node_types().contains(&node.kind()) {
         if let Some(raw) = parser.extract_symbol_id(node, source) {
             let qualified = format!("{path}::{raw}");
-            out.insert(raw, qualified.clone());
+            out.entry(raw).or_default().push(qualified.clone());
             let ast_node_type = match parser.node_category(node) {
                 crate::ast::symbol_parser::AstNodeCategory::ApiDefinition => "API_DEFINITION",
                 crate::ast::symbol_parser::AstNodeCategory::Implementation => "IMPLEMENTATION",
@@ -145,7 +230,7 @@ fn collect_calls(
     node: tree_sitter::Node,
     source: &str,
     parser: &dyn SymbolParser,
-    declarations: &HashMap<String, String>,
+    declarations: &HashMap<String, Vec<String>>,
     calls: &mut Vec<(String, String)>,
 ) {
     if node.kind() == "call_expression" {
@@ -163,15 +248,18 @@ fn collect_calls(
                     .unwrap_or(text);
                 if let Some(target) = declarations
                     .iter()
-                    .find(|(raw, _)| raw.ends_with(&format!(":{name}")))
-                    .map(|(_, id)| id.clone())
+                    .filter(|(raw, ids)| raw.ends_with(&format!(":{name}")) && ids.len() == 1)
+                    .map(|(_, ids)| ids[0].clone())
+                    .next()
                 {
                     let mut owner = node.parent();
                     while let Some(candidate) = owner {
                         if parser.symbol_node_types().contains(&candidate.kind()) {
                             if let Some(raw) = parser.extract_symbol_id(candidate, source) {
-                                if let Some(source_id) = declarations.get(&raw) {
-                                    calls.push((source_id.clone(), target));
+                                if let Some(source_ids) = declarations.get(&raw) {
+                                    if source_ids.len() == 1 {
+                                        calls.push((source_ids[0].clone(), target));
+                                    }
                                 }
                             }
                             break;
