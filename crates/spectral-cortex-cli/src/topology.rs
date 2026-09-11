@@ -168,18 +168,48 @@ fn resolve_import_path(
             candidates.push(format!("{}/__init__.py", quoted.replace('.', "/")));
         }
     } else if let Some(path) = import_text.strip_prefix("use ") {
-        let module = path.split("::").next().unwrap_or(path).trim();
-        if !module.is_empty() && !matches!(module, "crate" | "self" | "super") {
+        let mut parts: Vec<_> = path.split("::").map(str::trim).collect();
+        let _imported_item = parts.pop();
+        let first = parts.first().copied().unwrap_or_default();
+        let module = if matches!(first, "crate" | "self") {
+            parts.into_iter().skip(1).collect::<Vec<_>>().join("::")
+        } else if first == "super" {
+            let parent = source.parent()?.parent()?;
+            parent
+                .join(parts.into_iter().skip(1).collect::<Vec<_>>().join("/"))
+                .to_string_lossy()
+                .to_string()
+        } else {
+            parts.join("::")
+        };
+        if !module.is_empty() {
             candidates.push(format!("{}.rs", module.replace("::", "/")));
             candidates.push(format!("{}/mod.rs", module.replace("::", "/")));
+            if matches!(first, "crate" | "self") {
+                let rooted = source.parent()?.join(module.replace("::", "/"));
+                candidates.push(format!("{}.rs", rooted.to_string_lossy()));
+                candidates.push(format!("{}/mod.rs", rooted.to_string_lossy()));
+            }
+        }
+    } else if let Some(path) = import_text.strip_prefix("from ") {
+        let module = path.split(" import ").next().unwrap_or(path).trim();
+        if !module.is_empty() {
+            candidates.push(format!("{}.py", module.replace('.', "/")));
+            candidates.push(format!("{}/__init__.py", module.replace('.', "/")));
+            if let Some(name) = path.split(" import ").nth(1).map(str::trim) {
+                candidates.push(format!("{}/{}.py", module.replace('.', "/"), name));
+            }
         }
     }
-    candidates
+    let matches: Vec<_> = candidates
         .into_iter()
-        .find(|candidate| files.contains_key(candidate))
+        .filter(|candidate| files.contains_key(candidate))
+        .collect();
+    (matches.len() == 1).then(|| matches[0].clone())
 }
 
 fn module_candidates(base: &Path) -> Vec<String> {
+    let base = base.components().collect::<std::path::PathBuf>();
     let base = base.to_string_lossy().to_string();
     let mut candidates = vec![base.clone()];
     if Path::new(&base).extension().is_none() {
@@ -274,5 +304,47 @@ fn collect_calls(
         if let Some(child) = node.child(index) {
             collect_calls(child, source, parser, declarations, calls);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_import_path;
+    use std::collections::HashMap;
+
+    fn files(paths: &[&str]) -> HashMap<String, Vec<String>> {
+        paths.iter().map(|path| ((*path).into(), vec![])).collect()
+    }
+
+    #[test]
+    fn resolves_rust_crate_and_relative_modules() {
+        let rust = files(&["src/net.rs"]);
+        assert_eq!(
+            resolve_import_path("src/main.rs", "use crate::net::Client;", &rust),
+            Some("src/net.rs".into())
+        );
+        let js = files(&["src/lib/util.ts"]);
+        assert_eq!(
+            resolve_import_path("src/main.ts", "import {x} from './lib/util';", &js),
+            Some("src/lib/util.ts".into())
+        );
+    }
+
+    #[test]
+    fn resolves_python_modules_and_rejects_unresolved_or_ambiguous_targets() {
+        let python = files(&["pkg/tools.py"]);
+        assert_eq!(
+            resolve_import_path("main.py", "from pkg import tools", &python),
+            Some("pkg/tools.py".into())
+        );
+        assert_eq!(
+            resolve_import_path("main.py", "import external_lib", &python),
+            None
+        );
+        let ambiguous = files(&["src/mod.ts", "src/mod.js"]);
+        assert_eq!(
+            resolve_import_path("src/main.ts", "import './mod';", &ambiguous),
+            None
+        );
     }
 }
