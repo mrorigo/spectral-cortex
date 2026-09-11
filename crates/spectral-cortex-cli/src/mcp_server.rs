@@ -69,7 +69,10 @@ pub struct LongRangeLinksInput {
 
 /// Input for quick graph summary.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct GraphSummaryInput {}
+pub struct GraphSummaryInput {
+    /// Optional commit ID whose topology counts should be reported.
+    pub topology_commit_id: Option<String>,
+}
 
 /// Input for structural hotspots analysis.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -450,7 +453,7 @@ impl SpectralCortexMcpServer {
         Ok(out)
     }
 
-    fn graph_summary_impl(&self, _input: GraphSummaryInput) -> Result<String> {
+    fn graph_summary_impl(&self, input: GraphSummaryInput) -> Result<String> {
         let smg = &self.smg;
 
         let links_count = smg.long_range_links.as_ref().map(|v| v.len()).unwrap_or(0);
@@ -466,6 +469,16 @@ impl SpectralCortexMcpServer {
             .iter()
             .map(|snapshot| snapshot.edges.len())
             .sum();
+        let selected_snapshot = input
+            .topology_commit_id
+            .as_deref()
+            .map(|commit_id| {
+                smg.topology_snapshots
+                    .iter()
+                    .find(|snapshot| snapshot.commit_id == commit_id)
+                    .ok_or_else(|| anyhow::anyhow!("topology snapshot '{}' not found", commit_id))
+            })
+            .transpose()?;
 
         let mut out = String::new();
         out.push_str("# Graph Summary\n");
@@ -481,6 +494,17 @@ impl SpectralCortexMcpServer {
         ));
         out.push_str(&format!("- topology_symbols: {}\n", topology_symbols));
         out.push_str(&format!("- topology_edges: {}\n", topology_edges));
+        if let Some(snapshot) = selected_snapshot {
+            out.push_str(&format!("- topology_commit_id: `{}`\n", snapshot.commit_id));
+            out.push_str(&format!(
+                "- selected_topology_symbols: {}\n",
+                snapshot.symbols.len()
+            ));
+            out.push_str(&format!(
+                "- selected_topology_edges: {}\n",
+                snapshot.edges.len()
+            ));
+        }
         out.push_str(&format!(
             "- similarity_matrix_cached: {}\n",
             smg.similarity_matrix.is_some()
