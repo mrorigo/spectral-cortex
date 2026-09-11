@@ -27,7 +27,7 @@ Add AST metadata to the core note model to support symbol tracking and typing.
 | :--- | :--- |
 | `smg_note.rs` | Add `symbol_id: Option<String>` (e.g., `fn:calculate_tax`). |
 | `smg_note.rs` | Add `ast_node_type: Option<String>` (e.g., `API_DEFINITION`, `IMPLEMENTATION`). |
-| `smg_note.rs` | Store `history_links` for symbol revisions and `topology_links` for AST-derived neighbors. |
+| `smg_note.rs` | Store `history_links` for symbol revisions; versioned AST topology is persisted in top-level snapshots. |
 
 ### 2.2 Update `SerializableNote`
 Ensure these fields are persisted to JSON for long-term memory across indexing runs.
@@ -103,8 +103,8 @@ In `cosine_similarity_matrix(x: &Array2<f32>) -> Array2<f32>`, modify the logic 
 
 **Proposed Logic**:
 1. Compute `W_semantic` (existing NLP cosine similarity).
-2. Retrieve `topology_links` for each note.
-3. Apply boost: If `note_j` is in `note_i.topology_links`, set `W_final[i,j] = alpha * W_semantic[i,j] + beta`.
+2. Retrieve topology adjacency materialized from the selected/current topology snapshot.
+3. Apply boost: If `note_j` is connected to `note_i` by a selected topology edge, set `W_final[i,j] = alpha * W_semantic[i,j] + beta`.
 4. Ensure `W_final` remains symmetric.
 
 ### 4.2 API-Weighted Topological Expansion
