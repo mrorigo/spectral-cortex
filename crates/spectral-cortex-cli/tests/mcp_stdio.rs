@@ -15,7 +15,7 @@ fn empty_smg_fixture() -> NamedTempFile {
     let fixture = NamedTempFile::new().expect("create SMG fixture");
     std::fs::write(
         fixture.path(),
-        r#"{"metadata":{"format_version":"spectral-cortex-v1"},"notes":[],"cluster_labels":null,"cluster_centroids":null,"cluster_centroid_norms":null,"long_range_links":null}"#,
+        r#"{"metadata":{"format_version":"spectral-cortex-v2"},"notes":[],"cluster_labels":null,"cluster_centroids":null,"cluster_centroid_norms":null,"long_range_links":null}"#,
     )
     .expect("write SMG fixture");
     fixture

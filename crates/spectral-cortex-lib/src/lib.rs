@@ -100,7 +100,7 @@ impl SerializableSMG {
         let mut metadata = HashMap::new();
         metadata.insert(
             "format_version".to_string(),
-            "spectral-cortex-v1".to_string(),
+            "spectral-cortex-v2".to_string(),
         );
 
         if let Some(config) = &smg.last_build_config {
@@ -179,9 +179,9 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
         .get("format_version")
         .map(String::as_str)
         .unwrap_or("unknown");
-    if format_version != "spectral-cortex-v1" {
+    if format_version != "spectral-cortex-v2" {
         return Err(anyhow::anyhow!(
-            "unsupported SMG format_version '{}'; expected 'spectral-cortex-v1'",
+            "unsupported SMG format_version '{}'; expected 'spectral-cortex-v2'; regenerate the SMG",
             format_version
         ));
     }
@@ -417,6 +417,32 @@ fn validate_serial_smg_data(serial: &SerializableSMG) -> Result<()> {
             }
         }
     }
+    let mut snapshot_ids = HashSet::new();
+    for snapshot in &serial.topology_snapshots {
+        if snapshot.commit_id.is_empty() || !snapshot_ids.insert(&snapshot.commit_id) {
+            anyhow::bail!("topology snapshots must have unique non-empty commit IDs");
+        }
+        let mut symbol_ids = HashSet::new();
+        for symbol in &snapshot.symbols {
+            if symbol.symbol_id.is_empty() || !symbol_ids.insert(&symbol.symbol_id) {
+                anyhow::bail!(
+                    "topology snapshot {} has duplicate symbol IDs",
+                    snapshot.commit_id
+                );
+            }
+        }
+        for edge in &snapshot.edges {
+            if edge.source_symbol_id == edge.target_symbol_id
+                || !symbol_ids.contains(&edge.source_symbol_id)
+                || !symbol_ids.contains(&edge.target_symbol_id)
+            {
+                anyhow::bail!(
+                    "topology snapshot {} has an invalid edge",
+                    snapshot.commit_id
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -447,7 +473,7 @@ mod persistence_tests {
         SerializableSMG {
             metadata: HashMap::from([(
                 String::from("format_version"),
-                String::from("spectral-cortex-v1"),
+                String::from("spectral-cortex-v2"),
             )]),
             notes,
             cluster_labels: None,
