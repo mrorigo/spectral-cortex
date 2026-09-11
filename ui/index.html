@@ -164,9 +164,30 @@
             <label for="neighborhoodBudget">Edges / node <output id="neighborhoodBudgetValue">8</output><input id="neighborhoodBudget" type="range" min="1" max="20" step="1" value="8" /></label>
           </div>
           <div class="force-controls" id="forceControls" hidden>
-            <button id="restartForce" type="button">Restart</button>
-            <button id="toggleForce" type="button">Pause</button>
-            <output id="forceStatus" aria-live="polite">Ready</output>
+            <div class="force-actions">
+              <button id="restartForce" type="button">Restart</button>
+              <button id="toggleForce" type="button">Pause</button>
+              <output id="forceStatus" aria-live="polite">Ready</output>
+            </div>
+            <div class="force-presets" id="forcePresets" role="group" aria-label="Force layout preset">
+              <button data-force-preset="explore" type="button">Explore</button>
+              <button class="is-active" data-force-preset="architecture" type="button">Architecture</button>
+              <button data-force-preset="cluster" type="button">Cluster map</button>
+            </div>
+            <details class="force-advanced">
+              <summary>Advanced layout</summary>
+              <div class="force-tuning">
+                <label>Spread <output id="forceSpreadValue">0.80</output><input id="forceSpread" type="range" min="0" max="2" step="0.05" value="0.8" /></label>
+                <label>Cohesion <output id="forceCohesionValue">1.00</output><input id="forceCohesion" type="range" min="0" max="2" step="0.05" value="1" /></label>
+                <label>Community gravity <output id="forceCommunityValue">0.45</output><input id="forceCommunity" type="range" min="0" max="1" step="0.05" value="0.45" /></label>
+                <label>Stability <output id="forceCoolingValue">0.975</output><input id="forceCooling" type="range" min="0.94" max="0.995" step="0.001" value="0.975" /></label>
+                <label>Embedding <output id="forceEmbeddingValue">0.60</output><input id="forceEmbedding" type="range" min="0" max="1.5" step="0.05" value="0.6" /></label>
+                <label>Spectral <output id="forceSpectralValue">0.80</output><input id="forceSpectral" type="range" min="0" max="1.5" step="0.05" value="0.8" /></label>
+                <label>History <output id="forceHistoryValue">0.85</output><input id="forceHistory" type="range" min="0" max="1.5" step="0.05" value="0.85" /></label>
+                <label>Calls <output id="forceCallValue">1.00</output><input id="forceCall" type="range" min="0" max="1.5" step="0.05" value="1" /></label>
+                <label>Imports <output id="forceImportValue">0.75</output><input id="forceImport" type="range" min="0" max="1.5" step="0.05" value="0.75" /></label>
+              </div>
+            </details>
             <output class="force-debug" id="forceDebug" aria-live="polite">Force diagnostics: idle</output>
           </div>
           <canvas id="graphCanvas" tabindex="0" aria-label="Interactive memory relationship graph"></canvas>

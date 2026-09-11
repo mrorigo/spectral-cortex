@@ -11,7 +11,10 @@ const state = {
   cluster: null,
   edgeType: "all",
   graphMode: "field",
-  force: { worker: null, session: 0, paused: false, status: "ready", positions: new Map(), draggingId: null },
+  force: {
+    worker: null, session: 0, paused: false, status: "ready", positions: new Map(), draggingId: null,
+    settings: { preset: "architecture", spread: .8, cohesion: 1, community: .45, cooling: .975, relations: { embedding: .6, spectral: .8, history: .85, "topology:call": 1, "topology:import": .75 } },
+  },
   neighborhoodDepth: 2,
   neighborhoodBudget: 8,
   minStrength: 0,
@@ -321,6 +324,50 @@ function updateForceDebug({ phase, nodes = 0, edges = 0, tick = 0, displacement 
     : `Force ${phase} · s${state.force.session} · ${nodes}n/${edges}e · t${tick} · Δ${displacement.toFixed(2)} · ${canvasSize}`;
 }
 
+const FORCE_PRESETS = {
+  explore: { spread: 1.25, cohesion: .75, community: .15, cooling: .97, relations: { embedding: .8, spectral: 1, history: .45, "topology:call": .65, "topology:import": .45 } },
+  architecture: { spread: .8, cohesion: 1, community: .45, cooling: .975, relations: { embedding: .6, spectral: .8, history: .85, "topology:call": 1, "topology:import": .75 } },
+  cluster: { spread: .65, cohesion: 1.2, community: .9, cooling: .98, relations: { embedding: .5, spectral: .7, history: .55, "topology:call": .8, "topology:import": .6 } },
+};
+
+const FORCE_CONTROL_FIELDS = [
+  ["forceSpread", "forceSpreadValue", "spread"],
+  ["forceCohesion", "forceCohesionValue", "cohesion"],
+  ["forceCommunity", "forceCommunityValue", "community"],
+  ["forceCooling", "forceCoolingValue", "cooling"],
+  ["forceEmbedding", "forceEmbeddingValue", "embedding"],
+  ["forceSpectral", "forceSpectralValue", "spectral"],
+  ["forceHistory", "forceHistoryValue", "history"],
+  ["forceCall", "forceCallValue", "topology:call"],
+  ["forceImport", "forceImportValue", "topology:import"],
+];
+
+function renderForceControls() {
+  const settings = state.force.settings;
+  for (const [inputId, outputId, key] of FORCE_CONTROL_FIELDS) {
+    const value = key in settings ? settings[key] : settings.relations[key];
+    el[inputId].value = String(value);
+    el[outputId].textContent = Number(value).toFixed(key === "cooling" ? 3 : 2);
+  }
+  el.forcePresets?.querySelectorAll("button").forEach((button) => button.classList.toggle("is-active", button.dataset.forcePreset === settings.preset));
+}
+
+function setForcePreset(name) {
+  const preset = FORCE_PRESETS[name];
+  if (!preset) return;
+  state.force.settings = { preset: name, ...preset, relations: { ...preset.relations } };
+  renderForceControls();
+  startForceLayout();
+}
+
+function updateForceSetting(key, value) {
+  if (key in state.force.settings) state.force.settings[key] = value;
+  else state.force.settings.relations[key] = value;
+  state.force.settings.preset = "custom";
+  renderForceControls();
+  startForceLayout();
+}
+
 function startForceLayout() {
   if (state.graphMode !== "force" || !state.graph.nodes.length) return;
   stopForceLayout();
@@ -336,6 +383,15 @@ function startForceLayout() {
 function startInlineForceLayout(session) {
   const graph = forceEdges();
   const nodes = graph.nodes;
+  const settings = state.force.settings;
+  const clusterCenters = new Map();
+  for (const node of nodes) {
+    const cluster = clusterOf(node.note);
+    const center = clusterCenters.get(cluster) ?? { x: 0, y: 0, count: 0 };
+    center.x += node.x; center.y += node.y; center.count += 1;
+    clusterCenters.set(cluster, center);
+  }
+  for (const center of clusterCenters.values()) { center.x /= center.count; center.y /= center.count; }
   const indexById = new Map(nodes.map((node, index) => [node.id, index]));
   const velocity = nodes.map((node, index) => {
     const angle = (index / Math.max(1, nodes.length)) * Math.PI * 2 + (hash(node.id) % 100) / 100;
@@ -355,20 +411,23 @@ function startInlineForceLayout(session) {
       if (!paused) {
       const forces = nodes.map(() => ({ x: 0, y: 0 }));
       for (let left = 0; left < nodes.length; left += 1) for (let right = left + 1; right < nodes.length; right += 1) {
-        const a = nodes[left], b = nodes[right], dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(12, Math.hypot(dx, dy)), force = Math.min(7, 1_200 / (distance * distance));
+        const a = nodes[left], b = nodes[right], dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(12, Math.hypot(dx, dy)), force = Math.min(7, settings.spread * 1_200 / (distance * distance));
         forces[left].x -= dx / distance * force; forces[left].y -= dy / distance * force; forces[right].x += dx / distance * force; forces[right].y += dy / distance * force;
       }
       for (const edge of graph.edges) {
         const ai = indexById.get(edge.source), bi = indexById.get(edge.target);
         if (ai === undefined || bi === undefined) continue;
         const a = nodes[ai], b = nodes[bi];
-        const dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(12, Math.hypot(dx, dy)), force = Math.max(-5, Math.min(5, (distance - 80) * (.008 + edge.normalized_strength * .032)));
+        const relation = settings.relations[edge.type] ?? 1;
+        const dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(12, Math.hypot(dx, dy)), force = Math.max(-5, Math.min(5, (distance - 80) * (.008 + edge.normalized_strength * .032) * settings.cohesion * relation));
         forces[ai].x += dx / distance * force; forces[ai].y += dy / distance * force; forces[bi].x -= dx / distance * force; forces[bi].y -= dy / distance * force;
       }
       let displacement = 0;
       nodes.forEach((node, index) => {
         forces[index].x -= node.x * .003;
         forces[index].y -= node.y * .003;
+        const community = clusterCenters.get(clusterOf(node.note));
+        if (community) { forces[index].x += (community.x - node.x) * settings.community * .012; forces[index].y += (community.y - node.y) * settings.community * .012; }
         velocity[index].x = (velocity[index].x + forces[index].x * .16 * alpha) * .78;
         velocity[index].y = (velocity[index].y + forces[index].y * .16 * alpha) * .78;
         const maxSpeed = .35 + 10 * alpha;
@@ -379,7 +438,7 @@ function startInlineForceLayout(session) {
         displacement = Math.max(displacement, Math.hypot(velocity[index].x, velocity[index].y));
       });
       tick += 1;
-      alpha *= .975;
+      alpha *= settings.cooling;
       drawGraph();
       stableTicks = displacement < .1 ? stableTicks + 1 : 0;
       const done = (alpha < .01 && stableTicks >= 8) || tick >= 1_200;
@@ -1093,6 +1152,14 @@ el.toggleForce?.addEventListener("click", () => {
   if (state.force.paused) state.force.inline?.pause(); else state.force.inline?.resume();
   el.toggleForce.textContent = state.force.paused ? "Resume" : "Pause";
 });
+el.forcePresets?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-force-preset]");
+  if (button) setForcePreset(button.dataset.forcePreset);
+});
+for (const [inputId, , key] of FORCE_CONTROL_FIELDS) {
+  el[inputId]?.addEventListener("input", (event) => updateForceSetting(key, Number(event.target.value)));
+}
+renderForceControls();
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 
 canvas.addEventListener("pointerdown", (event) => {
