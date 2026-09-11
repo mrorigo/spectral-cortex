@@ -335,11 +335,14 @@ function configureStructuralThreshold() {
   }
   const max = Math.max(0, ...state.structuralDegreeById.values());
   const hasStructuralLinks = max > 0;
+  const persistedStructuralLinks = state.edges.some((edge) => edge.type === "structural");
   state.minStructuralDegree = 1;
   el.structuralThreshold.min = "1";
   el.structuralThreshold.max = String(Math.max(1, max));
   el.structuralThreshold.value = "1";
-  el.structuralThresholdValue.textContent = hasStructuralLinks ? "≥ 1" : "No structural links";
+  el.structuralThresholdValue.textContent = hasStructuralLinks
+    ? "≥ 1"
+    : persistedStructuralLinks && !state.showHistory ? "History only — show history" : "No structural links";
   updateStructuralThresholdInteractivity(hasStructuralLinks);
 }
 
