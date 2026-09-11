@@ -424,7 +424,7 @@ Current format is strict and versioned:
 9. `ast_node_type`: e.g. "FUNCTION_DEFINITION", "API_DEFINITION"
 10. `file_path`: the path of the source file (from AST or metadata)
 11. `history_links`: IDs of notes representing revisions of the same symbol
-12. `topology_links`: typed code relationships such as calls and imports
+12. `topology_snapshots`: commit-versioned typed code relationships such as calls and imports
 12. `related_note_links`: per-note adjacency list with scores
 
 `related_note_links` example:

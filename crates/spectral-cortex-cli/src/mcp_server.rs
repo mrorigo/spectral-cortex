@@ -456,6 +456,16 @@ impl SpectralCortexMcpServer {
         let links_count = smg.long_range_links.as_ref().map(|v| v.len()).unwrap_or(0);
         let cluster_labels = smg.cluster_labels.as_ref().map(|v| v.len()).unwrap_or(0);
         let centroid_count = smg.cluster_centroids.as_ref().map(|v| v.len()).unwrap_or(0);
+        let topology_symbols: usize = smg
+            .topology_snapshots
+            .iter()
+            .map(|snapshot| snapshot.symbols.len())
+            .sum();
+        let topology_edges: usize = smg
+            .topology_snapshots
+            .iter()
+            .map(|snapshot| snapshot.edges.len())
+            .sum();
 
         let mut out = String::new();
         out.push_str("# Graph Summary\n");
@@ -465,6 +475,9 @@ impl SpectralCortexMcpServer {
         out.push_str(&format!("- long_range_links: {}\n", links_count));
         out.push_str(&format!("- cluster_labels: {}\n", cluster_labels));
         out.push_str(&format!("- cluster_centroids: {}\n", centroid_count));
+        out.push_str(&format!("- topology_snapshots: {}\n", smg.topology_snapshots.len()));
+        out.push_str(&format!("- topology_symbols: {}\n", topology_symbols));
+        out.push_str(&format!("- topology_edges: {}\n", topology_edges));
         out.push_str(&format!(
             "- similarity_matrix_cached: {}\n",
             smg.similarity_matrix.is_some()
