@@ -326,7 +326,13 @@ function startForceLayout() {
 function startInlineForceLayout(session) {
   const graph = forceEdges();
   const nodes = graph.nodes;
+  const indexById = new Map(nodes.map((node, index) => [node.id, index]));
+  const velocity = nodes.map((node, index) => {
+    const angle = (index / Math.max(1, nodes.length)) * Math.PI * 2 + (hash(node.id) % 100) / 100;
+    return { x: Math.cos(angle) * 5, y: Math.sin(angle) * 5 };
+  });
   let tick = 0;
+  let stableTicks = 0;
   let paused = false;
   state.force.status = "layouting";
   if (el.forceStatus) el.forceStatus.textContent = "Layouting";
@@ -339,18 +345,30 @@ function startInlineForceLayout(session) {
         forces[left].x -= dx / distance * force; forces[left].y -= dy / distance * force; forces[right].x += dx / distance * force; forces[right].y += dy / distance * force;
       }
       for (const edge of graph.edges) {
-        const a = nodes.find((node) => node.id === edge.source), b = nodes.find((node) => node.id === edge.target);
-        if (!a || !b) continue;
+        const ai = indexById.get(edge.source), bi = indexById.get(edge.target);
+        if (ai === undefined || bi === undefined) continue;
+        const a = nodes[ai], b = nodes[bi];
         const dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(1, Math.hypot(dx, dy)), force = (distance - 70) * (.01 + edge.normalized_strength * .06);
-        const ai = nodes.indexOf(a), bi = nodes.indexOf(b);
         forces[ai].x += dx / distance * force; forces[ai].y += dy / distance * force; forces[bi].x -= dx / distance * force; forces[bi].y -= dy / distance * force;
       }
       let displacement = 0;
-      nodes.forEach((node, index) => { node.x += forces[index].x * .82; node.y += forces[index].y * .82; displacement = Math.max(displacement, Math.hypot(forces[index].x, forces[index].y)); });
+      nodes.forEach((node, index) => {
+        const targetAngle = (index / Math.max(1, nodes.length)) * Math.PI * 2;
+        const targetRadius = 180 + Math.min(180, Math.sqrt(Math.max(0, node.degree)) * 22);
+        forces[index].x += Math.cos(targetAngle) * targetRadius * .012 - node.x * .012;
+        forces[index].y += Math.sin(targetAngle) * targetRadius * .012 - node.y * .012;
+        velocity[index].x = (velocity[index].x + forces[index].x * .48) * .82;
+        velocity[index].y = (velocity[index].y + forces[index].y * .48) * .82;
+        node.x += velocity[index].x;
+        node.y += velocity[index].y;
+        displacement = Math.max(displacement, Math.hypot(velocity[index].x, velocity[index].y));
+      });
       tick += 1;
       drawGraph();
-      if (el.forceStatus) el.forceStatus.textContent = displacement < .25 || tick >= 600 ? (tick >= 600 ? "Iteration cap reached" : "Converged") : `Layouting · ${tick}`;
-      if (displacement >= .25 && tick < 600) requestAnimationFrame(step);
+      stableTicks = displacement < .25 ? stableTicks + 1 : 0;
+      const done = stableTicks >= 8 || tick >= 600;
+      if (el.forceStatus) el.forceStatus.textContent = done ? (tick >= 600 ? "Iteration cap reached" : "Converged") : `Layouting · ${tick} · ${nodes.length} nodes`;
+      if (!done) requestAnimationFrame(step);
     }
   };
   requestAnimationFrame(step);
