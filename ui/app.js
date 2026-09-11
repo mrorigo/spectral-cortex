@@ -395,7 +395,7 @@ function applyFilters() {
   const latestSymbols = new Map();
   for (const note of state.notes) {
     if (!note.symbol_id) continue;
-    const key = `${note.symbol_id}\0${note.file_path ?? ""}`;
+    const key = `${note.symbol_id}\0${note.file_path ?? ""}\0${note.ast_node_type ?? ""}`;
     const current = latestSymbols.get(key);
     if (!current || timestampOf(note) > timestampOf(current) || (timestampOf(note) === timestampOf(current) && note.note_id > current.note_id)) latestSymbols.set(key, note);
   }
