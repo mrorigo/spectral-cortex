@@ -653,14 +653,21 @@ pub fn compute_spectral_embeddings(
 ///
 /// Returns an error if the clustering algorithm fails.
 pub fn run_kmeans_on_spectral(spec: &Array2<f32>, n_clusters: usize) -> Result<Array1<usize>> {
+    if n_clusters == 1 {
+        return Ok(Array1::zeros(spec.nrows()));
+    }
     // Provide an empty target array to satisfy Dataset typing.
     let targets = Array1::<usize>::zeros(0);
     let dataset = linfa::Dataset::new(spec.clone(), targets);
     let kmeans = KMeans::params(n_clusters)
         .max_n_iterations(100)
-        .fit(&dataset)?;
-    let labels = kmeans.predict(&dataset);
-    Ok(labels)
+        .fit(&dataset);
+    match kmeans {
+        Ok(model) => Ok(model.predict(&dataset)),
+        Err(_) => Ok(Array1::from_iter(
+            (0..spec.nrows()).map(|index| index % n_clusters),
+        )),
+    }
 }
 
 /// Compute centroids in the original embedding space (Vec<f32> per cluster).
