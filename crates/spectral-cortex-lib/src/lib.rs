@@ -79,6 +79,7 @@ pub struct SerializableSMG {
     pub cluster_centroids: Option<HashMap<usize, Vec<f32>>>,
     pub cluster_centroid_norms: Option<HashMap<usize, f32>>,
     pub long_range_links: Option<Vec<(u32, u32, f32)>>,
+    pub topology_snapshots: Vec<crate::model::smg_note::TopologySnapshot>,
 }
 
 impl SerializableSMG {
@@ -129,6 +130,7 @@ impl SerializableSMG {
             cluster_centroids,
             cluster_centroid_norms: smg.cluster_centroid_norms.clone(),
             long_range_links: smg.long_range_links.clone(),
+            topology_snapshots: smg.topology_snapshots.clone(),
         }
     }
 }
@@ -271,6 +273,7 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
 
     // Restore long-range links if present.
     smg.long_range_links = serial.long_range_links;
+    smg.topology_snapshots = serial.topology_snapshots;
 
     Ok(smg)
 }
@@ -450,6 +453,7 @@ mod persistence_tests {
             cluster_centroids: None,
             cluster_centroid_norms: None,
             long_range_links: None,
+            topology_snapshots: vec![],
         }
     }
 

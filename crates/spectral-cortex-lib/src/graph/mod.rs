@@ -17,7 +17,10 @@ use nalgebra_sparse::CsrMatrix;
 use ndarray::{Array1, Array2};
 
 use crate::embed;
-use crate::model::{conversation_turn::ConversationTurn, smg_note::SMGNote};
+use crate::model::{
+    conversation_turn::ConversationTurn,
+    smg_note::{SMGNote, TopologySnapshot},
+};
 use crate::utils::logging;
 
 /// Progress callback type for long-running operations.
@@ -134,6 +137,8 @@ pub struct SpectralMemoryGraph {
     pub last_build_config: Option<SpectralBuildConfig>,
     /// Embedding backend configuration used to create stored vectors.
     pub embedding_config: Option<crate::embed::EmbeddingConfig>,
+    /// Versioned source-code topology snapshots.
+    pub topology_snapshots: Vec<TopologySnapshot>,
 }
 
 /// Configurable parameters for spectral-structure construction.
@@ -228,6 +233,7 @@ impl SpectralMemoryGraph {
             long_range_links: None,
             last_build_config: None,
             embedding_config: None,
+            topology_snapshots: Vec::new(),
         })
     }
 

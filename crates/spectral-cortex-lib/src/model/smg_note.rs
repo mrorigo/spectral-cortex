@@ -20,6 +20,41 @@ pub enum TopologyRelation {
     Import,
 }
 
+/// A repository topology captured at one commit.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TopologySnapshot {
+    /// Commit that produced this source tree.
+    pub commit_id: String,
+    /// Commit timestamp in Unix seconds.
+    pub timestamp: u64,
+    /// Symbols present in the source tree.
+    pub symbols: Vec<TopologySymbol>,
+    /// Typed edges between symbols in this snapshot.
+    pub edges: Vec<TopologyEdge>,
+}
+
+/// A symbol declared in a topology snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TopologySymbol {
+    /// Qualified symbol identity.
+    pub symbol_id: String,
+    /// Repository-relative source path.
+    pub file_path: String,
+    /// AST category for the declaration.
+    pub ast_node_type: String,
+}
+
+/// A typed relationship between two snapshot symbols.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TopologyEdge {
+    /// Source symbol identity.
+    pub source_symbol_id: String,
+    /// Target symbol identity.
+    pub target_symbol_id: String,
+    /// Relationship kind.
+    pub relation: TopologyRelation,
+}
+
 /// Node stored in the Spectral Memory Graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SMGNote {
