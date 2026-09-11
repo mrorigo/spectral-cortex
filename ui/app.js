@@ -5,6 +5,7 @@ const state = {
   noteById: new Map(),
   identityRepresentative: new Map(),
   topologySnapshots: [],
+  topologyCommitId: "",
   edges: [],
   filtered: [],
   cluster: null,
@@ -100,6 +101,15 @@ async function normalizeGraph(data) {
   state.noteById = new Map(state.notes.map((note) => [note.note_id, note]));
   state.identityRepresentative = new Map();
   state.topologySnapshots = data.topology_snapshots ?? [];
+  const snapshots = [...state.topologySnapshots].sort((a, b) => Number(a.timestamp ?? 0) - Number(b.timestamp ?? 0));
+  if (!state.topologyCommitId || !snapshots.some((snapshot) => snapshot.commit_id === state.topologyCommitId)) {
+    state.topologyCommitId = snapshots.at(-1)?.commit_id ?? "";
+  }
+  if (el.topologySnapshot) {
+    el.topologySnapshot.replaceChildren(new Option("Latest topology snapshot", ""), ...snapshots.map((snapshot) => new Option(`${formatDate(Number(snapshot.timestamp ?? 0))} · ${String(snapshot.commit_id).slice(0, 12)}`, snapshot.commit_id)));
+    el.topologySnapshot.value = state.topologyCommitId;
+    el.topologySnapshot.disabled = snapshots.length === 0;
+  }
   const latestByIdentity = new Map();
   for (const note of state.notes) {
     if (!note.symbol_id) continue;
@@ -131,7 +141,8 @@ async function normalizeGraph(data) {
     for (const link of note.topology_links ?? []) addEdge(note.note_id, Number(link.target_note_id), `topology:${link.relation.toLowerCase()}`, 1);
   }
   for (const link of data.long_range_links ?? []) addEdge(Number(link[0]), Number(link[1]), "spectral", Number(link[2] ?? 1), true);
-  const latestSnapshot = [...state.topologySnapshots].sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0))[0];
+  const latestSnapshot = state.topologySnapshots.find((snapshot) => snapshot.commit_id === state.topologyCommitId)
+    ?? [...state.topologySnapshots].sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0))[0];
   const topologyNotes = new Map();
   for (const symbol of latestSnapshot?.symbols ?? []) {
     const note = state.notes.find((candidate) => candidate.symbol_id === symbol.symbol_id && candidate.file_path === symbol.file_path && candidate.ast_node_type === symbol.ast_node_type);
@@ -910,6 +921,11 @@ el.edgeFilter.addEventListener("click", (event) => {
   updateSemanticThresholdInteractivity();
   updateStructuralThresholdInteractivity();
   configureSpectralThreshold();
+  drawGraph();
+});
+el.topologySnapshot?.addEventListener("change", async (event) => {
+  state.topologyCommitId = event.target.value;
+  if (state.data) await normalizeGraph(state.data);
   drawGraph();
 });
 el.strengthThreshold.addEventListener("input", (event) => {
