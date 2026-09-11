@@ -321,27 +321,6 @@ function startForceLayout() {
   // the UI is opened directly or served, and makes motion observable before
   // introducing worker transport as a measured optimization.
   startInlineForceLayout(session);
-  return;
-  let worker;
-  try { worker = new Worker("./force-layout.js"); } catch { startInlineForceLayout(session); return; }
-  state.force.worker = worker;
-  state.force.status = "layouting";
-  if (el.forceStatus) el.forceStatus.textContent = "Layouting";
-  worker.onmessage = ({ data }) => {
-    if (session !== state.force.session || worker !== state.force.worker) return;
-    state.force.positions = new Map((data.positions ?? []).map((position) => [position.id, position]));
-    for (const node of state.graph.nodes) { const position = state.force.positions.get(node.id); if (position) { node.x = position.x; node.y = position.y; } }
-    state.force.status = data.status;
-    if (el.forceStatus) el.forceStatus.textContent = data.status === "running" ? `Layouting · ${data.tick}` : data.status === "capped" ? "Iteration cap reached" : "Converged";
-    drawGraph();
-    if (data.status !== "running") { worker.terminate(); if (state.force.worker === worker) state.force.worker = null; }
-  };
-  worker.onerror = () => {
-    worker.terminate();
-    if (session === state.force.session && state.graphMode === "force") { state.force.worker = null; startInlineForceLayout(session); }
-  };
-  const graph = forceEdges();
-  worker.postMessage({ type: "init", nodes: graph.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y, radius: 3 })), edges: graph.edges, width: canvas.clientWidth, height: canvas.clientHeight, seed: state.notes.length, settings: {} });
 }
 
 function startInlineForceLayout(session) {
