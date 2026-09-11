@@ -12,6 +12,7 @@ const state = {
   neighborhoodDepth: 2,
   neighborhoodBudget: 8,
   minStrength: 0,
+  strengthRange: { min: 0, max: 1 },
   minStructuralDegree: 1,
   structuralDegreeById: new Map(),
   browseMode: "events",
@@ -265,14 +266,28 @@ function configureStrengthThreshold() {
   const initial = state.semanticDerived && hasWeights ? weights[Math.floor((weights.length - 1) * .75)] : min;
   if (!hasWeights && state.edgeType === "embedding") state.edgeType = "all";
   state.minStrength = initial;
-  el.strengthThreshold.min = String(min);
-  el.strengthThreshold.max = String(max);
-  el.strengthThreshold.step = "0.01";
-  el.strengthThreshold.value = String(initial);
+  state.strengthRange = { min, max };
+  el.strengthThreshold.min = "0";
+  el.strengthThreshold.max = "1000";
+  el.strengthThreshold.step = "1";
+  el.strengthThreshold.value = String(strengthToSlider(initial));
   semanticButton.disabled = !hasWeights;
   el.edgeFilter.querySelectorAll("button").forEach((button) => button.classList.toggle("is-active", button.dataset.edge === state.edgeType));
   el.thresholdValue.textContent = hasWeights ? `≥ ${initial.toFixed(2)}` : "No embedding links";
   updateSemanticThresholdInteractivity(hasWeights);
+}
+
+function sliderToStrength(value) {
+  const progress = Number(value) / 1000;
+  const { min, max } = state.strengthRange;
+  return min + (max - min) * (1 - (1 - progress) ** 2);
+}
+
+function strengthToSlider(value) {
+  const { min, max } = state.strengthRange;
+  if (max <= min) return 0;
+  const progress = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  return Math.round((1 - Math.sqrt(1 - progress)) * 1000);
 }
 
 function updateSemanticThresholdInteractivity(hasSemantic = state.edges.some((edge) => edge.type === "embedding")) {
@@ -848,7 +863,7 @@ el.edgeFilter.addEventListener("click", (event) => {
   drawGraph();
 });
 el.strengthThreshold.addEventListener("input", (event) => {
-  state.minStrength = Number(event.target.value);
+  state.minStrength = sliderToStrength(event.target.value);
   el.thresholdValue.textContent = `≥ ${state.minStrength.toFixed(2)}`;
   drawGraph();
 });
