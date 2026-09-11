@@ -96,6 +96,7 @@ function validateGraph(data) {
 }
 
 async function normalizeGraph(data) {
+  stopForceLayout();
   validateGraph(data);
   state.data = data;
   state.notes = data.notes.map((note, index) => ({ ...note, __index: index }));
@@ -819,6 +820,7 @@ function fitGraph() {
 }
 
 function setView(view) {
+  if (view !== "atlas") stopForceLayout();
   state.view = view;
   document.querySelectorAll("[data-view]").forEach((button) => {
     const active = button.dataset.view === view;

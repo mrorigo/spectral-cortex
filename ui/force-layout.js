@@ -39,6 +39,16 @@ function run() {
     const fx = dx / distance * force, fy = dy / distance * force;
     forces[edge.source.index].x += fx; forces[edge.source.index].y += fy; forces[edge.target.index].x -= fx; forces[edge.target.index].y -= fy;
   }
+  const padding = Math.max(0, finite(s.settings.collisionPadding, 3));
+  for (let left = 0; left < s.nodes.length; left += 1) for (let right = left + 1; right < s.nodes.length; right += 1) {
+    const a = s.nodes[left], b = s.nodes[right];
+    const dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(.01, Math.hypot(dx, dy));
+    const minimum = a.radius + b.radius + padding;
+    if (distance >= minimum) continue;
+    const force = (minimum - distance) * .18;
+    const fx = dx / distance * force, fy = dy / distance * force;
+    forces[left].x -= fx; forces[left].y -= fy; forces[right].x += fx; forces[right].y += fy;
+  }
   let displacement = 0;
   for (const [index, node] of s.nodes.entries()) {
     if (node.pinned) { node.vx = 0; node.vy = 0; continue; }
