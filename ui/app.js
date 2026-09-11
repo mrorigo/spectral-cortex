@@ -308,7 +308,7 @@ function strengthToSlider(value) {
 }
 
 function updateSemanticThresholdInteractivity(hasSemantic = state.edges.some((edge) => edge.type === "embedding")) {
-  const disabled = !hasSemantic || state.edgeType === "structural" || state.edgeType === "spectral";
+  const disabled = !hasSemantic || state.edgeType === "history" || state.edgeType === "spectral";
   el.strengthThreshold.disabled = disabled;
   el.thresholdValue.style.opacity = disabled ? ".45" : "1";
 }
@@ -324,7 +324,7 @@ function configureSpectralThreshold() {
   el.spectralThreshold.max = "1000";
   el.spectralThreshold.value = String(strengthToSliderFor(state.spectralStrength, state.spectralRange));
   el.spectralThresholdValue.textContent = hasWeights ? `≥ ${state.spectralStrength.toFixed(2)}` : "No spectral links";
-  el.spectralThreshold.disabled = !hasWeights || state.edgeType === "embedding" || state.edgeType === "structural";
+  el.spectralThreshold.disabled = !hasWeights || state.edgeType === "embedding" || state.edgeType === "history";
   el.spectralThresholdValue.style.opacity = el.spectralThreshold.disabled ? ".45" : "1";
 }
 
@@ -342,14 +342,14 @@ function strengthToSliderFor(value, { min, max }) {
 
 function configureStructuralThreshold() {
   state.structuralDegreeById = new Map(state.notes.map((note) => [note.note_id, 0]));
-  const structuralEdges = (state.showHistory ? state.edges : projectedEdges()).filter((edge) => edge.type === "structural");
+  const structuralEdges = (state.showHistory ? state.edges : projectedEdges()).filter((edge) => edge.type === "history");
   for (const edge of structuralEdges) {
     state.structuralDegreeById.set(edge.source, (state.structuralDegreeById.get(edge.source) ?? 0) + 1);
     state.structuralDegreeById.set(edge.target, (state.structuralDegreeById.get(edge.target) ?? 0) + 1);
   }
   const max = Math.max(0, ...state.structuralDegreeById.values());
   const hasStructuralLinks = max > 0;
-  const persistedStructuralLinks = state.edges.some((edge) => edge.type === "structural");
+  const persistedStructuralLinks = state.edges.some((edge) => edge.type === "history");
   state.minStructuralDegree = 1;
   el.structuralThreshold.min = "1";
   el.structuralThreshold.max = String(Math.max(1, max));
@@ -360,7 +360,7 @@ function configureStructuralThreshold() {
   updateStructuralThresholdInteractivity(hasStructuralLinks);
 }
 
-function updateStructuralThresholdInteractivity(hasStructural = state.edges.some((edge) => edge.type === "structural")) {
+function updateStructuralThresholdInteractivity(hasStructural = state.edges.some((edge) => edge.type === "history")) {
   const disabled = !hasStructural || state.edgeType === "embedding" || state.edgeType === "spectral";
   el.structuralThreshold.disabled = disabled;
   el.structuralThresholdValue.style.opacity = disabled ? ".45" : "1";
@@ -436,7 +436,7 @@ function applyFilters() {
 
 function renderMetrics() {
   const symbols = new Set(state.notes.map((note) => note.symbol_id).filter(Boolean));
-  const structural = state.edges.filter((edge) => edge.type === "structural").length;
+  const structural = state.edges.filter((edge) => edge.type === "history").length;
   const times = state.notes.map(timestampOf).filter(Boolean).sort((a, b) => a - b);
   el.metricNodes.textContent = formatNumber(state.notes.length);
   el.metricSymbols.textContent = formatNumber(symbols.size);
@@ -654,7 +654,7 @@ function drawGraph() {
   const visible = projection.visible;
   const selectedConnections = state.selectedId === null ? new Set() : new Set(connectionsFor(state.noteById.get(state.selectedId)).map((edge) => edge.otherId));
   const nodeMap = new Map(state.graph.nodes.map((node) => [node.id, node]));
-  const edgeTypes = state.graphMode === "bridges" ? new Set(["spectral"]) : state.edgeType === "all" ? new Set(["embedding", "spectral", "structural", "topology:call", "topology:import"]) : new Set([state.edgeType]);
+  const edgeTypes = state.graphMode === "bridges" ? new Set(["spectral"]) : state.edgeType === "all" ? new Set(["embedding", "spectral", "history", "topology:call", "topology:import"]) : new Set([state.edgeType]);
   ctx.save();
   for (const edge of projection.edges) {
     const emphasized = state.selectedId !== null && (edge.source === state.selectedId || edge.target === state.selectedId);
@@ -662,18 +662,18 @@ function drawGraph() {
     if (!emphasized && !edgeTypes.has(edge.type)) continue;
     if (!emphasized && edge.type === "embedding" && edge.weight < state.minStrength) continue;
     if (!emphasized && edge.type === "spectral" && edge.weight < state.spectralStrength) continue;
-    if (!emphasized && edge.type === "structural" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
+    if (!emphasized && edge.type === "history" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
     const from = screenPosition(nodeMap.get(edge.source));
     const to = screenPosition(nodeMap.get(edge.target));
     const focusedType = state.edgeType === edge.type;
     ctx.beginPath();
     ctx.moveTo(from.x, from.y);
     ctx.lineTo(to.x, to.y);
-    ctx.strokeStyle = edge.type === "structural"
+    ctx.strokeStyle = edge.type === "history"
       ? `rgba(113,224,208,${emphasized ? .86 : focusedType ? .52 : .14})`
       : edge.type === "spectral" ? `rgba(213,167,232,${emphasized ? .86 : focusedType ? .42 : .16})` : edge.type.startsWith("topology:") ? `rgba(118,184,220,${emphasized ? .86 : focusedType ? .42 : .16})` : `rgba(255,155,103,${emphasized ? .86 : focusedType ? .42 : .16})`;
-    ctx.lineWidth = emphasized ? 1.6 : edge.type === "structural" ? focusedType ? 1.1 : .6 : focusedType ? Math.max(.65, edge.weight) : Math.max(.4, edge.weight);
-    ctx.setLineDash(edge.type === "structural" ? focusedType ? [5, 4] : [2, 4] : edge.type === "spectral" ? [8, 4] : edge.type.startsWith("topology:") ? [3, 3] : []);
+    ctx.lineWidth = emphasized ? 1.6 : edge.type === "history" ? focusedType ? 1.1 : .6 : focusedType ? Math.max(.65, edge.weight) : Math.max(.4, edge.weight);
+    ctx.setLineDash(edge.type === "history" ? focusedType ? [5, 4] : [2, 4] : edge.type === "spectral" ? [8, 4] : edge.type.startsWith("topology:") ? [3, 3] : []);
     ctx.stroke();
   }
   ctx.setLineDash([]);
@@ -719,7 +719,7 @@ function drawMatrix() {
     if (state.edgeType !== "all" && edge.type !== state.edgeType) continue;
     if (edge.type === "embedding" && edge.weight < state.minStrength) continue;
     if (edge.type === "spectral" && edge.weight < state.spectralStrength) continue;
-    if (edge.type === "structural" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
+    if (edge.type === "history" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
     const source = clusterOf(state.noteById.get(edge.source));
     const target = clusterOf(state.noteById.get(edge.target));
     const key = `${source}:${target}`;
