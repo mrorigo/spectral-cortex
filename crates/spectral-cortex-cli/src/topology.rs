@@ -309,8 +309,13 @@ fn collect_calls(
 
 #[cfg(test)]
 mod tests {
+    use super::collect_snapshots;
     use super::resolve_import_path;
+    use crate::ast::registry::ParserRegistry;
+    use git2::{Repository, Signature};
     use std::collections::HashMap;
+    use std::fs;
+    use tempfile::tempdir;
 
     fn files(paths: &[&str]) -> HashMap<String, Vec<String>> {
         paths.iter().map(|path| ((*path).into(), vec![])).collect()
@@ -346,5 +351,59 @@ mod tests {
             resolve_import_path("src/main.ts", "import './mod';", &ambiguous),
             None
         );
+    }
+
+    #[test]
+    fn builds_distinct_snapshots_from_distinct_commit_trees() {
+        let directory = tempdir().expect("temporary repository");
+        let repository = Repository::init(directory.path()).expect("initialize repository");
+        let file = directory.path().join("main.rs");
+        let signature =
+            Signature::now("topology-test", "topology@example.test").expect("signature");
+
+        fs::write(&file, "fn first() { second(); }\nfn second() {}\n").expect("write first tree");
+        let mut index = repository.index().expect("index");
+        index
+            .add_path(std::path::Path::new("main.rs"))
+            .expect("stage first tree");
+        let tree = repository
+            .find_tree(index.write_tree().expect("write first tree index"))
+            .expect("first tree");
+        let first = repository
+            .commit(Some("HEAD"), &signature, &signature, "first", &tree, &[])
+            .expect("first commit");
+
+        fs::write(&file, "fn first() { third(); }\nfn third() {}\n").expect("write second tree");
+        let mut index = repository.index().expect("index");
+        index
+            .add_path(std::path::Path::new("main.rs"))
+            .expect("stage second tree");
+        let tree = repository
+            .find_tree(index.write_tree().expect("write second tree index"))
+            .expect("second tree");
+        let first_commit = repository.find_commit(first).expect("first commit");
+        let second = repository
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                "second",
+                &tree,
+                &[&first_commit],
+            )
+            .expect("second commit");
+
+        let snapshots = collect_snapshots(
+            directory.path(),
+            [first.to_string(), second.to_string()],
+            &ParserRegistry::default(),
+        )
+        .expect("collect snapshots");
+        assert_eq!(snapshots.len(), 2);
+        assert!(snapshots
+            .iter()
+            .all(|snapshot| !snapshot.symbols.is_empty()));
+        assert_ne!(snapshots[0].symbols, snapshots[1].symbols);
+        assert_ne!(snapshots[0].edges, snapshots[1].edges);
     }
 }
