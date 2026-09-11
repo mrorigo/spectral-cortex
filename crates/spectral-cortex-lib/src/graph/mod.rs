@@ -7,7 +7,7 @@
 //
 // Rust guideline compliant 2026-02-11
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -19,7 +19,7 @@ use ndarray::{Array1, Array2};
 use crate::embed;
 use crate::model::{
     conversation_turn::ConversationTurn,
-    smg_note::{SMGNote, TopologyLink, TopologySnapshot},
+    smg_note::{SMGNote, TopologySnapshot},
 };
 use crate::utils::logging;
 
@@ -322,7 +322,6 @@ impl SpectralMemoryGraph {
             ast_node_type: turn.ast_node_type.clone(),
             file_path: turn.file_path.clone(),
             history_links: Vec::new(),
-            topology_links: Vec::new(),
         };
         self.notes.insert(self.next_id, note);
         self.next_id += 1;
@@ -392,7 +391,6 @@ impl SpectralMemoryGraph {
                 ast_node_type: turn.ast_node_type.clone(),
                 file_path: turn.file_path.clone(),
                 history_links: Vec::new(),
-                topology_links: Vec::new(),
             };
             self.notes.insert(self.next_id, note);
             self.next_id += 1;
@@ -442,20 +440,14 @@ impl SpectralMemoryGraph {
         }
     }
 
-    /// Materialize the newest persisted topology snapshot onto matching notes.
-    ///
-    /// This is a derived, in-memory adjacency used by spectral construction;
-    /// the authoritative topology remains in `topology_snapshots`.
-    pub fn resolve_topology_links(&mut self) {
-        for note in self.notes.values_mut() {
-            note.topology_links.clear();
-        }
+    /// Resolve the newest persisted topology snapshot to note-ID adjacency.
+    pub fn topology_adjacency(&self) -> HashSet<(u32, u32)> {
         let Some(snapshot) = self.topology_snapshots.iter().max_by(|a, b| {
             a.timestamp
                 .cmp(&b.timestamp)
                 .then_with(|| a.commit_id.cmp(&b.commit_id))
         }) else {
-            return;
+            return HashSet::new();
         };
         let note_by_symbol: HashMap<(String, String, String), u32> = self
             .notes
@@ -481,6 +473,7 @@ impl SpectralMemoryGraph {
                 )
             })
             .collect();
+        let mut adjacency = HashSet::new();
         for edge in &snapshot.edges {
             let Some((source_file, source_type)) =
                 symbol_metadata.get(edge.source_symbol_id.as_str())
@@ -507,19 +500,10 @@ impl SpectralMemoryGraph {
                 continue;
             };
             if source != target {
-                self.notes.entry(source).and_modify(|note| {
-                    note.topology_links.push(TopologyLink {
-                        target_note_id: target,
-                        relation: edge.relation.clone(),
-                    })
-                });
+                adjacency.insert((source, target));
             }
         }
-        for note in self.notes.values_mut() {
-            note.topology_links
-                .sort_by_key(|link| (link.target_note_id, link.relation.clone()));
-            note.topology_links.dedup();
-        }
+        adjacency
     }
 
     /// Build spectral structures using the helper functions in `graph::spectral`.
@@ -568,7 +552,7 @@ impl SpectralMemoryGraph {
         }
 
         config.validate()?;
-        self.resolve_topology_links();
+        let topology_edges = self.topology_adjacency();
 
         let n = self.notes.len();
         if n < 3 {
@@ -611,7 +595,7 @@ impl SpectralMemoryGraph {
         let sim_sparse = compute_sparse_fused_similarity_matrix(
             &embed_mat,
             &note_ids,
-            &self.notes,
+            &topology_edges,
             config.structural_alpha,
             config.structural_beta,
             config.adj_sparse_threshold,
@@ -1210,7 +1194,6 @@ mod tests {
             ast_node_type: None,
             file_path: None,
             history_links: vec![],
-            topology_links: vec![],
         }
     }
 

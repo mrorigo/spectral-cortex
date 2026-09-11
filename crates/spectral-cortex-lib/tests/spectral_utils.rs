@@ -5,8 +5,7 @@ use spectral_cortex::graph::spectral::{
     degree_vector, normalized_laplacian, sparsify_adj, spectral_decomposition, to_sparse,
 };
 use spectral_cortex::model::smg_note::SMGNote;
-use spectral_cortex::model::smg_note::{TopologyLink, TopologyRelation};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[test]
 fn test_assemble_and_cosine() {
@@ -27,7 +26,6 @@ fn test_assemble_and_cosine() {
             symbol_id: None,
             ast_node_type: None,
             history_links: vec![],
-            topology_links: vec![],
             file_path: Some("file1.rs".to_string()),
         },
     );
@@ -46,7 +44,6 @@ fn test_assemble_and_cosine() {
             symbol_id: None,
             ast_node_type: None,
             history_links: vec![],
-            topology_links: vec![],
             file_path: Some("file1.rs".to_string()),
         },
     );
@@ -85,22 +82,20 @@ fn test_fused_similarity_matches_cosine_and_preserves_structural_fusion() {
                 symbol_id: None,
                 ast_node_type: None,
                 history_links: vec![],
-                topology_links: vec![],
                 file_path: None,
             },
         );
     }
 
-    let plain = compute_fused_similarity_matrix(&embeddings, &[1, 2, 3], &notes, 1.0, 0.0, None);
+    let empty = HashSet::new();
+    let plain = compute_fused_similarity_matrix(&embeddings, &[1, 2, 3], &empty, 1.0, 0.0, None);
     for (actual, expected) in plain.iter().zip(reference.iter()) {
         assert!((actual - expected).abs() < 1e-6);
     }
 
-    notes.get_mut(&1).unwrap().topology_links = vec![TopologyLink {
-        target_note_id: 2,
-        relation: TopologyRelation::Call,
-    }];
-    let fused = compute_fused_similarity_matrix(&embeddings, &[1, 2, 3], &notes, 0.5, 0.25, None);
+    let topology = HashSet::from([(1, 2)]);
+    let fused =
+        compute_fused_similarity_matrix(&embeddings, &[1, 2, 3], &topology, 0.5, 0.25, None);
     let expected = 0.5 * reference[(0, 1)] + 0.25;
     assert!((fused[(0, 1)] - expected).abs() < 1e-6);
     assert_eq!(fused[(0, 1)], fused[(1, 0)]);
@@ -127,27 +122,20 @@ fn test_sparse_fused_similarity_matches_thresholded_dense_reference() {
                 symbol_id: None,
                 ast_node_type: None,
                 history_links: vec![],
-                topology_links: vec![],
                 file_path: None,
             },
         );
     }
-    notes.get_mut(&1).unwrap().topology_links = vec![TopologyLink {
-        target_note_id: 2,
-        relation: TopologyRelation::Call,
-    }];
-    notes.get_mut(&2).unwrap().topology_links = vec![TopologyLink {
-        target_note_id: 1,
-        relation: TopologyRelation::Call,
-    }];
+    let topology = HashSet::from([(1, 2)]);
 
-    let mut dense = compute_fused_similarity_matrix(&embeddings, &order, &notes, 0.5, 0.25, None);
+    let mut dense =
+        compute_fused_similarity_matrix(&embeddings, &order, &topology, 0.5, 0.25, None);
     sparsify_adj(&mut dense, 0.5);
     // Structural edges bypass semantic sparsification.
     dense[(0, 1)] = 0.25;
     dense[(1, 0)] = 0.25;
     let sparse =
-        compute_sparse_fused_similarity_matrix(&embeddings, &order, &notes, 0.5, 0.25, 0.5, 32)
+        compute_sparse_fused_similarity_matrix(&embeddings, &order, &topology, 0.5, 0.25, 0.5, 32)
             .expect("valid sparse matrix");
 
     for i in 0..3 {

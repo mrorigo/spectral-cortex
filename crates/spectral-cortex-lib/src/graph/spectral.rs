@@ -77,7 +77,7 @@ pub fn assemble_embedding_matrix(notes: &HashMap<u32, SMGNote>, order: &[u32]) -
 pub fn compute_fused_similarity_matrix(
     x: &Array2<f32>,
     order: &[u32],
-    notes: &HashMap<u32, SMGNote>,
+    topology_edges: &HashSet<(u32, u32)>,
     alpha: f32,
     beta: f32,
     progress: Option<&(dyn Fn(String, f32) + Send + Sync)>,
@@ -144,7 +144,7 @@ pub fn compute_fused_similarity_matrix(
     }
 
     // 2. Fuse with structural links
-    boost_with_topology_links(&mut sim, order, notes, alpha, beta);
+    boost_with_topology_links(&mut sim, order, topology_edges, alpha, beta);
 
     sim
 }
@@ -188,7 +188,7 @@ pub fn cosine_similarity_matrix(x: &Array2<f32>) -> Array2<f32> {
 pub fn boost_with_topology_links(
     w: &mut Array2<f32>,
     order: &[u32],
-    notes: &HashMap<u32, SMGNote>,
+    topology_edges: &HashSet<(u32, u32)>,
     alpha: f32,
     beta: f32,
 ) {
@@ -196,16 +196,13 @@ pub fn boost_with_topology_links(
     if n == 0 {
         return;
     }
-    let id_to_idx: HashMap<u32, usize> = order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
     for i in 0..n {
-        let nid = order[i];
-        if let Some(note) = notes.get(&nid) {
-            for link in &note.topology_links {
-                let link_id = link.target_note_id;
-                if let Some(&j) = id_to_idx.get(&link_id) {
-                    w[(i, j)] = alpha * w[(i, j)] + beta;
-                    w[(j, i)] = w[(i, j)]; // Maintain symmetry
-                }
+        for j in (i + 1)..n {
+            if topology_edges.contains(&(order[i], order[j]))
+                || topology_edges.contains(&(order[j], order[i]))
+            {
+                w[(i, j)] = alpha * w[(i, j)] + beta;
+                w[(j, i)] = w[(i, j)];
             }
         }
     }
@@ -269,7 +266,7 @@ pub fn to_sparse(w: &Array2<f32>) -> Result<CsrMatrix<f32>> {
 pub fn compute_sparse_fused_similarity_matrix(
     x: &Array2<f32>,
     order: &[u32],
-    notes: &HashMap<u32, SMGNote>,
+    topology_edges: &HashSet<(u32, u32)>,
     alpha: f32,
     beta: f32,
     threshold: f32,
@@ -293,16 +290,11 @@ pub fn compute_sparse_fused_similarity_matrix(
         .collect();
     let structural_neighbors: Vec<HashSet<u32>> = order
         .iter()
-        .map(|note_id| {
-            notes
-                .get(note_id)
-                .map(|note| {
-                    note.topology_links
-                        .iter()
-                        .map(|link| link.target_note_id)
-                        .collect()
-                })
-                .unwrap_or_default()
+        .map(|source| {
+            topology_edges
+                .iter()
+                .filter_map(|(from, to)| (from == source).then_some(*to))
+                .collect()
         })
         .collect();
 
