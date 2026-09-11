@@ -316,6 +316,8 @@ function stopForceLayout() {
 function startForceLayout() {
   if (state.graphMode !== "force" || !state.graph.nodes.length) return;
   stopForceLayout();
+  state.force.paused = false;
+  if (el.toggleForce) el.toggleForce.textContent = "Pause";
   const session = state.force.session;
   // Keep the first implementation on the rendering thread. This works when
   // the UI is opened directly or served, and makes motion observable before
@@ -334,6 +336,7 @@ function startInlineForceLayout(session) {
   let tick = 0;
   let stableTicks = 0;
   let paused = false;
+  const schedule = () => window.setTimeout(step, 16);
   state.force.status = "layouting";
   if (el.forceStatus) el.forceStatus.textContent = "Layouting";
   const step = () => {
@@ -368,11 +371,11 @@ function startInlineForceLayout(session) {
       stableTicks = displacement < .25 ? stableTicks + 1 : 0;
       const done = stableTicks >= 8 || tick >= 600;
       if (el.forceStatus) el.forceStatus.textContent = done ? (tick >= 600 ? "Iteration cap reached" : "Converged") : `Layouting · ${tick} · ${nodes.length} nodes`;
-      if (!done) requestAnimationFrame(step);
+      if (!done) schedule();
     }
   };
-  requestAnimationFrame(step);
-  state.force.inline = { pause: () => { paused = true; }, resume: () => { if (paused) { paused = false; requestAnimationFrame(step); } } };
+  state.force.inline = { pause: () => { paused = true; }, resume: () => { if (paused) { paused = false; schedule(); } } };
+  step();
 }
 
 function configureStrengthThreshold() {
