@@ -317,6 +317,11 @@ function startForceLayout() {
   if (state.graphMode !== "force" || !state.graph.nodes.length) return;
   stopForceLayout();
   const session = state.force.session;
+  // Keep the first implementation on the rendering thread. This works when
+  // the UI is opened directly or served, and makes motion observable before
+  // introducing worker transport as a measured optimization.
+  startInlineForceLayout(session);
+  return;
   let worker;
   try { worker = new Worker("./force-layout.js"); } catch { startInlineForceLayout(session); return; }
   state.force.worker = worker;
