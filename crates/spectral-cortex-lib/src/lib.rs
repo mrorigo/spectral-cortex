@@ -428,6 +428,9 @@ fn validate_serial_smg_data(serial: &SerializableSMG) -> Result<()> {
 #[cfg(test)]
 mod persistence_tests {
     use super::{validate_serial_smg_data, SerializableNote, SerializableSMG};
+    use crate::model::smg_note::{
+        TopologyEdge, TopologyRelation, TopologySnapshot, TopologySymbol,
+    };
     use std::collections::HashMap;
 
     fn note(note_id: u32) -> SerializableNote {
@@ -485,5 +488,42 @@ mod persistence_tests {
         let mut invalid = serial(vec![note(1)]);
         invalid.long_range_links = Some(vec![(1, 99, 1.0)]);
         assert!(validate_serial_smg_data(&invalid).is_err());
+    }
+
+    #[test]
+    fn validates_topology_snapshot_endpoints_and_identity() {
+        let mut valid = serial(vec![note(1)]);
+        valid.topology_snapshots = vec![TopologySnapshot {
+            commit_id: "abc123".into(),
+            timestamp: 1,
+            symbols: vec![
+                TopologySymbol {
+                    symbol_id: "a".into(),
+                    file_path: "a.rs".into(),
+                    ast_node_type: "IMPLEMENTATION".into(),
+                },
+                TopologySymbol {
+                    symbol_id: "b".into(),
+                    file_path: "b.rs".into(),
+                    ast_node_type: "IMPLEMENTATION".into(),
+                },
+            ],
+            edges: vec![TopologyEdge {
+                source_symbol_id: "a".into(),
+                target_symbol_id: "b".into(),
+                relation: TopologyRelation::Call,
+            }],
+        }];
+        assert!(validate_serial_smg_data(&valid).is_ok());
+
+        let mut invalid = valid.clone();
+        invalid.topology_snapshots[0].edges[0].target_symbol_id = "missing".into();
+        assert!(validate_serial_smg_data(&invalid).is_err());
+
+        let mut duplicate = valid;
+        duplicate
+            .topology_snapshots
+            .push(duplicate.topology_snapshots[0].clone());
+        assert!(validate_serial_smg_data(&duplicate).is_err());
     }
 }
