@@ -201,10 +201,12 @@ fn resolve_import_path(
             }
         }
     }
-    let matches: Vec<_> = candidates
+    let mut matches: Vec<_> = candidates
         .into_iter()
         .filter(|candidate| files.contains_key(candidate))
         .collect();
+    matches.sort();
+    matches.dedup();
     (matches.len() == 1).then(|| matches[0].clone())
 }
 
@@ -358,14 +360,23 @@ mod tests {
         let directory = tempdir().expect("temporary repository");
         let repository = Repository::init(directory.path()).expect("initialize repository");
         let file = directory.path().join("main.rs");
+        let module = directory.path().join("util.rs");
         let signature =
             Signature::now("topology-test", "topology@example.test").expect("signature");
 
-        fs::write(&file, "fn first() { second(); }\nfn second() {}\n").expect("write first tree");
+        fs::write(
+            &file,
+            "use crate::util::helper;\nfn first() { second(); helper(); }\nfn second() {}\n",
+        )
+        .expect("write first tree");
+        fs::write(&module, "fn helper() {}\n").expect("write first module");
         let mut index = repository.index().expect("index");
         index
             .add_path(std::path::Path::new("main.rs"))
             .expect("stage first tree");
+        index
+            .add_path(std::path::Path::new("util.rs"))
+            .expect("stage first module");
         let tree = repository
             .find_tree(index.write_tree().expect("write first tree index"))
             .expect("first tree");
@@ -373,11 +384,19 @@ mod tests {
             .commit(Some("HEAD"), &signature, &signature, "first", &tree, &[])
             .expect("first commit");
 
-        fs::write(&file, "fn first() { third(); }\nfn third() {}\n").expect("write second tree");
+        fs::write(
+            &file,
+            "use crate::util::other;\nfn first() { third(); other(); }\nfn third() {}\n",
+        )
+        .expect("write second tree");
+        fs::write(&module, "fn other() {}\n").expect("write second module");
         let mut index = repository.index().expect("index");
         index
             .add_path(std::path::Path::new("main.rs"))
             .expect("stage second tree");
+        index
+            .add_path(std::path::Path::new("util.rs"))
+            .expect("stage second module");
         let tree = repository
             .find_tree(index.write_tree().expect("write second tree index"))
             .expect("second tree");
@@ -405,5 +424,12 @@ mod tests {
             .all(|snapshot| !snapshot.symbols.is_empty()));
         assert_ne!(snapshots[0].symbols, snapshots[1].symbols);
         assert_ne!(snapshots[0].edges, snapshots[1].edges);
+        assert_eq!(
+            resolve_import_path("main.rs", "use crate::util::helper;", &files(&["util.rs"])),
+            Some("util.rs".into())
+        );
+        assert!(snapshots.iter().all(|snapshot| snapshot.edges.iter().any(
+            |edge| edge.relation == spectral_cortex::model::smg_note::TopologyRelation::Import
+        )));
     }
 }
