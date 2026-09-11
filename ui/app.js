@@ -128,9 +128,11 @@ async function normalizeGraph(data) {
   state.semanticDerived = false;
   if (![...edgeMap.values()].some((edge) => edge.type === "spectral")) {
     showDerivationState();
-    for (const link of await deriveSemanticLinks(state.notes)) addEdge(link.source, link.target, "embedding", link.weight);
-    state.semanticDerived = true;
   }
+  // Keep embedding cosine links independent from persisted spectral links.
+  // The two measures answer different questions and must be inspectable together.
+  for (const link of await deriveSemanticLinks(state.notes)) addEdge(link.source, link.target, "embedding", link.weight);
+  state.semanticDerived = true;
   state.edges = [...edgeMap.values()];
   configureStrengthThreshold();
   configureStructuralThreshold();
