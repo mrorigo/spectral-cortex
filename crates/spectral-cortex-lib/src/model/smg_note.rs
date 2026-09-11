@@ -12,7 +12,7 @@ pub struct TopologyLink {
 }
 
 /// Supported code-topology relation kinds.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TopologyRelation {
     /// The source symbol calls the target symbol.
     Call,

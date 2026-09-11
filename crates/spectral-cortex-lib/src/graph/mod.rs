@@ -19,7 +19,7 @@ use ndarray::{Array1, Array2};
 use crate::embed;
 use crate::model::{
     conversation_turn::ConversationTurn,
-    smg_note::{SMGNote, TopologySnapshot},
+    smg_note::{SMGNote, TopologyLink, TopologySnapshot},
 };
 use crate::utils::logging;
 
@@ -442,6 +442,86 @@ impl SpectralMemoryGraph {
         }
     }
 
+    /// Materialize the newest persisted topology snapshot onto matching notes.
+    ///
+    /// This is a derived, in-memory adjacency used by spectral construction;
+    /// the authoritative topology remains in `topology_snapshots`.
+    pub fn resolve_topology_links(&mut self) {
+        for note in self.notes.values_mut() {
+            note.topology_links.clear();
+        }
+        let Some(snapshot) = self.topology_snapshots.iter().max_by(|a, b| {
+            a.timestamp
+                .cmp(&b.timestamp)
+                .then_with(|| a.commit_id.cmp(&b.commit_id))
+        }) else {
+            return;
+        };
+        let note_by_symbol: HashMap<(String, String, String), u32> = self
+            .notes
+            .values()
+            .filter_map(|note| {
+                Some((
+                    (
+                        note.symbol_id.clone()?,
+                        note.file_path.clone()?,
+                        note.ast_node_type.clone()?,
+                    ),
+                    note.note_id,
+                ))
+            })
+            .collect();
+        let symbol_metadata: HashMap<&str, (&str, &str)> = snapshot
+            .symbols
+            .iter()
+            .map(|symbol| {
+                (
+                    symbol.symbol_id.as_str(),
+                    (symbol.file_path.as_str(), symbol.ast_node_type.as_str()),
+                )
+            })
+            .collect();
+        for edge in &snapshot.edges {
+            let Some((source_file, source_type)) =
+                symbol_metadata.get(edge.source_symbol_id.as_str())
+            else {
+                continue;
+            };
+            let Some((target_file, target_type)) =
+                symbol_metadata.get(edge.target_symbol_id.as_str())
+            else {
+                continue;
+            };
+            let Some(&source) = note_by_symbol.get(&(
+                edge.source_symbol_id.clone(),
+                (*source_file).to_string(),
+                (*source_type).to_string(),
+            )) else {
+                continue;
+            };
+            let Some(&target) = note_by_symbol.get(&(
+                edge.target_symbol_id.clone(),
+                (*target_file).to_string(),
+                (*target_type).to_string(),
+            )) else {
+                continue;
+            };
+            if source != target {
+                self.notes.entry(source).and_modify(|note| {
+                    note.topology_links.push(TopologyLink {
+                        target_note_id: target,
+                        relation: edge.relation.clone(),
+                    })
+                });
+            }
+        }
+        for note in self.notes.values_mut() {
+            note.topology_links
+                .sort_by_key(|link| (link.target_note_id, link.relation.clone()));
+            note.topology_links.dedup();
+        }
+    }
+
     /// Build spectral structures using the helper functions in `graph::spectral`.
     ///
     /// Pipeline:
@@ -488,6 +568,7 @@ impl SpectralMemoryGraph {
         }
 
         config.validate()?;
+        self.resolve_topology_links();
 
         let n = self.notes.len();
         if n < 3 {
