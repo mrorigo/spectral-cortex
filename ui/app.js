@@ -3,6 +3,7 @@ const state = {
   data: null,
   notes: [],
   noteById: new Map(),
+  identityRepresentative: new Map(),
   edges: [],
   filtered: [],
   cluster: null,
@@ -93,6 +94,18 @@ async function normalizeGraph(data) {
   state.data = data;
   state.notes = data.notes.map((note, index) => ({ ...note, __index: index }));
   state.noteById = new Map(state.notes.map((note) => [note.note_id, note]));
+  state.identityRepresentative = new Map();
+  const latestByIdentity = new Map();
+  for (const note of state.notes) {
+    if (!note.symbol_id) continue;
+    const key = `${note.symbol_id}\0${note.file_path ?? ""}`;
+    const current = latestByIdentity.get(key);
+    if (!current || timestampOf(note) > timestampOf(current) || (timestampOf(note) === timestampOf(current) && note.note_id > current.note_id)) latestByIdentity.set(key, note);
+  }
+  for (const note of state.notes) {
+    const key = note.symbol_id ? `${note.symbol_id}\0${note.file_path ?? ""}` : "";
+    state.identityRepresentative.set(note.note_id, latestByIdentity.get(key)?.note_id ?? note.note_id);
+  }
   configureTimeFilter();
   const edgeMap = new Map();
   const addEdge = (source, target, type, weight = 1, longRange = false) => {
@@ -268,7 +281,8 @@ function updateSemanticThresholdInteractivity(hasSemantic = state.edges.some((ed
 
 function configureStructuralThreshold() {
   state.structuralDegreeById = new Map(state.notes.map((note) => [note.note_id, 0]));
-  for (const edge of state.edges.filter((edge) => edge.type === "structural")) {
+  const structuralEdges = (state.showHistory ? state.edges : projectedEdges()).filter((edge) => edge.type === "structural");
+  for (const edge of structuralEdges) {
     state.structuralDegreeById.set(edge.source, (state.structuralDegreeById.get(edge.source) ?? 0) + 1);
     state.structuralDegreeById.set(edge.target, (state.structuralDegreeById.get(edge.target) ?? 0) + 1);
   }
@@ -502,7 +516,7 @@ function screenPosition(node) {
 
 function projectGraph() {
   const filtered = new Set(state.filtered.map((note) => note.note_id));
-  let edges = state.edges;
+  let edges = state.showHistory ? state.edges : projectedEdges();
   if (state.graphMode === "bridges") edges = edges.filter((edge) => edge.longRange);
   if (state.graphMode === "neighborhood") {
     if (state.selectedId === null) return { visible: new Set(), edges: [] };
@@ -536,6 +550,20 @@ function projectGraph() {
     return { visible, edges: edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target)) };
   }
   return { visible: filtered, edges: edges.filter((edge) => filtered.has(edge.source) && filtered.has(edge.target)) };
+}
+
+function projectedEdges() {
+  const projected = new Map();
+  for (const edge of state.edges) {
+    const source = state.identityRepresentative.get(edge.source) ?? edge.source;
+    const target = state.identityRepresentative.get(edge.target) ?? edge.target;
+    if (source === target) continue;
+    const [left, right] = source < target ? [source, target] : [target, source];
+    const key = `${left}:${right}:${edge.type}`;
+    const current = projected.get(key);
+    if (!current || edge.weight > current.weight) projected.set(key, { ...edge, source: left, target: right });
+  }
+  return [...projected.values()];
 }
 
 function drawGraph() {
@@ -762,6 +790,7 @@ el.focusSearch.addEventListener("click", () => el.searchInput.focus());
 el.searchInput.addEventListener("input", (event) => { state.query = event.target.value; applyFilters(); });
 el.showHistory.addEventListener("change", (event) => {
   state.showHistory = event.target.checked;
+  configureStructuralThreshold();
   applyFilters();
 });
 el.clearFilters.addEventListener("click", () => { state.cluster = null; state.query = ""; el.searchInput.value = ""; renderClusters(); applyFilters(); });
