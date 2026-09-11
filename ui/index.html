@@ -66,6 +66,7 @@
           <button data-browse="symbols" type="button" role="tab" aria-selected="false">Symbols</button>
           <button data-browse="hotspots" type="button" role="tab" aria-selected="false">Hotspots</button>
         </div>
+        <label class="history-toggle"><input id="showHistory" type="checkbox" /> <span>Show symbol history</span></label>
 
         <section class="time-filter" aria-label="Temporal filter">
           <div class="section-label"><span>Time window</span><output id="timeWindowValue">All history</output></div>
@@ -114,6 +115,7 @@
         </div>
         <div class="note-list" id="noteList" tabindex="0"></div>
       </aside>
+      <div class="panel-resizer panel-resizer-left" id="libraryResizer" role="separator" aria-label="Resize memory index panel" aria-orientation="vertical" tabindex="0" title="Drag to resize the memory index"></div>
 
       <main class="workspace">
         <section class="metrics" aria-label="Graph metrics">
@@ -178,7 +180,7 @@
             <p class="eyebrow">Memory <span id="detailId"></span></p>
             <button id="closeInspector" type="button" aria-label="Close inspector">×</button>
           </div>
-          <h2 id="detailContent"></h2>
+          <div class="detail-content" id="detailContent"></div>
           <div class="detail-chips" id="detailChips"></div>
           <dl class="detail-grid">
             <div><dt>Recorded</dt><dd id="detailDate"></dd></div>
@@ -193,6 +195,7 @@
           </section>
         </div>
       </aside>
+      <div class="panel-resizer panel-resizer-right" id="inspectorResizer" role="separator" aria-label="Resize inspector panel" aria-orientation="vertical" tabindex="0" title="Drag to resize the inspector"></div>
     </div>
 
     <div class="drop-zone" id="dropZone" aria-hidden="true">

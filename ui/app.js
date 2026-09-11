@@ -23,6 +23,7 @@ const state = {
   labels: true,
   semanticDerived: false,
   graph: { nodes: [], transform: { x: 0, y: 0, scale: 1 }, drag: null },
+  showHistory: false,
 };
 
 const el = Object.fromEntries([...document.querySelectorAll("[id]")].map((node) => [node.id, node]));
@@ -30,6 +31,48 @@ const canvas = el.graphCanvas;
 const ctx = canvas.getContext("2d");
 
 const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
+const safeHref = (value) => /^(https?:|mailto:)/i.test(value) ? value : "";
+function renderMarkdown(value = "") {
+  const lines = String(value).replace(/\r/g, "").split("\n");
+  const inline = (text) => escapeHtml(text)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
+      const safe = safeHref(href.replace(/&amp;/g, "&"));
+      return safe ? `<a href="${escapeHtml(safe)}" target="_blank" rel="noreferrer">${label}</a>` : label;
+    });
+  const output = [];
+  let list = null;
+  let fenced = false;
+  let code = [];
+  const closeList = () => { if (list) output.push(`</${list}>`); list = null; };
+  for (const line of lines) {
+    if (line.startsWith("```")) {
+      if (fenced) { output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`); code = []; }
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced) { code.push(line); continue; }
+    const heading = line.match(/^(#{1,3})\s+(.+)$/);
+    const bullet = line.match(/^\s*([-*]|\d+\.)\s+(.+)$/);
+    if (heading) { closeList(); output.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`); continue; }
+    if (bullet) {
+      const type = /\d+\./.test(bullet[1]) ? "ol" : "ul";
+      if (list && list !== type) closeList();
+      if (!list) { output.push(`<${type}>`); list = type; }
+      output.push(`<li>${inline(bullet[2])}</li>`);
+      continue;
+    }
+    closeList();
+    if (!line.trim()) continue;
+    if (line.startsWith("> ")) output.push(`<blockquote>${inline(line.slice(2))}</blockquote>`);
+    else output.push(`<p>${inline(line)}</p>`);
+  }
+  if (fenced) output.push(`<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`);
+  closeList();
+  return output.join("");
+}
 const formatNumber = (value) => new Intl.NumberFormat("en").format(value ?? 0);
 const timestampOf = (note) => Math.max(0, ...(note.source_timestamps ?? [0]));
 const formatDate = (timestamp, style = "medium") => timestamp ? new Intl.DateTimeFormat("en", style === "short" ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" }).format(new Date(timestamp * 1000)) : "Unknown";
@@ -288,7 +331,18 @@ function applyTimeWindow(startValue, endValue, label) {
 
 function applyFilters() {
   const terms = state.query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+  const latestSymbols = new Map();
+  for (const note of state.notes) {
+    if (!note.symbol_id) continue;
+    const key = `${note.symbol_id}\0${note.file_path ?? ""}`;
+    const current = latestSymbols.get(key);
+    if (!current || timestampOf(note) > timestampOf(current) || (timestampOf(note) === timestampOf(current) && note.note_id > current.note_id)) latestSymbols.set(key, note);
+  }
   state.filtered = state.notes.filter((note) => {
+    if (!state.showHistory && note.symbol_id) {
+      const key = `${note.symbol_id}\0${note.file_path ?? ""}`;
+      if (latestSymbols.get(key) !== note) return false;
+    }
     if (state.cluster !== null && clusterOf(note) !== state.cluster) return false;
     const timestamp = timestampOf(note);
     if (timestamp && (timestamp < state.timeStart || timestamp > state.timeEnd)) return false;
@@ -402,7 +456,7 @@ function renderInspector() {
   const cluster = clusterOf(note);
   const connections = connectionsFor(note);
   el.detailId.textContent = `#${note.note_id}`;
-  el.detailContent.textContent = note.raw_content;
+  el.detailContent.innerHTML = renderMarkdown(note.raw_content);
   el.detailDate.textContent = formatDate(timestampOf(note));
   el.detailCluster.innerHTML = `<span style="color:${COLORS[cluster % COLORS.length]}">●</span> Cluster ${String(cluster + 1).padStart(2, "0")}`;
   el.detailFile.textContent = note.file_path ?? "Not recorded";
@@ -706,6 +760,10 @@ el.loadButton.addEventListener("click", () => el.fileInput.click());
 el.fileInput.addEventListener("change", () => el.fileInput.files?.[0] && loadFile(el.fileInput.files[0]));
 el.focusSearch.addEventListener("click", () => el.searchInput.focus());
 el.searchInput.addEventListener("input", (event) => { state.query = event.target.value; applyFilters(); });
+el.showHistory.addEventListener("change", (event) => {
+  state.showHistory = event.target.checked;
+  applyFilters();
+});
 el.clearFilters.addEventListener("click", () => { state.cluster = null; state.query = ""; el.searchInput.value = ""; renderClusters(); applyFilters(); });
 el.browseModes.addEventListener("click", (event) => {
   const button = event.target.closest("[data-browse]");
@@ -852,6 +910,50 @@ window.addEventListener("dragenter", (event) => { event.preventDefault(); el.dro
 window.addEventListener("dragover", (event) => event.preventDefault());
 el.dropZone.addEventListener("dragleave", (event) => { if (event.target === el.dropZone) el.dropZone.classList.remove("is-visible"); });
 el.dropZone.addEventListener("drop", (event) => { event.preventDefault(); el.dropZone.classList.remove("is-visible"); const file = event.dataTransfer?.files?.[0]; if (file) loadFile(file); });
+
+const tooltips = {
+  focusSearch: "Search memories (⌘K)", loadButton: "Open an SMG JSON file", clearFilters: "Clear cluster and search filters",
+  sortButton: "Reverse chronological order", closeInspector: "Close inspector", copyCommit: "Copy full commit hash",
+  strengthThreshold: "Hide semantic links below this similarity score", structuralThreshold: "Hide structural links below this node degree",
+  neighborhoodDepth: "Maximum hops from the selected memory", neighborhoodBudget: "Maximum displayed edges per neighborhood node",
+};
+for (const [id, title] of Object.entries(tooltips)) if (el[id]) el[id].title = title;
+document.querySelectorAll("[data-view], [data-browse], [data-edge], [data-graph-mode]").forEach((button) => {
+  if (!button.title) button.title = `Switch to ${button.textContent.trim()} view`;
+});
+
+function installPanelResizer(element, side, storageKey) {
+  const root = document.documentElement;
+  const readWidth = () => Number.parseFloat(getComputedStyle(root).getPropertyValue(`--${side}-width`));
+  const apply = (width) => {
+    const clamped = Math.max(side === "library" ? 240 : 260, Math.min(side === "library" ? 520 : 560, width));
+    root.style.setProperty(`--${side}-width`, `${clamped}px`);
+    localStorage.setItem(storageKey, String(clamped));
+    resizeCanvas();
+  };
+  const saved = Number(localStorage.getItem(storageKey));
+  if (Number.isFinite(saved) && saved > 0) apply(saved);
+  element.addEventListener("pointerdown", (event) => {
+    if (window.matchMedia("(max-width: 1180px)").matches) return;
+    event.preventDefault();
+    element.setPointerCapture(event.pointerId);
+    element.classList.add("is-resizing");
+    const startX = event.clientX;
+    const startWidth = readWidth();
+    const onMove = (move) => apply(startWidth + (side === "library" ? move.clientX - startX : startX - move.clientX));
+    const onEnd = () => { element.classList.remove("is-resizing"); element.removeEventListener("pointermove", onMove); element.removeEventListener("pointerup", onEnd); };
+    element.addEventListener("pointermove", onMove);
+    element.addEventListener("pointerup", onEnd);
+  });
+  element.addEventListener("keydown", (event) => {
+    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    const delta = event.key === "ArrowRight" ? 16 : -16;
+    apply(readWidth() + (side === "library" ? delta : -delta));
+  });
+}
+installPanelResizer(el.libraryResizer, "library", "spectral-cortex.library-width");
+installPanelResizer(el.inspectorResizer, "inspector", "spectral-cortex.inspector-width");
 
 new ResizeObserver(resizeCanvas).observe(el.visualStage);
 showLoadState();
