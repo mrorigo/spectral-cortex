@@ -1,5 +1,10 @@
 # Implementation Plan: Tree-Sitter Integration in Spectral Cortex
 
+> Topology portions of this document are superseded by
+> [VERSIONED_CODE_TOPOLOGY_PLAN.md](VERSIONED_CODE_TOPOLOGY_PLAN.md). In
+> particular, topology is top-level, commit-versioned data, not a set of
+> note-local structural links and not a HEAD-only graph.
+
 ## 1. Overview
 This document outlines the detailed plan for integrating `tree-sitter` into Spectral Cortex. The goal is to transform the Spectral Memory Graph (SMG) from a purely semantic text-based store into an AST-aware (Abstract Syntax Tree) structural graph. This integration will solve the "rename/refactor" problem, enable multi-hop reasoning via structural edges, and bind commit intent ("why") directly to logical code symbols.
 
