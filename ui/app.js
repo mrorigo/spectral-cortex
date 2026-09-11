@@ -121,14 +121,14 @@ async function normalizeGraph(data) {
     }
   };
   for (const note of state.notes) {
-    for (const link of note.related_note_links ?? []) addEdge(note.note_id, Number(link[0]), "semantic", Number(link[1] ?? 1));
+    for (const link of note.related_note_links ?? []) addEdge(note.note_id, Number(link[0]), "spectral", Number(link[1] ?? 1));
     for (const target of note.structural_links ?? []) addEdge(note.note_id, Number(target), "structural", 1);
   }
-  for (const link of data.long_range_links ?? []) addEdge(Number(link[0]), Number(link[1]), "semantic", Number(link[2] ?? 1), true);
+  for (const link of data.long_range_links ?? []) addEdge(Number(link[0]), Number(link[1]), "spectral", Number(link[2] ?? 1), true);
   state.semanticDerived = false;
-  if (![...edgeMap.values()].some((edge) => edge.type === "semantic")) {
+  if (![...edgeMap.values()].some((edge) => edge.type === "spectral")) {
     showDerivationState();
-    for (const link of await deriveSemanticLinks(state.notes)) addEdge(link.source, link.target, "semantic", link.weight);
+    for (const link of await deriveSemanticLinks(state.notes)) addEdge(link.source, link.target, "embedding", link.weight);
     state.semanticDerived = true;
   }
   state.edges = [...edgeMap.values()];
@@ -255,13 +255,13 @@ function buildGraphLayout() {
 }
 
 function configureStrengthThreshold() {
-  const weights = state.edges.filter((edge) => edge.type === "semantic").map((edge) => edge.weight).sort((left, right) => left - right);
+  const weights = state.edges.filter((edge) => edge.type === "embedding").map((edge) => edge.weight).sort((left, right) => left - right);
   const hasWeights = weights.length > 0;
-  const semanticButton = el.edgeFilter.querySelector('[data-edge="semantic"]');
+  const semanticButton = el.edgeFilter.querySelector('[data-edge="embedding"]');
   const min = hasWeights ? Math.floor(Math.min(...weights) * 100) / 100 : 0;
   const max = hasWeights ? Math.ceil(Math.max(...weights) * 100) / 100 : 1;
   const initial = state.semanticDerived && hasWeights ? weights[Math.floor((weights.length - 1) * .75)] : min;
-  if (!hasWeights && state.edgeType === "semantic") state.edgeType = "all";
+  if (!hasWeights && state.edgeType === "embedding") state.edgeType = "all";
   state.minStrength = initial;
   el.strengthThreshold.min = String(min);
   el.strengthThreshold.max = String(max);
@@ -269,12 +269,12 @@ function configureStrengthThreshold() {
   el.strengthThreshold.value = String(initial);
   semanticButton.disabled = !hasWeights;
   el.edgeFilter.querySelectorAll("button").forEach((button) => button.classList.toggle("is-active", button.dataset.edge === state.edgeType));
-  el.thresholdValue.textContent = hasWeights ? `≥ ${initial.toFixed(2)}` : "No similarity links";
+  el.thresholdValue.textContent = hasWeights ? `≥ ${initial.toFixed(2)}` : "No embedding links";
   updateSemanticThresholdInteractivity(hasWeights);
 }
 
-function updateSemanticThresholdInteractivity(hasSemantic = state.edges.some((edge) => edge.type === "semantic")) {
-  const disabled = !hasSemantic || state.edgeType === "structural";
+function updateSemanticThresholdInteractivity(hasSemantic = state.edges.some((edge) => edge.type === "embedding")) {
+  const disabled = !hasSemantic || state.edgeType === "structural" || state.edgeType === "spectral";
   el.strengthThreshold.disabled = disabled;
   el.thresholdValue.style.opacity = disabled ? ".45" : "1";
 }
@@ -297,7 +297,7 @@ function configureStructuralThreshold() {
 }
 
 function updateStructuralThresholdInteractivity(hasStructural = state.edges.some((edge) => edge.type === "structural")) {
-  const disabled = !hasStructural || state.edgeType === "semantic";
+  const disabled = !hasStructural || state.edgeType === "embedding" || state.edgeType === "spectral";
   el.structuralThreshold.disabled = disabled;
   el.structuralThresholdValue.style.opacity = disabled ? ".45" : "1";
 }
@@ -480,8 +480,8 @@ function renderInspector() {
   el.connectionCount.textContent = connections.length;
   el.connectionList.innerHTML = connections.slice(0, 30).map((connection) => {
     const other = state.noteById.get(connection.otherId);
-    const linkLabel = connection.type === "semantic" ? (connection.longRange ? "spectral" : "embedding") : connection.type;
-    return `<button class="connection-row" data-note-id="${connection.otherId}" style="--connection-color:${colorOf(other)}" type="button"><i></i><span>${escapeHtml(other.raw_content)}</span><small>${linkLabel}${connection.type === "semantic" ? ` ${connection.weight.toFixed(2)}` : ""}</small></button>`;
+    const linkLabel = connection.type === "spectral" ? "spectral cosine" : connection.type === "embedding" ? "embedding cosine" : connection.type;
+    return `<button class="connection-row" data-note-id="${connection.otherId}" style="--connection-color:${colorOf(other)}" type="button"><i></i><span>${escapeHtml(other.raw_content)}</span><small>${linkLabel}${["spectral", "embedding"].includes(connection.type) ? ` ${connection.weight.toFixed(2)}` : ""}</small></button>`;
   }).join("") || `<div class="list-empty">This memory has no recorded connections.</div>`;
 }
 
@@ -590,13 +590,13 @@ function drawGraph() {
   const visible = projection.visible;
   const selectedConnections = state.selectedId === null ? new Set() : new Set(connectionsFor(state.noteById.get(state.selectedId)).map((edge) => edge.otherId));
   const nodeMap = new Map(state.graph.nodes.map((node) => [node.id, node]));
-  const edgeTypes = state.graphMode === "bridges" ? new Set(["semantic"]) : state.edgeType === "all" ? new Set(["semantic", "structural"]) : new Set([state.edgeType]);
+  const edgeTypes = state.graphMode === "bridges" ? new Set(["spectral"]) : state.edgeType === "all" ? new Set(["embedding", "spectral", "structural"]) : new Set([state.edgeType]);
   ctx.save();
   for (const edge of projection.edges) {
     const emphasized = state.selectedId !== null && (edge.source === state.selectedId || edge.target === state.selectedId);
     if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
     if (!emphasized && !edgeTypes.has(edge.type)) continue;
-    if (!emphasized && edge.type === "semantic" && edge.weight < state.minStrength) continue;
+    if (!emphasized && edge.type === "embedding" && edge.weight < state.minStrength) continue;
     if (!emphasized && edge.type === "structural" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
     const from = screenPosition(nodeMap.get(edge.source));
     const to = screenPosition(nodeMap.get(edge.target));
@@ -606,9 +606,9 @@ function drawGraph() {
     ctx.lineTo(to.x, to.y);
     ctx.strokeStyle = edge.type === "structural"
       ? `rgba(113,224,208,${emphasized ? .86 : focusedType ? .52 : .14})`
-      : `rgba(255,155,103,${emphasized ? .86 : focusedType ? .42 : .16})`;
+      : edge.type === "spectral" ? `rgba(213,167,232,${emphasized ? .86 : focusedType ? .42 : .16})` : `rgba(255,155,103,${emphasized ? .86 : focusedType ? .42 : .16})`;
     ctx.lineWidth = emphasized ? 1.6 : edge.type === "structural" ? focusedType ? 1.1 : .6 : focusedType ? Math.max(.65, edge.weight) : Math.max(.4, edge.weight);
-    ctx.setLineDash(edge.type === "structural" ? focusedType ? [5, 4] : [2, 4] : []);
+    ctx.setLineDash(edge.type === "structural" ? focusedType ? [5, 4] : [2, 4] : edge.type === "spectral" ? [8, 4] : []);
     ctx.stroke();
   }
   ctx.setLineDash([]);
@@ -652,7 +652,7 @@ function drawMatrix() {
   for (const edge of state.edges) {
     if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
     if (state.edgeType !== "all" && edge.type !== state.edgeType) continue;
-    if (edge.type === "semantic" && edge.weight < state.minStrength) continue;
+    if (edge.type === "embedding" && edge.weight < state.minStrength) continue;
     if (edge.type === "structural" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
     const source = clusterOf(state.noteById.get(edge.source));
     const target = clusterOf(state.noteById.get(edge.target));

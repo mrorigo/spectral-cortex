@@ -92,7 +92,8 @@
           <div class="section-label"><span>Edge signal</span></div>
           <div class="segmented" id="edgeFilter" role="group" aria-label="Edge type">
             <button class="is-active" data-edge="all" type="button">All</button>
-            <button data-edge="semantic" type="button">Similarity</button>
+            <button data-edge="embedding" type="button">Embedding cosine</button>
+            <button data-edge="spectral" type="button">Spectral cosine</button>
             <button data-edge="structural" type="button">Structural</button>
           </div>
           <label class="threshold-control" for="strengthThreshold">
@@ -156,7 +157,8 @@
           <canvas id="graphCanvas" tabindex="0" aria-label="Interactive memory relationship graph"></canvas>
           <div class="timeline" id="timeline" hidden></div>
           <div class="graph-key" id="graphKey">
-            <span><i class="edge-line semantic"></i> similarity (spectral / embedding)</span>
+            <span><i class="edge-line semantic"></i> embedding cosine</span>
+            <span><i class="edge-line spectral"></i> spectral cosine</span>
             <span><i class="edge-line structural"></i> structural</span>
             <span><i class="node-dot"></i> memory note</span>
           </div>
