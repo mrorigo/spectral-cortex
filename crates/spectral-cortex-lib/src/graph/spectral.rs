@@ -368,13 +368,12 @@ pub fn compute_sparse_fused_similarity_matrix(
     let mut col_indices = vec![0; total];
     let mut values = vec![0.0; total];
     for (i, row) in rows.into_iter().enumerate() {
-        let mut offset = row_offsets[i];
         let mut entries: Vec<_> = row.into_iter().collect();
         entries.sort_unstable_by_key(|(j, _)| *j);
-        for (j, value) in entries {
+        for (offset, (j, value)) in entries.into_iter().enumerate() {
+            let offset = row_offsets[i] + offset;
             col_indices[offset] = j;
             values[offset] = value;
-            offset += 1;
         }
     }
     CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values)

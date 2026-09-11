@@ -53,9 +53,11 @@ fn integration_candidate_k_min_score() -> Result<()> {
 
     // 3) Build spectral structures to enable cluster-aware boosting.
     // Keep this retrieval contract test independent of eigengap/K-means behavior.
-    let mut config = spectral_cortex::SpectralBuildConfig::default();
-    config.min_clusters = 1;
-    config.max_clusters = 1;
+    let config = spectral_cortex::SpectralBuildConfig {
+        min_clusters: 1,
+        max_clusters: 1,
+        ..Default::default()
+    };
     smg.build_spectral_structure_with_config(None, &config)?;
 
     // 4) Query for the exact matching text.
