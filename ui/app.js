@@ -4,6 +4,7 @@ const state = {
   notes: [],
   noteById: new Map(),
   identityRepresentative: new Map(),
+  topologySnapshots: [],
   edges: [],
   filtered: [],
   cluster: null,
@@ -98,6 +99,7 @@ async function normalizeGraph(data) {
   state.notes = data.notes.map((note, index) => ({ ...note, __index: index }));
   state.noteById = new Map(state.notes.map((note) => [note.note_id, note]));
   state.identityRepresentative = new Map();
+  state.topologySnapshots = data.topology_snapshots ?? [];
   const latestByIdentity = new Map();
   for (const note of state.notes) {
     if (!note.symbol_id) continue;
@@ -129,6 +131,17 @@ async function normalizeGraph(data) {
     for (const link of note.topology_links ?? []) addEdge(note.note_id, Number(link.target_note_id), `topology:${link.relation.toLowerCase()}`, 1);
   }
   for (const link of data.long_range_links ?? []) addEdge(Number(link[0]), Number(link[1]), "spectral", Number(link[2] ?? 1), true);
+  const latestSnapshot = [...state.topologySnapshots].sort((a, b) => Number(b.timestamp ?? 0) - Number(a.timestamp ?? 0))[0];
+  const topologyNotes = new Map();
+  for (const symbol of latestSnapshot?.symbols ?? []) {
+    const note = state.notes.find((candidate) => candidate.symbol_id === symbol.symbol_id && candidate.file_path === symbol.file_path && candidate.ast_node_type === symbol.ast_node_type);
+    if (note) topologyNotes.set(symbol.symbol_id, state.identityRepresentative.get(note.note_id) ?? note.note_id);
+  }
+  for (const link of latestSnapshot?.edges ?? []) {
+    const source = topologyNotes.get(link.source_symbol_id);
+    const target = topologyNotes.get(link.target_symbol_id);
+    if (source !== undefined && target !== undefined) addEdge(source, target, `topology:${String(link.relation).toLowerCase()}`, 1);
+  }
   state.semanticDerived = false;
   if (![...edgeMap.values()].some((edge) => edge.type === "spectral")) {
     showDerivationState();
@@ -641,7 +654,7 @@ function drawGraph() {
   const visible = projection.visible;
   const selectedConnections = state.selectedId === null ? new Set() : new Set(connectionsFor(state.noteById.get(state.selectedId)).map((edge) => edge.otherId));
   const nodeMap = new Map(state.graph.nodes.map((node) => [node.id, node]));
-  const edgeTypes = state.graphMode === "bridges" ? new Set(["spectral"]) : state.edgeType === "all" ? new Set(["embedding", "spectral", "structural"]) : new Set([state.edgeType]);
+  const edgeTypes = state.graphMode === "bridges" ? new Set(["spectral"]) : state.edgeType === "all" ? new Set(["embedding", "spectral", "structural", "topology:call", "topology:import"]) : new Set([state.edgeType]);
   ctx.save();
   for (const edge of projection.edges) {
     const emphasized = state.selectedId !== null && (edge.source === state.selectedId || edge.target === state.selectedId);
@@ -658,9 +671,9 @@ function drawGraph() {
     ctx.lineTo(to.x, to.y);
     ctx.strokeStyle = edge.type === "structural"
       ? `rgba(113,224,208,${emphasized ? .86 : focusedType ? .52 : .14})`
-      : edge.type === "spectral" ? `rgba(213,167,232,${emphasized ? .86 : focusedType ? .42 : .16})` : `rgba(255,155,103,${emphasized ? .86 : focusedType ? .42 : .16})`;
+      : edge.type === "spectral" ? `rgba(213,167,232,${emphasized ? .86 : focusedType ? .42 : .16})` : edge.type.startsWith("topology:") ? `rgba(118,184,220,${emphasized ? .86 : focusedType ? .42 : .16})` : `rgba(255,155,103,${emphasized ? .86 : focusedType ? .42 : .16})`;
     ctx.lineWidth = emphasized ? 1.6 : edge.type === "structural" ? focusedType ? 1.1 : .6 : focusedType ? Math.max(.65, edge.weight) : Math.max(.4, edge.weight);
-    ctx.setLineDash(edge.type === "structural" ? focusedType ? [5, 4] : [2, 4] : edge.type === "spectral" ? [8, 4] : []);
+    ctx.setLineDash(edge.type === "structural" ? focusedType ? [5, 4] : [2, 4] : edge.type === "spectral" ? [8, 4] : edge.type.startsWith("topology:") ? [3, 3] : []);
     ctx.stroke();
   }
   ctx.setLineDash([]);

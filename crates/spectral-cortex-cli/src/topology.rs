@@ -122,10 +122,15 @@ fn collect_declarations(
         if let Some(raw) = parser.extract_symbol_id(node, source) {
             let qualified = format!("{path}::{raw}");
             out.insert(raw, qualified.clone());
+            let ast_node_type = match parser.node_category(node) {
+                crate::ast::symbol_parser::AstNodeCategory::ApiDefinition => "API_DEFINITION",
+                crate::ast::symbol_parser::AstNodeCategory::Implementation => "IMPLEMENTATION",
+                crate::ast::symbol_parser::AstNodeCategory::Unknown => "UNKNOWN",
+            };
             symbols.push(TopologySymbol {
                 symbol_id: qualified,
                 file_path: path.to_string(),
-                ast_node_type: format!("{:?}", parser.node_category(node)),
+                ast_node_type: ast_node_type.to_string(),
             });
         }
     }
