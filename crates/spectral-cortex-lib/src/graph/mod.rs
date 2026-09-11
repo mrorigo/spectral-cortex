@@ -143,6 +143,8 @@ pub struct SpectralBuildConfig {
     pub num_spectral_dims: usize,
     /// Threshold for adjacency sparsification.
     pub adj_sparse_threshold: f32,
+    /// Maximum semantic neighbors retained per note before symmetric union.
+    pub max_semantic_neighbors: usize,
     /// Minimum spectral similarity for long-range link detection.
     pub spectral_link_similarity_threshold: f32,
     /// Maximum embedding similarity for long-range link detection.
@@ -164,6 +166,7 @@ impl Default for SpectralBuildConfig {
         Self {
             num_spectral_dims: 8,
             adj_sparse_threshold: 0.2,
+            max_semantic_neighbors: 32,
             spectral_link_similarity_threshold: 0.9,
             embed_link_similarity_threshold: 0.5,
             max_clusters: 8,
@@ -185,6 +188,9 @@ impl SpectralBuildConfig {
             return Err(anyhow::anyhow!(
                 "adj_sparse_threshold must be in [0.0, 1.0]"
             ));
+        }
+        if self.max_semantic_neighbors == 0 {
+            return Err(anyhow::anyhow!("max_semantic_neighbors must be >= 1"));
         }
         if !(0.0..=1.0).contains(&self.spectral_link_similarity_threshold) {
             return Err(anyhow::anyhow!(
@@ -520,6 +526,7 @@ impl SpectralMemoryGraph {
             config.structural_alpha,
             config.structural_beta,
             config.adj_sparse_threshold,
+            config.max_semantic_neighbors,
         )?;
 
         // 3) Normalized Laplacian (L_sym wrapper).
@@ -572,7 +579,7 @@ impl SpectralMemoryGraph {
         );
         let pairs = detect_long_range_links(
             &spectral_emb,
-            &sim_sparse,
+            &embed_mat,
             config.spectral_link_similarity_threshold,
             config.embed_link_similarity_threshold,
             note_ids.as_slice(),

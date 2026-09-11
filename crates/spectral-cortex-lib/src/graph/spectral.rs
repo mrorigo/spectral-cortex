@@ -272,6 +272,7 @@ pub fn compute_sparse_fused_similarity_matrix(
     alpha: f32,
     beta: f32,
     threshold: f32,
+    max_semantic_neighbors: usize,
 ) -> Result<CsrMatrix<f32>> {
     let n = x.nrows();
     if order.len() != n {
@@ -299,73 +300,75 @@ pub fn compute_sparse_fused_similarity_matrix(
         })
         .collect();
 
-    let row_counts: Vec<usize> = (0..n)
+    let selected_rows: Vec<Vec<(usize, f32)>> = (0..n)
         .into_par_iter()
         .map(|i| {
             let vi = x.row(i);
-            (0..n)
-                .filter_map(|j| {
-                    if i == j {
-                        return None;
-                    }
-                    let cosine = if norms[i] == 0.0 || norms[j] == 0.0 {
-                        0.0
-                    } else {
-                        vi.iter()
-                            .zip(x.row(j).iter())
-                            .map(|(a, b)| a * b)
-                            .sum::<f32>()
-                            / (norms[i] * norms[j])
-                    };
-                    let mut fused = cosine;
-                    if structural_neighbors[i].contains(&order[j]) {
-                        fused = alpha * fused + beta;
-                    }
-                    if structural_neighbors[j].contains(&order[i]) {
-                        fused = alpha * fused + beta;
-                    }
-                    (fused >= threshold).then_some(())
-                })
-                .count()
+            let mut semantic = Vec::new();
+            let mut structural = Vec::new();
+            for j in 0..n {
+                if i == j {
+                    continue;
+                }
+                let cosine = if norms[i] == 0.0 || norms[j] == 0.0 {
+                    0.0
+                } else {
+                    vi.iter()
+                        .zip(x.row(j).iter())
+                        .map(|(a, b)| a * b)
+                        .sum::<f32>()
+                        / (norms[i] * norms[j])
+                };
+                let is_structural = structural_neighbors[i].contains(&order[j])
+                    || structural_neighbors[j].contains(&order[i]);
+                let fused = if is_structural {
+                    alpha * cosine + beta
+                } else {
+                    cosine
+                };
+                if is_structural {
+                    structural.push((j, fused));
+                } else if fused >= threshold {
+                    semantic.push((j, fused));
+                }
+            }
+            semantic.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            semantic.truncate(max_semantic_neighbors);
+            structural.extend(semantic);
+            structural
         })
         .collect();
 
+    // A neighbor selected by either endpoint becomes an undirected edge.
+    let mut rows: Vec<HashMap<usize, f32>> = (0..n).map(|_| HashMap::new()).collect();
+    for (i, selected) in selected_rows.into_iter().enumerate() {
+        for (j, value) in selected {
+            rows[i]
+                .entry(j)
+                .and_modify(|old| *old = old.max(value))
+                .or_insert(value);
+            rows[j]
+                .entry(i)
+                .and_modify(|old| *old = old.max(value))
+                .or_insert(value);
+        }
+    }
     let mut row_offsets = Vec::with_capacity(n + 1);
     row_offsets.push(0);
-    for count in row_counts {
-        row_offsets.push(row_offsets.last().copied().unwrap_or(0) + count);
+    for row in &rows {
+        row_offsets.push(row_offsets.last().copied().unwrap_or(0) + row.len());
     }
     let total = row_offsets.last().copied().unwrap_or(0);
     let mut col_indices = vec![0; total];
     let mut values = vec![0.0; total];
-    for i in 0..n {
+    for (i, row) in rows.into_iter().enumerate() {
         let mut offset = row_offsets[i];
-        let vi = x.row(i);
-        for j in 0..n {
-            if i == j {
-                continue;
-            }
-            let cosine = if norms[i] == 0.0 || norms[j] == 0.0 {
-                0.0
-            } else {
-                vi.iter()
-                    .zip(x.row(j).iter())
-                    .map(|(a, b)| a * b)
-                    .sum::<f32>()
-                    / (norms[i] * norms[j])
-            };
-            let mut fused = cosine;
-            if structural_neighbors[i].contains(&order[j]) {
-                fused = alpha * fused + beta;
-            }
-            if structural_neighbors[j].contains(&order[i]) {
-                fused = alpha * fused + beta;
-            }
-            if fused >= threshold {
-                col_indices[offset] = j;
-                values[offset] = fused;
-                offset += 1;
-            }
+        let mut entries: Vec<_> = row.into_iter().collect();
+        entries.sort_unstable_by_key(|(j, _)| *j);
+        for (j, value) in entries {
+            col_indices[offset] = j;
+            values[offset] = value;
+            offset += 1;
         }
     }
     CsrMatrix::try_from_csr_data(n, n, row_offsets, col_indices, values)
@@ -711,7 +714,7 @@ pub fn compute_centroids_in_embedding_space(
 /// # Arguments
 ///
 /// * `spec` - spectral embeddings matrix (n × k)
-/// * `emb_sim` - precomputed embedding similarity matrix (n × n)
+/// * `embeddings` - dense note embeddings (n × d), used to calculate exact cosine similarity
 /// * `spectral_sim_thr` - threshold above which spectral similarity is considered high
 /// * `embed_sim_thr` - threshold below which embedding similarity is considered low
 /// * `note_ids` - ordering of note ids corresponding to rows in `spec` and indices in `emb_sim`
@@ -721,7 +724,7 @@ pub fn compute_centroids_in_embedding_space(
 /// Vector of `(note_i, note_j, spectral_similarity)` tuples (by id) that should be linked.
 pub fn detect_long_range_links(
     spec: &Array2<f32>,
-    emb_sim: &CsrMatrix<f32>,
+    embeddings: &Array2<f32>,
     spectral_sim_thr: f32,
     embed_sim_thr: f32,
     note_ids: &[u32],
@@ -759,12 +762,22 @@ pub fn detect_long_range_links(
                 }
 
                 if sp_sim > spectral_sim_thr {
-                    // Check if embedding similarity is LOW (means they are conceptually linked but not obviously similar)
-                    // CsrMatrix access is O(row_nnz). This is only called for survivors.
-                    let emb_s = emb_sim
-                        .get_entry(i, j)
-                        .map(|v| v.into_value())
-                        .unwrap_or(0.0);
+                    // Use the dense embeddings here. A sparse top-k matrix cannot
+                    // distinguish a pruned pair from a genuinely low-similarity pair.
+                    let emb_i = embeddings.row(i);
+                    let emb_j = embeddings.row(j);
+                    let emb_norm_i = emb_i.iter().map(|v| v * v).sum::<f32>().sqrt();
+                    let emb_norm_j = emb_j.iter().map(|v| v * v).sum::<f32>().sqrt();
+                    let emb_s = if emb_norm_i == 0.0 || emb_norm_j == 0.0 {
+                        0.0
+                    } else {
+                        emb_i
+                            .iter()
+                            .zip(emb_j.iter())
+                            .map(|(a, b)| a * b)
+                            .sum::<f32>()
+                            / (emb_norm_i * emb_norm_j)
+                    };
                     if emb_s < embed_sim_thr {
                         row_pairs.push((note_ids[i], note_ids[j], sp_sim));
                     }
