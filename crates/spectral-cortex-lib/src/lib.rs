@@ -62,7 +62,8 @@ pub struct SerializableNote {
     pub ast_node_type: Option<String>,
     pub file_path: Option<String>,
     /// Structural link neighbors (note_ids).
-    pub structural_links: Vec<u32>,
+    pub history_links: Vec<u32>,
+    pub topology_links: Vec<crate::model::smg_note::TopologyLink>,
 }
 
 /// Top-level serialisable SMG container.
@@ -147,7 +148,8 @@ impl From<&SMGNote> for SerializableNote {
             symbol_id: n.symbol_id.clone(),
             ast_node_type: n.ast_node_type.clone(),
             file_path: n.file_path.clone(),
-            structural_links: n.structural_links.clone(),
+            history_links: n.history_links.clone(),
+            topology_links: n.topology_links.clone(),
         }
     }
 }
@@ -242,7 +244,8 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
             symbol_id: sn.symbol_id,
             ast_node_type: sn.ast_node_type,
             file_path: sn.file_path,
-            structural_links: sn.structural_links,
+            history_links: sn.history_links,
+            topology_links: sn.topology_links,
         };
         smg.notes.insert(nid, note);
         // Keep next_id ahead of the highest assembled note id.
@@ -326,13 +329,32 @@ fn validate_serial_smg_data(serial: &SerializableSMG) -> Result<()> {
     }
 
     for note in &serial.notes {
-        for &target in &note.structural_links {
+        for &target in &note.history_links {
             if !note_ids.contains(&target) {
                 anyhow::bail!(
-                    "structural link from {} targets unknown note {}",
+                    "history link from {} targets unknown note {}",
                     note.note_id,
                     target
                 );
+            }
+        }
+        let mut topology_keys = HashSet::new();
+        for link in &note.topology_links {
+            if !note_ids.contains(&link.target_note_id) {
+                anyhow::bail!(
+                    "topology link from {} targets unknown note {}",
+                    note.note_id,
+                    link.target_note_id
+                );
+            }
+            if link.target_note_id == note.note_id {
+                anyhow::bail!(
+                    "topology link on note {} cannot target itself",
+                    note.note_id
+                );
+            }
+            if !topology_keys.insert((link.target_note_id, &link.relation)) {
+                anyhow::bail!("duplicate topology link on note {}", note.note_id);
             }
         }
         for &(target, score) in &note.related_note_links {
@@ -412,7 +434,8 @@ mod persistence_tests {
             symbol_id: None,
             ast_node_type: None,
             file_path: None,
-            structural_links: vec![],
+            history_links: vec![],
+            topology_links: vec![],
         }
     }
 

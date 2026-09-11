@@ -315,7 +315,8 @@ impl SpectralMemoryGraph {
             symbol_id: turn.symbol_id.clone(),
             ast_node_type: turn.ast_node_type.clone(),
             file_path: turn.file_path.clone(),
-            structural_links: Vec::new(),
+            history_links: Vec::new(),
+            topology_links: Vec::new(),
         };
         self.notes.insert(self.next_id, note);
         self.next_id += 1;
@@ -384,7 +385,8 @@ impl SpectralMemoryGraph {
                 symbol_id: turn.symbol_id.clone(),
                 ast_node_type: turn.ast_node_type.clone(),
                 file_path: turn.file_path.clone(),
-                structural_links: Vec::new(),
+                history_links: Vec::new(),
+                topology_links: Vec::new(),
             };
             self.notes.insert(self.next_id, note);
             self.next_id += 1;
@@ -400,11 +402,11 @@ impl SpectralMemoryGraph {
         Ok(())
     }
 
-    /// Resolve structural links between notes sharing the same `symbol_id`.
-    /// This should be called after ingestion to populate `structural_links`.
-    pub fn resolve_structural_links(&mut self) {
+    /// Resolve history links between notes sharing the same `symbol_id`.
+    /// This should be called after ingestion to populate `history_links`.
+    pub fn resolve_history_links(&mut self) {
         for note in self.notes.values_mut() {
-            note.structural_links.clear();
+            note.history_links.clear();
         }
 
         let mut symbol_to_notes: HashMap<String, Vec<u32>> = HashMap::new();
@@ -424,11 +426,11 @@ impl SpectralMemoryGraph {
                 if let Some(note) = self.notes.get_mut(&nid) {
                     for &target_id in &nids {
                         if target_id != nid {
-                            note.structural_links.push(target_id);
+                            note.history_links.push(target_id);
                         }
                     }
-                    note.structural_links.sort_unstable();
-                    note.structural_links.dedup();
+                    note.history_links.sort_unstable();
+                    note.history_links.dedup();
                 }
             }
         }
@@ -1120,7 +1122,8 @@ mod tests {
             symbol_id: None,
             ast_node_type: None,
             file_path: None,
-            structural_links: vec![],
+            history_links: vec![],
+            topology_links: vec![],
         }
     }
 
@@ -1222,21 +1225,21 @@ mod tests {
         for note_id in [30, 10, 20] {
             let mut current = note(note_id);
             current.symbol_id = Some("shared".to_string());
-            current.structural_links = vec![999, 999];
+            current.history_links = vec![999, 999];
             graph.notes.insert(note_id, current);
         }
 
-        graph.resolve_structural_links();
+        graph.resolve_history_links();
         let first: HashMap<u32, Vec<u32>> = graph
             .notes
             .iter()
-            .map(|(&id, note)| (id, note.structural_links.clone()))
+            .map(|(&id, note)| (id, note.history_links.clone()))
             .collect();
-        graph.resolve_structural_links();
+        graph.resolve_history_links();
         let second: HashMap<u32, Vec<u32>> = graph
             .notes
             .iter()
-            .map(|(&id, note)| (id, note.structural_links.clone()))
+            .map(|(&id, note)| (id, note.history_links.clone()))
             .collect();
 
         assert_eq!(first, second);

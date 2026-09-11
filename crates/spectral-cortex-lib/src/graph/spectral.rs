@@ -60,7 +60,7 @@ pub fn assemble_embedding_matrix(notes: &HashMap<u32, SMGNote>, order: &[u32]) -
     mat
 }
 
-/// Compute pairwise similarity matrix fusing semantic similarity with structural links.
+/// Compute pairwise similarity matrix fusing semantic similarity with topology links.
 ///
 /// # Arguments
 ///
@@ -144,7 +144,7 @@ pub fn compute_fused_similarity_matrix(
     }
 
     // 2. Fuse with structural links
-    boost_with_structural_links(&mut sim, order, notes, alpha, beta);
+    boost_with_topology_links(&mut sim, order, notes, alpha, beta);
 
     sim
 }
@@ -184,8 +184,8 @@ pub fn cosine_similarity_matrix(x: &Array2<f32>) -> Array2<f32> {
     sim
 }
 
-/// Boost similarity matrix with structural links (AST-aware edges).
-pub fn boost_with_structural_links(
+/// Boost similarity matrix with topology links.
+pub fn boost_with_topology_links(
     w: &mut Array2<f32>,
     order: &[u32],
     notes: &HashMap<u32, SMGNote>,
@@ -200,7 +200,8 @@ pub fn boost_with_structural_links(
     for i in 0..n {
         let nid = order[i];
         if let Some(note) = notes.get(&nid) {
-            for &link_id in &note.structural_links {
+            for link in &note.topology_links {
+                let link_id = link.target_note_id;
                 if let Some(&j) = id_to_idx.get(&link_id) {
                     w[(i, j)] = alpha * w[(i, j)] + beta;
                     w[(j, i)] = w[(i, j)]; // Maintain symmetry
@@ -295,7 +296,12 @@ pub fn compute_sparse_fused_similarity_matrix(
         .map(|note_id| {
             notes
                 .get(note_id)
-                .map(|note| note.structural_links.iter().copied().collect())
+                .map(|note| {
+                    note.topology_links
+                        .iter()
+                        .map(|link| link.target_note_id)
+                        .collect()
+                })
                 .unwrap_or_default()
         })
         .collect();

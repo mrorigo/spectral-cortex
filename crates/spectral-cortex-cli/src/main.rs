@@ -737,7 +737,7 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     // notes where symbol_id is present are grouped, and we create links
     // between implementation notes and their corresponding API_DEFINITION if they share the name,
     // or simply link all notes with the same symbol_id.
-    smg.resolve_structural_links();
+    smg.resolve_history_links();
 
     ingest_bar.finish_with_message(format!("Ingested {} turns into the SMG.", smg.notes.len()));
 

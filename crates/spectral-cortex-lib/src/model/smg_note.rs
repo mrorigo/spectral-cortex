@@ -2,6 +2,24 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A code-topology relation from one note to another symbol.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct TopologyLink {
+    /// Target note identifier.
+    pub target_note_id: u32,
+    /// Kind of code relation.
+    pub relation: TopologyRelation,
+}
+
+/// Supported code-topology relation kinds.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum TopologyRelation {
+    /// The source symbol calls the target symbol.
+    Call,
+    /// The source file imports the target symbol or module.
+    Import,
+}
+
 /// Node stored in the Spectral Memory Graph.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SMGNote {
@@ -33,7 +51,9 @@ pub struct SMGNote {
     /// Relative path to the file containing this symbol or change.
     pub file_path: Option<String>,
     /// Structural link neighbors (note_ids).
-    pub structural_links: Vec<u32>,
+    pub history_links: Vec<u32>,
+    /// Code-topology neighbors such as callers and imports.
+    pub topology_links: Vec<TopologyLink>,
 }
 
 impl SMGNote {

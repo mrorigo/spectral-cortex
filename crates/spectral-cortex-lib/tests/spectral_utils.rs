@@ -5,6 +5,7 @@ use spectral_cortex::graph::spectral::{
     degree_vector, normalized_laplacian, sparsify_adj, spectral_decomposition, to_sparse,
 };
 use spectral_cortex::model::smg_note::SMGNote;
+use spectral_cortex::model::smg_note::{TopologyLink, TopologyRelation};
 use std::collections::HashMap;
 
 #[test]
@@ -25,7 +26,8 @@ fn test_assemble_and_cosine() {
             related_note_links: vec![],
             symbol_id: None,
             ast_node_type: None,
-            structural_links: vec![],
+            history_links: vec![],
+            topology_links: vec![],
             file_path: Some("file1.rs".to_string()),
         },
     );
@@ -43,7 +45,8 @@ fn test_assemble_and_cosine() {
             related_note_links: vec![],
             symbol_id: None,
             ast_node_type: None,
-            structural_links: vec![],
+            history_links: vec![],
+            topology_links: vec![],
             file_path: Some("file1.rs".to_string()),
         },
     );
@@ -81,7 +84,8 @@ fn test_fused_similarity_matches_cosine_and_preserves_structural_fusion() {
                 related_note_links: vec![],
                 symbol_id: None,
                 ast_node_type: None,
-                structural_links: vec![],
+                history_links: vec![],
+                topology_links: vec![],
                 file_path: None,
             },
         );
@@ -92,7 +96,10 @@ fn test_fused_similarity_matches_cosine_and_preserves_structural_fusion() {
         assert!((actual - expected).abs() < 1e-6);
     }
 
-    notes.get_mut(&1).unwrap().structural_links = vec![2];
+    notes.get_mut(&1).unwrap().topology_links = vec![TopologyLink {
+        target_note_id: 2,
+        relation: TopologyRelation::Call,
+    }];
     let fused = compute_fused_similarity_matrix(&embeddings, &[1, 2, 3], &notes, 0.5, 0.25, None);
     let expected = 0.5 * reference[(0, 1)] + 0.25;
     assert!((fused[(0, 1)] - expected).abs() < 1e-6);
@@ -119,18 +126,28 @@ fn test_sparse_fused_similarity_matches_thresholded_dense_reference() {
                 related_note_links: vec![],
                 symbol_id: None,
                 ast_node_type: None,
-                structural_links: vec![],
+                history_links: vec![],
+                topology_links: vec![],
                 file_path: None,
             },
         );
     }
-    notes.get_mut(&1).unwrap().structural_links = vec![2];
-    notes.get_mut(&2).unwrap().structural_links = vec![1];
+    notes.get_mut(&1).unwrap().topology_links = vec![TopologyLink {
+        target_note_id: 2,
+        relation: TopologyRelation::Call,
+    }];
+    notes.get_mut(&2).unwrap().topology_links = vec![TopologyLink {
+        target_note_id: 1,
+        relation: TopologyRelation::Call,
+    }];
 
     let mut dense = compute_fused_similarity_matrix(&embeddings, &order, &notes, 0.5, 0.25, None);
     sparsify_adj(&mut dense, 0.5);
+    // Structural edges bypass semantic sparsification.
+    dense[(0, 1)] = 0.25;
+    dense[(1, 0)] = 0.25;
     let sparse =
-        compute_sparse_fused_similarity_matrix(&embeddings, &order, &notes, 0.5, 0.25, 0.5)
+        compute_sparse_fused_similarity_matrix(&embeddings, &order, &notes, 0.5, 0.25, 0.5, 32)
             .expect("valid sparse matrix");
 
     for i in 0..3 {
