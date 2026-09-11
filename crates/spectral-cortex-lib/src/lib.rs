@@ -246,7 +246,6 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
             ast_node_type: sn.ast_node_type,
             file_path: sn.file_path,
             history_links: sn.history_links,
-            topology_links: Vec::new(),
         };
         smg.notes.insert(nid, note);
         // Keep next_id ahead of the highest assembled note id.
