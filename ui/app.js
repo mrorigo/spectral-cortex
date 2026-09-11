@@ -11,6 +11,7 @@ const state = {
   cluster: null,
   edgeType: "all",
   graphMode: "field",
+  force: { worker: null, session: 0, paused: false, status: "ready", positions: new Map(), draggingId: null },
   neighborhoodDepth: 2,
   neighborhoodBudget: 8,
   minStrength: 0,
@@ -284,6 +285,54 @@ function buildGraphLayout() {
   fitGraph();
 }
 
+function forceEdges() {
+  const projection = projectGraph();
+  const visible = projection.visible;
+  const ranges = new Map([["embedding", state.strengthRange], ["spectral", state.spectralRange]]);
+  const edges = new Map();
+  for (const edge of projection.edges) {
+    if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
+    if (state.edgeType !== "all" && edge.type !== state.edgeType) continue;
+    if (edge.type === "embedding" && edge.weight < state.minStrength) continue;
+    if (edge.type === "spectral" && edge.weight < state.spectralStrength) continue;
+    if (edge.type === "history" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
+    const range = ranges.get(edge.type);
+    const normalized = range && range.max > range.min ? Math.max(0, Math.min(1, (edge.weight - range.min) / (range.max - range.min))) : edge.type === "history" ? .8 : edge.type.startsWith("topology:") ? .9 : .5;
+    const [source, target] = edge.source < edge.target ? [edge.source, edge.target] : [edge.target, edge.source];
+    const key = `${source}:${target}:${edge.type}`;
+    if (!edges.has(key) || edges.get(key).normalized_strength < normalized) edges.set(key, { source, target, normalized_strength: normalized });
+  }
+  return { nodes: [...visible].map((id) => state.graph.nodes.find((node) => node.id === id)).filter(Boolean), edges: [...edges.values()] };
+}
+
+function stopForceLayout() {
+  state.force.session += 1;
+  state.force.worker?.terminate();
+  state.force.worker = null;
+}
+
+function startForceLayout() {
+  if (state.graphMode !== "force" || !state.graph.nodes.length) return;
+  stopForceLayout();
+  const session = state.force.session;
+  const worker = new Worker("./force-layout.js");
+  state.force.worker = worker;
+  state.force.status = "layouting";
+  if (el.forceStatus) el.forceStatus.textContent = "Layouting";
+  worker.onmessage = ({ data }) => {
+    if (session !== state.force.session || worker !== state.force.worker) return;
+    state.force.positions = new Map((data.positions ?? []).map((position) => [position.id, position]));
+    for (const node of state.graph.nodes) { const position = state.force.positions.get(node.id); if (position) { node.x = position.x; node.y = position.y; } }
+    state.force.status = data.status;
+    if (el.forceStatus) el.forceStatus.textContent = data.status === "running" ? `Layouting · ${data.tick}` : data.status === "capped" ? "Iteration cap reached" : "Converged";
+    drawGraph();
+    if (data.status !== "running") { worker.terminate(); if (state.force.worker === worker) state.force.worker = null; }
+  };
+  worker.onerror = () => { if (session === state.force.session) { state.force.status = "error"; if (el.forceStatus) el.forceStatus.textContent = "Layout unavailable"; } worker.terminate(); };
+  const graph = forceEdges();
+  worker.postMessage({ type: "init", nodes: graph.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y, radius: 3 })), edges: graph.edges, width: canvas.clientWidth, height: canvas.clientHeight, seed: state.notes.length, settings: {} });
+}
+
 function configureStrengthThreshold() {
   const weights = state.edges.filter((edge) => edge.type === "embedding").map((edge) => edge.weight).sort((left, right) => left - right);
   const hasWeights = weights.length > 0;
@@ -441,7 +490,7 @@ function applyFilters() {
   });
   renderNoteList();
   if (state.view === "chronicle") renderTimeline();
-  drawGraph();
+  if (state.graphMode === "force") startForceLayout(); else drawGraph();
 }
 
 function renderMetrics() {
@@ -789,6 +838,7 @@ function setView(view) {
 }
 
 function setGraphMode(mode) {
+  if (state.graphMode === "force" && mode !== "force") stopForceLayout();
   state.graphMode = mode;
   el.graphModes.querySelectorAll("button").forEach((button) => {
     const active = button.dataset.graphMode === mode;
@@ -796,6 +846,7 @@ function setGraphMode(mode) {
     button.setAttribute("aria-selected", String(active));
   });
   el.modeControls.hidden = mode !== "neighborhood";
+  if (el.forceControls) el.forceControls.hidden = mode !== "force";
   el.graphKey.hidden = mode === "matrix" || state.view !== "atlas";
   el.canvasActions.hidden = mode === "matrix" || state.view !== "atlas";
   if (mode === "matrix") {
@@ -807,10 +858,14 @@ function setGraphMode(mode) {
   } else if (mode === "bridges") {
     el.stageEyebrow.textContent = "Topology / persisted long-range links";
     el.stageTitle.textContent = "Bridge network";
+  } else if (mode === "force") {
+    el.stageEyebrow.textContent = "Layout / force-directed graph";
+    el.stageTitle.textContent = "Organized relationship field";
   } else {
     el.stageEyebrow.textContent = "Topology / all memory";
     el.stageTitle.textContent = "Relationship field";
   }
+  if (mode === "force") startForceLayout();
   if (mode === "neighborhood" && state.selectedId === null) {
     el.stageMessage.hidden = false;
     el.stageMessage.querySelector("h2").textContent = "Select a memory";
@@ -964,11 +1019,26 @@ el.toggleLabels.addEventListener("click", () => { state.labels = !state.labels; 
 el.neighborhoodDepth.addEventListener("input", (event) => { state.neighborhoodDepth = Number(event.target.value); el.neighborhoodDepthValue.textContent = event.target.value; drawGraph(); });
 el.neighborhoodBudget.addEventListener("input", (event) => { state.neighborhoodBudget = Number(event.target.value); el.neighborhoodBudgetValue.textContent = event.target.value; drawGraph(); });
 el.graphModes.addEventListener("click", (event) => { const button = event.target.closest("[data-graph-mode]"); if (button) setGraphMode(button.dataset.graphMode); });
+el.restartForce?.addEventListener("click", startForceLayout);
+el.toggleForce?.addEventListener("click", () => {
+  state.force.paused = !state.force.paused;
+  state.force.worker?.postMessage({ type: state.force.paused ? "pause" : "resume" });
+  el.toggleForce.textContent = state.force.paused ? "Resume" : "Pause";
+});
 document.querySelectorAll("[data-view]").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
 
 canvas.addEventListener("pointerdown", (event) => {
   if (state.graphMode === "matrix") return;
   canvas.setPointerCapture(event.pointerId);
+  if (state.graphMode === "force") {
+    const rect = canvas.getBoundingClientRect();
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const nearest = state.graph.nodes.reduce((best, node) => {
+      const screen = screenPosition(node), distance = Math.hypot(screen.x - point.x, screen.y - point.y);
+      return distance < (best?.distance ?? 14) ? { node, distance } : best;
+    }, null);
+    if (nearest) { state.force.draggingId = nearest.node.id; state.force.worker?.postMessage({ type: "pin", id: nearest.node.id, x: nearest.node.x, y: nearest.node.y }); }
+  }
   state.graph.drag = { x: event.clientX, y: event.clientY, originX: state.graph.transform.x, originY: state.graph.transform.y, moved: false };
 });
 canvas.addEventListener("pointermove", (event) => {
@@ -978,6 +1048,10 @@ canvas.addEventListener("pointermove", (event) => {
   if (Math.abs(dx) + Math.abs(dy) > 3) state.graph.drag.moved = true;
   state.graph.transform.x = state.graph.drag.originX + dx;
   state.graph.transform.y = state.graph.drag.originY + dy;
+  if (state.graphMode === "force" && state.force.draggingId !== null) {
+    const node = state.graph.nodes.find((item) => item.id === state.force.draggingId);
+    if (node) { node.x += dx / Math.max(.01, state.graph.transform.scale); node.y += dy / Math.max(.01, state.graph.transform.scale); state.force.worker?.postMessage({ type: "pin", id: node.id, x: node.x, y: node.y }); state.graph.drag.x = event.clientX; state.graph.drag.y = event.clientY; state.graph.drag.originX = state.graph.transform.x; state.graph.drag.originY = state.graph.transform.y; }
+  }
   drawGraph();
 });
 canvas.addEventListener("pointerup", (event) => {
@@ -1004,6 +1078,7 @@ canvas.addEventListener("pointerup", (event) => {
     }
   }
   state.graph.drag = null;
+  if (state.force.draggingId !== null) { state.force.worker?.postMessage({ type: "release", id: state.force.draggingId }); state.force.draggingId = null; }
 });
 canvas.addEventListener("wheel", (event) => {
   event.preventDefault();

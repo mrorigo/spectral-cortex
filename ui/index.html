@@ -145,6 +145,7 @@
                 <button class="is-active" data-graph-mode="field" type="button" role="tab" aria-selected="true">Field</button>
                 <button data-graph-mode="neighborhood" type="button" role="tab" aria-selected="false">Neighborhood</button>
                 <button data-graph-mode="bridges" type="button" role="tab" aria-selected="false">Bridges</button>
+                <button data-graph-mode="force" type="button" role="tab" aria-selected="false">Force</button>
                 <button class="analysis-mode" data-graph-mode="matrix" type="button" role="tab" aria-selected="false">Matrix</button>
               </div>
               <div class="canvas-actions" id="canvasActions">
@@ -161,6 +162,11 @@
           <div class="mode-controls" id="modeControls" hidden>
             <label for="neighborhoodDepth">Depth <output id="neighborhoodDepthValue">2</output><input id="neighborhoodDepth" type="range" min="1" max="5" step="1" value="2" /></label>
             <label for="neighborhoodBudget">Edges / node <output id="neighborhoodBudgetValue">8</output><input id="neighborhoodBudget" type="range" min="1" max="20" step="1" value="8" /></label>
+          </div>
+          <div class="force-controls" id="forceControls" hidden>
+            <button id="restartForce" type="button">Restart</button>
+            <button id="toggleForce" type="button">Pause</button>
+            <output id="forceStatus" aria-live="polite">Ready</output>
           </div>
           <canvas id="graphCanvas" tabindex="0" aria-label="Interactive memory relationship graph"></canvas>
           <div class="timeline" id="timeline" hidden></div>
