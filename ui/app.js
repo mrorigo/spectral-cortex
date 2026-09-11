@@ -313,6 +313,14 @@ function stopForceLayout() {
   state.force.inline = null;
 }
 
+function updateForceDebug({ phase, nodes = 0, edges = 0, tick = 0, displacement = 0, error = "" }) {
+  if (!el.forceDebug) return;
+  const canvasSize = `${Math.round(canvas.clientWidth)}×${Math.round(canvas.clientHeight)}`;
+  el.forceDebug.textContent = error
+    ? `Force error: ${error}`
+    : `Force ${phase} · s${state.force.session} · ${nodes}n/${edges}e · t${tick} · Δ${displacement.toFixed(2)} · ${canvasSize}`;
+}
+
 function startForceLayout() {
   if (state.graphMode !== "force" || !state.graph.nodes.length) return;
   stopForceLayout();
@@ -339,9 +347,11 @@ function startInlineForceLayout(session) {
   const schedule = () => window.setTimeout(step, 16);
   state.force.status = "layouting";
   if (el.forceStatus) el.forceStatus.textContent = "Layouting";
+  updateForceDebug({ phase: "started", nodes: nodes.length, edges: graph.edges.length });
   const step = () => {
     if (session !== state.force.session || state.graphMode !== "force") return;
-    if (!paused) {
+    try {
+      if (!paused) {
       const forces = nodes.map(() => ({ x: 0, y: 0 }));
       for (let left = 0; left < nodes.length; left += 1) for (let right = left + 1; right < nodes.length; right += 1) {
         const a = nodes[left], b = nodes[right], dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(1, Math.hypot(dx, dy)), force = 600 / (distance * distance);
@@ -370,8 +380,16 @@ function startInlineForceLayout(session) {
       drawGraph();
       stableTicks = displacement < .25 ? stableTicks + 1 : 0;
       const done = stableTicks >= 8 || tick >= 600;
-      if (el.forceStatus) el.forceStatus.textContent = done ? (tick >= 600 ? "Iteration cap reached" : "Converged") : `Layouting · ${tick} · ${nodes.length} nodes`;
-      if (!done) schedule();
+        if (el.forceStatus) el.forceStatus.textContent = done ? (tick >= 600 ? "Iteration cap reached" : "Converged") : `Layouting · ${tick} · ${nodes.length} nodes`;
+        updateForceDebug({ phase: done ? "done" : "running", nodes: nodes.length, edges: graph.edges.length, tick, displacement });
+        if (!done) schedule();
+      } else {
+        updateForceDebug({ phase: "paused", nodes: nodes.length, edges: graph.edges.length, tick });
+      }
+    } catch (error) {
+      state.force.status = "error";
+      if (el.forceStatus) el.forceStatus.textContent = "Error";
+      updateForceDebug({ phase: "error", nodes: nodes.length, edges: graph.edges.length, tick, error: error instanceof Error ? error.message : String(error) });
     }
   };
   state.force.inline = { pause: () => { paused = true; }, resume: () => { if (paused) { paused = false; schedule(); } } };

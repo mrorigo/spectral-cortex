@@ -180,6 +180,7 @@
   .force-controls { position: absolute; z-index: 5; top: 91px; right: 22px; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--border); background: rgba(13,27,30,.94); color: var(--muted); font: 9px var(--mono); }
   .force-controls button { border: 1px solid var(--border); padding: 4px 7px; color: var(--signal); font: inherit; }
   .force-controls button:hover { background: var(--surface-2); }
+  .force-debug { max-width: 280px; color: var(--lime); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mode-controls[hidden] { display: none; }
   .mode-controls label { display: grid; grid-template-columns: auto auto; gap: 3px 8px; min-width: 105px; }
   .mode-controls output { color: var(--signal); text-align: right; }
