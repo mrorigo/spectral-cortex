@@ -63,7 +63,6 @@ pub struct SerializableNote {
     pub file_path: Option<String>,
     /// Structural link neighbors (note_ids).
     pub history_links: Vec<u32>,
-    pub topology_links: Vec<crate::model::smg_note::TopologyLink>,
 }
 
 /// Top-level serialisable SMG container.
@@ -152,7 +151,6 @@ impl From<&SMGNote> for SerializableNote {
             ast_node_type: n.ast_node_type.clone(),
             file_path: n.file_path.clone(),
             history_links: n.history_links.clone(),
-            topology_links: n.topology_links.clone(),
         }
     }
 }
@@ -248,7 +246,7 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
             ast_node_type: sn.ast_node_type,
             file_path: sn.file_path,
             history_links: sn.history_links,
-            topology_links: sn.topology_links,
+            topology_links: Vec::new(),
         };
         smg.notes.insert(nid, note);
         // Keep next_id ahead of the highest assembled note id.
@@ -340,25 +338,6 @@ fn validate_serial_smg_data(serial: &SerializableSMG) -> Result<()> {
                     note.note_id,
                     target
                 );
-            }
-        }
-        let mut topology_keys = HashSet::new();
-        for link in &note.topology_links {
-            if !note_ids.contains(&link.target_note_id) {
-                anyhow::bail!(
-                    "topology link from {} targets unknown note {}",
-                    note.note_id,
-                    link.target_note_id
-                );
-            }
-            if link.target_note_id == note.note_id {
-                anyhow::bail!(
-                    "topology link on note {} cannot target itself",
-                    note.note_id
-                );
-            }
-            if !topology_keys.insert((link.target_note_id, &link.relation)) {
-                anyhow::bail!("duplicate topology link on note {}", note.note_id);
             }
         }
         for &(target, score) in &note.related_note_links {
@@ -465,7 +444,6 @@ mod persistence_tests {
             ast_node_type: None,
             file_path: None,
             history_links: vec![],
-            topology_links: vec![],
         }
     }
 
