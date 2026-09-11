@@ -45,7 +45,7 @@ pub struct TopologySymbol {
 }
 
 /// A typed relationship between two snapshot symbols.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct TopologyEdge {
     /// Source symbol identity.
     pub source_symbol_id: String,

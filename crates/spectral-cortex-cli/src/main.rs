@@ -739,9 +739,19 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     // between implementation notes and their corresponding API_DEFINITION if they share the name,
     // or simply link all notes with the same symbol_id.
     smg.resolve_history_links();
-    let topology_links = topology::resolve_call_links(&args.repo, &mut smg, &registry)
-        .with_context(|| "resolving code topology")?;
-    println!("Resolved {} call topology links.", topology_links);
+    let topology_commit_ids: Vec<String> = turns
+        .iter()
+        .filter_map(|turn| turn.commit_id.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    smg.topology_snapshots =
+        topology::collect_snapshots(&args.repo, topology_commit_ids, &registry)
+            .with_context(|| "collecting versioned code topology")?;
+    println!(
+        "Collected {} code-topology snapshots.",
+        smg.topology_snapshots.len()
+    );
 
     ingest_bar.finish_with_message(format!("Ingested {} turns into the SMG.", smg.notes.len()));
 

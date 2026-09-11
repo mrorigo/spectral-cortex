@@ -79,6 +79,7 @@ pub struct SerializableSMG {
     pub cluster_centroids: Option<HashMap<usize, Vec<f32>>>,
     pub cluster_centroid_norms: Option<HashMap<usize, f32>>,
     pub long_range_links: Option<Vec<(u32, u32, f32)>>,
+    #[serde(default)]
     pub topology_snapshots: Vec<crate::model::smg_note::TopologySnapshot>,
 }
 
