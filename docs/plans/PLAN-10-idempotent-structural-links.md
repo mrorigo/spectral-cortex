@@ -1,4 +1,4 @@
-# Make structural-link resolution idempotent
+# Make history-link resolution idempotent
 
 ## Objective
 
@@ -6,7 +6,7 @@ Make repeated structural-link resolution produce the same graph as one invocatio
 
 ## Scope
 
-- `resolve_structural_links`.
+- `resolve_history_links`.
 - Structural fusion input preparation.
 
 ## Implementation
