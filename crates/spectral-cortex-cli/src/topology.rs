@@ -244,11 +244,16 @@ fn collect_declarations(
                 crate::ast::symbol_parser::AstNodeCategory::Implementation => "IMPLEMENTATION",
                 crate::ast::symbol_parser::AstNodeCategory::Unknown => "UNKNOWN",
             };
-            symbols.push(TopologySymbol {
-                symbol_id: qualified,
-                file_path: path.to_string(),
-                ast_node_type: ast_node_type.to_string(),
-            });
+            if !symbols
+                .iter()
+                .any(|symbol: &TopologySymbol| symbol.symbol_id == qualified)
+            {
+                symbols.push(TopologySymbol {
+                    symbol_id: qualified,
+                    file_path: path.to_string(),
+                    ast_node_type: ast_node_type.to_string(),
+                });
+            }
         }
     }
     for index in 0..node.child_count() {
