@@ -734,7 +734,7 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     smg.ingest_turns_batch(&turns, Some(progress_cb))
         .with_context(|| "batch embedding turns")?;
 
-    // Post-ingestion: populate structural links based on symbol_id.
+    // Post-ingestion: populate history links based on symbol_id.
     // notes where symbol_id is present are grouped, and we create links
     // between implementation notes and their corresponding API_DEFINITION if they share the name,
     // or simply link all notes with the same symbol_id.
