@@ -343,6 +343,7 @@ function startInlineForceLayout(session) {
   });
   let tick = 0;
   let stableTicks = 0;
+  let alpha = 1;
   let paused = false;
   const schedule = () => window.setTimeout(step, 16);
   state.force.status = "layouting";
@@ -354,34 +355,36 @@ function startInlineForceLayout(session) {
       if (!paused) {
       const forces = nodes.map(() => ({ x: 0, y: 0 }));
       for (let left = 0; left < nodes.length; left += 1) for (let right = left + 1; right < nodes.length; right += 1) {
-        const a = nodes[left], b = nodes[right], dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(1, Math.hypot(dx, dy)), force = 600 / (distance * distance);
+        const a = nodes[left], b = nodes[right], dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(12, Math.hypot(dx, dy)), force = Math.min(7, 1_200 / (distance * distance));
         forces[left].x -= dx / distance * force; forces[left].y -= dy / distance * force; forces[right].x += dx / distance * force; forces[right].y += dy / distance * force;
       }
       for (const edge of graph.edges) {
         const ai = indexById.get(edge.source), bi = indexById.get(edge.target);
         if (ai === undefined || bi === undefined) continue;
         const a = nodes[ai], b = nodes[bi];
-        const dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(1, Math.hypot(dx, dy)), force = (distance - 70) * (.01 + edge.normalized_strength * .06);
+        const dx = b.x - a.x, dy = b.y - a.y, distance = Math.max(12, Math.hypot(dx, dy)), force = Math.max(-5, Math.min(5, (distance - 80) * (.008 + edge.normalized_strength * .032)));
         forces[ai].x += dx / distance * force; forces[ai].y += dy / distance * force; forces[bi].x -= dx / distance * force; forces[bi].y -= dy / distance * force;
       }
       let displacement = 0;
       nodes.forEach((node, index) => {
-        const targetAngle = (index / Math.max(1, nodes.length)) * Math.PI * 2;
-        const targetRadius = 180 + Math.min(180, Math.sqrt(Math.max(0, node.degree)) * 22);
-        forces[index].x += Math.cos(targetAngle) * targetRadius * .012 - node.x * .012;
-        forces[index].y += Math.sin(targetAngle) * targetRadius * .012 - node.y * .012;
-        velocity[index].x = (velocity[index].x + forces[index].x * .48) * .82;
-        velocity[index].y = (velocity[index].y + forces[index].y * .48) * .82;
+        forces[index].x -= node.x * .003;
+        forces[index].y -= node.y * .003;
+        velocity[index].x = (velocity[index].x + forces[index].x * .16 * alpha) * .78;
+        velocity[index].y = (velocity[index].y + forces[index].y * .16 * alpha) * .78;
+        const maxSpeed = .35 + 10 * alpha;
+        const speed = Math.hypot(velocity[index].x, velocity[index].y);
+        if (speed > maxSpeed) { velocity[index].x *= maxSpeed / speed; velocity[index].y *= maxSpeed / speed; }
         node.x += velocity[index].x;
         node.y += velocity[index].y;
         displacement = Math.max(displacement, Math.hypot(velocity[index].x, velocity[index].y));
       });
       tick += 1;
+      alpha *= .975;
       drawGraph();
-      stableTicks = displacement < .25 ? stableTicks + 1 : 0;
-      const done = stableTicks >= 8 || tick >= 600;
-        if (el.forceStatus) el.forceStatus.textContent = done ? (tick >= 600 ? "Iteration cap reached" : "Converged") : `Layouting · ${tick} · ${nodes.length} nodes`;
-        updateForceDebug({ phase: done ? "done" : "running", nodes: nodes.length, edges: graph.edges.length, tick, displacement });
+      stableTicks = displacement < .1 ? stableTicks + 1 : 0;
+      const done = (alpha < .01 && stableTicks >= 8) || tick >= 1_200;
+        if (el.forceStatus) el.forceStatus.textContent = done ? (tick >= 1_200 ? "Iteration cap reached" : "Converged") : `Layouting · ${tick} · ${nodes.length} nodes`;
+        updateForceDebug({ phase: `${done ? "done" : "running"} α${alpha.toFixed(3)}`, nodes: nodes.length, edges: graph.edges.length, tick, displacement });
         if (!done) schedule();
       } else {
         updateForceDebug({ phase: "paused", nodes: nodes.length, edges: graph.edges.length, tick });
