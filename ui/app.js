@@ -156,7 +156,7 @@ async function normalizeGraph(data) {
 function showDerivationState() {
   el.stageMessage.hidden = false;
   el.stageMessage.querySelector("h2").textContent = "Mapping semantic neighborhoods";
-  el.stageMessage.querySelector("p").textContent = "No persisted semantic links found; deriving local cosine similarity from embeddings.";
+  el.stageMessage.querySelector("p").textContent = "No persisted spectral links found; deriving local cosine similarity from embeddings.";
   el.stageMessage.querySelector(".loader-mark").style.animation = "";
 }
 
@@ -269,7 +269,7 @@ function configureStrengthThreshold() {
   el.strengthThreshold.value = String(initial);
   semanticButton.disabled = !hasWeights;
   el.edgeFilter.querySelectorAll("button").forEach((button) => button.classList.toggle("is-active", button.dataset.edge === state.edgeType));
-  el.thresholdValue.textContent = hasWeights ? `≥ ${initial.toFixed(2)}` : "No semantic links";
+  el.thresholdValue.textContent = hasWeights ? `≥ ${initial.toFixed(2)}` : "No similarity links";
   updateSemanticThresholdInteractivity(hasWeights);
 }
 
@@ -480,7 +480,8 @@ function renderInspector() {
   el.connectionCount.textContent = connections.length;
   el.connectionList.innerHTML = connections.slice(0, 30).map((connection) => {
     const other = state.noteById.get(connection.otherId);
-    return `<button class="connection-row" data-note-id="${connection.otherId}" style="--connection-color:${colorOf(other)}" type="button"><i></i><span>${escapeHtml(other.raw_content)}</span><small>${connection.type}${connection.type === "semantic" ? ` ${connection.weight.toFixed(2)}` : ""}</small></button>`;
+    const linkLabel = connection.type === "semantic" ? (connection.longRange ? "spectral" : "embedding") : connection.type;
+    return `<button class="connection-row" data-note-id="${connection.otherId}" style="--connection-color:${colorOf(other)}" type="button"><i></i><span>${escapeHtml(other.raw_content)}</span><small>${linkLabel}${connection.type === "semantic" ? ` ${connection.weight.toFixed(2)}` : ""}</small></button>`;
   }).join("") || `<div class="list-empty">This memory has no recorded connections.</div>`;
 }
 
@@ -943,7 +944,7 @@ el.dropZone.addEventListener("drop", (event) => { event.preventDefault(); el.dro
 const tooltips = {
   focusSearch: "Search memories (⌘K)", loadButton: "Open an SMG JSON file", clearFilters: "Clear cluster and search filters",
   sortButton: "Reverse chronological order", closeInspector: "Close inspector", copyCommit: "Copy full commit hash",
-  strengthThreshold: "Hide semantic links below this similarity score", structuralThreshold: "Hide structural links below this node degree",
+  strengthThreshold: "Hide similarity links below this score (spectral for persisted links, cosine for derived links)", structuralThreshold: "Hide structural links below this node degree",
   neighborhoodDepth: "Maximum hops from the selected memory", neighborhoodBudget: "Maximum displayed edges per neighborhood node",
 };
 for (const [id, title] of Object.entries(tooltips)) if (el[id]) el[id].title = title;
