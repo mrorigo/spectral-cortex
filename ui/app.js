@@ -319,7 +319,7 @@ function strengthToSlider(value) {
 }
 
 function updateSemanticThresholdInteractivity(hasSemantic = state.edges.some((edge) => edge.type === "embedding")) {
-  const disabled = !hasSemantic || state.edgeType === "history" || state.edgeType === "spectral";
+  const disabled = !hasSemantic || state.edgeType === "history" || state.edgeType === "spectral" || state.edgeType.startsWith("topology:");
   el.strengthThreshold.disabled = disabled;
   el.thresholdValue.style.opacity = disabled ? ".45" : "1";
 }
@@ -335,7 +335,7 @@ function configureSpectralThreshold() {
   el.spectralThreshold.max = "1000";
   el.spectralThreshold.value = String(strengthToSliderFor(state.spectralStrength, state.spectralRange));
   el.spectralThresholdValue.textContent = hasWeights ? `≥ ${state.spectralStrength.toFixed(2)}` : "No spectral links";
-  el.spectralThreshold.disabled = !hasWeights || state.edgeType === "embedding" || state.edgeType === "history";
+  el.spectralThreshold.disabled = !hasWeights || state.edgeType === "embedding" || state.edgeType === "history" || state.edgeType.startsWith("topology:");
   el.spectralThresholdValue.style.opacity = el.spectralThreshold.disabled ? ".45" : "1";
 }
 
@@ -367,12 +367,12 @@ function configureStructuralThreshold() {
   el.structuralThreshold.value = "1";
   el.structuralThresholdValue.textContent = hasStructuralLinks
     ? "≥ 1"
-    : persistedStructuralLinks && !state.showHistory ? "History only — show history" : "No structural links";
+    : persistedStructuralLinks && !state.showHistory ? "History links only — show history" : "No history links";
   updateStructuralThresholdInteractivity(hasStructuralLinks);
 }
 
 function updateStructuralThresholdInteractivity(hasStructural = state.edges.some((edge) => edge.type === "history")) {
-  const disabled = !hasStructural || state.edgeType === "embedding" || state.edgeType === "spectral";
+  const disabled = !hasStructural || state.edgeType === "embedding" || state.edgeType === "spectral" || state.edgeType.startsWith("topology:");
   el.structuralThreshold.disabled = disabled;
   el.structuralThresholdValue.style.opacity = disabled ? ".45" : "1";
 }
