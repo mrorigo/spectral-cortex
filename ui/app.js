@@ -13,6 +13,8 @@ const state = {
   neighborhoodBudget: 8,
   minStrength: 0,
   strengthRange: { min: 0, max: 1 },
+  spectralStrength: 0,
+  spectralRange: { min: 0, max: 1 },
   minStructuralDegree: 1,
   structuralDegreeById: new Map(),
   browseMode: "events",
@@ -136,6 +138,7 @@ async function normalizeGraph(data) {
   state.semanticDerived = true;
   state.edges = [...edgeMap.values()];
   configureStrengthThreshold();
+  configureSpectralThreshold();
   configureStructuralThreshold();
   state.cluster = null;
   state.browseMode = "events";
@@ -294,6 +297,33 @@ function updateSemanticThresholdInteractivity(hasSemantic = state.edges.some((ed
   const disabled = !hasSemantic || state.edgeType === "structural" || state.edgeType === "spectral";
   el.strengthThreshold.disabled = disabled;
   el.thresholdValue.style.opacity = disabled ? ".45" : "1";
+}
+
+function configureSpectralThreshold() {
+  const weights = state.edges.filter((edge) => edge.type === "spectral").map((edge) => edge.weight).sort((a, b) => a - b);
+  const hasWeights = weights.length > 0;
+  const min = hasWeights ? Math.floor(Math.min(...weights) * 100) / 100 : 0;
+  const max = hasWeights ? Math.ceil(Math.max(...weights) * 100) / 100 : 1;
+  state.spectralRange = { min, max };
+  state.spectralStrength = hasWeights ? min : 0;
+  el.spectralThreshold.min = "0";
+  el.spectralThreshold.max = "1000";
+  el.spectralThreshold.value = String(strengthToSliderFor(state.spectralStrength, state.spectralRange));
+  el.spectralThresholdValue.textContent = hasWeights ? `≥ ${state.spectralStrength.toFixed(2)}` : "No spectral links";
+  el.spectralThreshold.disabled = !hasWeights || state.edgeType === "embedding" || state.edgeType === "structural";
+  el.spectralThresholdValue.style.opacity = el.spectralThreshold.disabled ? ".45" : "1";
+}
+
+function sliderToSpectral(value) {
+  const progress = Number(value) / 1000;
+  const { min, max } = state.spectralRange;
+  return min + (max - min) * (1 - (1 - progress) ** 2);
+}
+
+function strengthToSliderFor(value, { min, max }) {
+  if (max <= min) return 0;
+  const progress = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  return Math.round((1 - Math.sqrt(1 - progress)) * 1000);
 }
 
 function configureStructuralThreshold() {
@@ -614,6 +644,7 @@ function drawGraph() {
     if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
     if (!emphasized && !edgeTypes.has(edge.type)) continue;
     if (!emphasized && edge.type === "embedding" && edge.weight < state.minStrength) continue;
+    if (!emphasized && edge.type === "spectral" && edge.weight < state.spectralStrength) continue;
     if (!emphasized && edge.type === "structural" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
     const from = screenPosition(nodeMap.get(edge.source));
     const to = screenPosition(nodeMap.get(edge.target));
@@ -670,6 +701,7 @@ function drawMatrix() {
     if (!visible.has(edge.source) || !visible.has(edge.target)) continue;
     if (state.edgeType !== "all" && edge.type !== state.edgeType) continue;
     if (edge.type === "embedding" && edge.weight < state.minStrength) continue;
+    if (edge.type === "spectral" && edge.weight < state.spectralStrength) continue;
     if (edge.type === "structural" && ((state.structuralDegreeById.get(edge.source) ?? 0) < state.minStructuralDegree || (state.structuralDegreeById.get(edge.target) ?? 0) < state.minStructuralDegree)) continue;
     const source = clusterOf(state.noteById.get(edge.source));
     const target = clusterOf(state.noteById.get(edge.target));
@@ -860,11 +892,17 @@ el.edgeFilter.addEventListener("click", (event) => {
   el.edgeFilter.querySelectorAll("button").forEach((item) => item.classList.toggle("is-active", item === button));
   updateSemanticThresholdInteractivity();
   updateStructuralThresholdInteractivity();
+  configureSpectralThreshold();
   drawGraph();
 });
 el.strengthThreshold.addEventListener("input", (event) => {
   state.minStrength = sliderToStrength(event.target.value);
   el.thresholdValue.textContent = `≥ ${state.minStrength.toFixed(2)}`;
+  drawGraph();
+});
+el.spectralThreshold.addEventListener("input", (event) => {
+  state.spectralStrength = sliderToSpectral(event.target.value);
+  el.spectralThresholdValue.textContent = `≥ ${state.spectralStrength.toFixed(2)}`;
   drawGraph();
 });
 el.structuralThreshold.addEventListener("input", (event) => {
