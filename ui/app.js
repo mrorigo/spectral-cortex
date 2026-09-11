@@ -1,4 +1,4 @@
-const COLORS = ["#eda34a", "#52bfc0", "#c783c5", "#9bc66d", "#e66f4d", "#718fd2", "#d6c158", "#56b18a"];
+const COLORS = ["#71e0d0", "#c7ed79", "#ff9b67", "#76b8dc", "#d5a7e8", "#e7d47c", "#75c79f", "#d78c88"];
 const state = {
   data: null,
   notes: [],
@@ -522,8 +522,8 @@ function drawGraph() {
     ctx.moveTo(from.x, from.y);
     ctx.lineTo(to.x, to.y);
     ctx.strokeStyle = edge.type === "structural"
-      ? `rgba(82,191,192,${emphasized ? .86 : focusedType ? .52 : .14})`
-      : `rgba(237,163,74,${emphasized ? .86 : focusedType ? .42 : .16})`;
+      ? `rgba(113,224,208,${emphasized ? .86 : focusedType ? .52 : .14})`
+      : `rgba(255,155,103,${emphasized ? .86 : focusedType ? .42 : .16})`;
     ctx.lineWidth = emphasized ? 1.6 : edge.type === "structural" ? focusedType ? 1.1 : .6 : focusedType ? Math.max(.65, edge.weight) : Math.max(.4, edge.weight);
     ctx.setLineDash(edge.type === "structural" ? focusedType ? [5, 4] : [2, 4] : []);
     ctx.stroke();
@@ -539,7 +539,7 @@ function drawGraph() {
     if (selected || related) {
       ctx.beginPath();
       ctx.arc(point.x, point.y, radius + (selected ? 7 : 4), 0, Math.PI * 2);
-      ctx.fillStyle = selected ? `${colorOf(node.note)}22` : "rgba(255,255,255,.035)";
+      ctx.fillStyle = selected ? `${colorOf(node.note)}22` : "rgba(220,232,231,.035)";
       ctx.fill();
     }
     ctx.beginPath();
@@ -551,8 +551,8 @@ function drawGraph() {
     const labelBudget = state.graph.transform.scale >= 1.7 ? Number.POSITIVE_INFINITY : state.graph.transform.scale >= 1.15 ? 80 : 28;
     if (state.labels && (selected || node.labelRank < labelBudget)) {
       const label = node.note.symbol_id?.split(":").at(-1) ?? node.note.raw_content;
-      ctx.font = selected ? "600 11px SFMono-Regular, monospace" : "10px SFMono-Regular, monospace";
-      ctx.fillStyle = selected ? "#f5f0e6" : "rgba(245,240,230,.72)";
+      ctx.font = selected ? "600 11px DM Mono, monospace" : "10px DM Mono, monospace";
+      ctx.fillStyle = selected ? "#dce8e7" : "rgba(220,232,231,.72)";
       ctx.fillText(label.slice(0, 34), point.x + radius + 6, point.y + 3);
     }
   }
@@ -582,7 +582,7 @@ function drawMatrix() {
   const cell = size / clusters.length;
   const left = rect.width / 2 - size / 2;
   const top = rect.height / 2 - size / 2 + 20;
-  ctx.font = "10px SFMono-Regular, monospace";
+  ctx.font = "10px DM Mono, monospace";
   ctx.textAlign = "center";
   clusters.forEach((cluster, index) => {
     const x = left + index * cell + cell / 2;
@@ -592,9 +592,9 @@ function drawMatrix() {
   });
   clusters.forEach((source, row) => clusters.forEach((target, column) => {
     const count = counts.get(`${source}:${target}`) ?? 0;
-    ctx.fillStyle = count ? `rgba(237,163,74,${.08 + .8 * count / max})` : "rgba(255,255,255,.025)";
+    ctx.fillStyle = count ? `rgba(255,155,103,${.08 + .8 * count / max})` : "rgba(220,232,231,.025)";
     ctx.fillRect(left + column * cell + 1, top + row * cell + 1, cell - 2, cell - 2);
-    if (count) { ctx.fillStyle = "#f5f0e6"; ctx.font = "10px SFMono-Regular, monospace"; ctx.fillText(String(count), left + column * cell + cell / 2, top + row * cell + cell / 2 + 3); }
+    if (count) { ctx.fillStyle = "#dce8e7"; ctx.font = "10px DM Mono, monospace"; ctx.fillText(String(count), left + column * cell + cell / 2, top + row * cell + cell / 2 + 3); }
   }));
   ctx.textAlign = "start";
 }
