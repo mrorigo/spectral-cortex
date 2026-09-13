@@ -145,8 +145,12 @@
                 <button class="is-active" data-graph-mode="field" type="button" role="tab" aria-selected="true">Field</button>
                 <button data-graph-mode="neighborhood" type="button" role="tab" aria-selected="false">Neighborhood</button>
                 <button data-graph-mode="bridges" type="button" role="tab" aria-selected="false">Bridges</button>
-                <button data-graph-mode="force" type="button" role="tab" aria-selected="false">Force</button>
                 <button class="analysis-mode" data-graph-mode="matrix" type="button" role="tab" aria-selected="false">Matrix</button>
+              </div>
+              <div class="layout-modes" id="layoutModes" role="group" aria-label="Graph layout">
+                <span>Layout</span>
+                <button class="is-active" data-layout-mode="stable" type="button" aria-pressed="true">Stable</button>
+                <button data-layout-mode="force" type="button" aria-pressed="false">Force</button>
               </div>
               <div class="canvas-actions" id="canvasActions">
               <button id="fitGraph" type="button" aria-label="Fit graph to view" title="Fit graph to view">

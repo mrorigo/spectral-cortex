@@ -11,6 +11,7 @@ const state = {
   cluster: null,
   edgeType: "all",
   graphMode: "field",
+  layoutMode: "stable",
   force: {
     worker: null, session: 0, paused: false, status: "ready", positions: new Map(), draggingId: null,
     settings: { preset: "architecture", spread: .8, cohesion: 1, community: .45, cooling: .975, relations: { embedding: .6, spectral: .8, history: .85, "topology:call": 1, "topology:import": .75 } },
@@ -369,7 +370,7 @@ function updateForceSetting(key, value) {
 }
 
 function startForceLayout() {
-  if (state.graphMode !== "force" || !state.graph.nodes.length) return;
+  if (state.layoutMode !== "force" || state.graphMode === "matrix" || !state.graph.nodes.length) return;
   stopForceLayout();
   state.force.paused = false;
   if (el.toggleForce) el.toggleForce.textContent = "Pause";
@@ -406,7 +407,7 @@ function startInlineForceLayout(session) {
   if (el.forceStatus) el.forceStatus.textContent = "Layouting";
   updateForceDebug({ phase: "started", nodes: nodes.length, edges: graph.edges.length });
   const step = () => {
-    if (session !== state.force.session || state.graphMode !== "force") return;
+    if (session !== state.force.session || state.layoutMode !== "force" || state.graphMode === "matrix") return;
     try {
       if (!paused) {
       const forces = nodes.map(() => ({ x: 0, y: 0 }));
@@ -615,7 +616,7 @@ function applyFilters() {
   });
   renderNoteList();
   if (state.view === "chronicle") renderTimeline();
-  if (state.graphMode === "force") startForceLayout(); else drawGraph();
+  if (state.layoutMode === "force" && state.graphMode !== "matrix") startForceLayout(); else drawGraph();
 }
 
 function renderMetrics() {
@@ -955,6 +956,8 @@ function setView(view) {
   canvas.hidden = !atlas;
   el.graphKey.hidden = !atlas;
   el.canvasActions.hidden = !atlas;
+  el.layoutModes.hidden = !atlas;
+  if (!atlas && el.forceControls) el.forceControls.hidden = true;
   el.timeline.hidden = atlas;
   el.viewTitle.textContent = atlas ? "Atlas" : "Chronicle";
   el.stageEyebrow.textContent = atlas ? "Topology / all memory" : "Temporal record / newest first";
@@ -964,7 +967,7 @@ function setView(view) {
 }
 
 function setGraphMode(mode) {
-  if (state.graphMode === "force" && mode !== "force") stopForceLayout();
+  if (state.layoutMode === "force") stopForceLayout();
   state.graphMode = mode;
   el.graphModes.querySelectorAll("button").forEach((button) => {
     const active = button.dataset.graphMode === mode;
@@ -972,7 +975,11 @@ function setGraphMode(mode) {
     button.setAttribute("aria-selected", String(active));
   });
   el.modeControls.hidden = mode !== "neighborhood";
-  if (el.forceControls) el.forceControls.hidden = mode !== "force";
+  if (el.forceControls) el.forceControls.hidden = state.layoutMode !== "force" || mode === "matrix";
+  if (el.layoutModes) {
+    el.layoutModes.toggleAttribute("aria-disabled", mode === "matrix");
+    el.layoutModes.querySelectorAll("button").forEach((button) => { button.disabled = mode === "matrix"; });
+  }
   el.graphKey.hidden = mode === "matrix" || state.view !== "atlas";
   el.canvasActions.hidden = mode === "matrix" || state.view !== "atlas";
   if (mode === "matrix") {
@@ -984,14 +991,11 @@ function setGraphMode(mode) {
   } else if (mode === "bridges") {
     el.stageEyebrow.textContent = "Topology / persisted long-range links";
     el.stageTitle.textContent = "Bridge network";
-  } else if (mode === "force") {
-    el.stageEyebrow.textContent = "Layout / force-directed graph";
-    el.stageTitle.textContent = "Organized relationship field";
   } else {
     el.stageEyebrow.textContent = "Topology / all memory";
     el.stageTitle.textContent = "Relationship field";
   }
-  if (mode === "force") startForceLayout();
+  if (state.layoutMode === "force" && mode !== "matrix") startForceLayout();
   if (mode === "neighborhood" && state.selectedId === null) {
     el.stageMessage.hidden = false;
     el.stageMessage.querySelector("h2").textContent = "Select a memory";
@@ -1006,6 +1010,24 @@ function setGraphMode(mode) {
     el.stageMessage.hidden = true;
   }
   drawGraph();
+}
+
+function setLayoutMode(mode) {
+  if (mode === "force" && state.graphMode === "matrix") return;
+  if (state.layoutMode === mode) return;
+  state.layoutMode = mode;
+  el.layoutModes.querySelectorAll("button").forEach((button) => {
+    const active = button.dataset.layoutMode === mode;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  if (el.forceControls) el.forceControls.hidden = mode !== "force" || state.graphMode === "matrix";
+  if (mode === "force") startForceLayout(); else { stopForceLayout(); drawGraph(); }
+}
+
+function refreshSpatialLayout() {
+  if (state.layoutMode === "force" && state.graphMode !== "matrix") startForceLayout();
+  else drawGraph();
 }
 
 async function loadFile(file) {
@@ -1101,27 +1123,27 @@ el.edgeFilter.addEventListener("click", (event) => {
   updateSemanticThresholdInteractivity();
   updateStructuralThresholdInteractivity();
   configureSpectralThreshold();
-  drawGraph();
+  refreshSpatialLayout();
 });
 el.topologySnapshot?.addEventListener("change", async (event) => {
   state.topologyCommitId = event.target.value;
   if (state.data) await normalizeGraph(state.data);
-  drawGraph();
+  refreshSpatialLayout();
 });
 el.strengthThreshold.addEventListener("input", (event) => {
   state.minStrength = sliderToStrength(event.target.value);
   el.thresholdValue.textContent = `≥ ${state.minStrength.toFixed(2)}`;
-  drawGraph();
+  refreshSpatialLayout();
 });
 el.spectralThreshold.addEventListener("input", (event) => {
   state.spectralStrength = sliderToSpectral(event.target.value);
   el.spectralThresholdValue.textContent = `≥ ${state.spectralStrength.toFixed(2)}`;
-  drawGraph();
+  refreshSpatialLayout();
 });
 el.structuralThreshold.addEventListener("input", (event) => {
   state.minStructuralDegree = Number(event.target.value);
   el.structuralThresholdValue.textContent = `≥ ${state.minStructuralDegree}`;
-  drawGraph();
+  refreshSpatialLayout();
 });
 el.noteList.addEventListener("click", selectClickedNote);
 el.connectionList.addEventListener("click", selectClickedNote);
@@ -1145,6 +1167,7 @@ el.toggleLabels.addEventListener("click", () => { state.labels = !state.labels; 
 el.neighborhoodDepth.addEventListener("input", (event) => { state.neighborhoodDepth = Number(event.target.value); el.neighborhoodDepthValue.textContent = event.target.value; drawGraph(); });
 el.neighborhoodBudget.addEventListener("input", (event) => { state.neighborhoodBudget = Number(event.target.value); el.neighborhoodBudgetValue.textContent = event.target.value; drawGraph(); });
 el.graphModes.addEventListener("click", (event) => { const button = event.target.closest("[data-graph-mode]"); if (button) setGraphMode(button.dataset.graphMode); });
+el.layoutModes.addEventListener("click", (event) => { const button = event.target.closest("[data-layout-mode]"); if (button) setLayoutMode(button.dataset.layoutMode); });
 el.restartForce?.addEventListener("click", startForceLayout);
 el.toggleForce?.addEventListener("click", () => {
   state.force.paused = !state.force.paused;
@@ -1165,7 +1188,7 @@ document.querySelectorAll("[data-view]").forEach((button) => button.addEventList
 canvas.addEventListener("pointerdown", (event) => {
   if (state.graphMode === "matrix") return;
   canvas.setPointerCapture(event.pointerId);
-  if (state.graphMode === "force") {
+  if (state.layoutMode === "force") {
     const rect = canvas.getBoundingClientRect();
     const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
     const nearest = state.graph.nodes.reduce((best, node) => {
@@ -1183,7 +1206,7 @@ canvas.addEventListener("pointermove", (event) => {
   if (Math.abs(dx) + Math.abs(dy) > 3) state.graph.drag.moved = true;
   state.graph.transform.x = state.graph.drag.originX + dx;
   state.graph.transform.y = state.graph.drag.originY + dy;
-  if (state.graphMode === "force" && state.force.draggingId !== null) {
+  if (state.layoutMode === "force" && state.force.draggingId !== null) {
     const node = state.graph.nodes.find((item) => item.id === state.force.draggingId);
     if (node) { node.x += dx / Math.max(.01, state.graph.transform.scale); node.y += dy / Math.max(.01, state.graph.transform.scale); state.force.worker?.postMessage({ type: "pin", id: node.id, x: node.x, y: node.y }); state.graph.drag.x = event.clientX; state.graph.drag.y = event.clientY; state.graph.drag.originX = state.graph.transform.x; state.graph.drag.originY = state.graph.transform.y; }
   }
