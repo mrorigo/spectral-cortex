@@ -42,21 +42,11 @@ Install from this repository (single binary with CLI + MCP subcommand):
 cargo install --path crates/spectral-cortex-cli --force
 ```
 
-On macOS, build/install copies Torch runtime dylibs to a sibling `libtorch/` directory and embeds an rpath to `@executable_path/libtorch`.
-
-- `cargo install ...` installs:
-  - `~/.cargo/bin/spectral-cortex`
-  - `~/.cargo/bin/libtorch/*.dylib`
-- local `cargo build` places dylibs under:
-  - `target/<profile>/libtorch/*.dylib`
-
 Run with:
 
 ```bash
 spectral-cortex --help
 ```
-
-If you move/copy the binary manually on macOS, keep `libtorch/` beside it (same directory level) so dylib loading continues to work.
 
 Ingest a repository and build the SMG (recommended CLI flow):
 

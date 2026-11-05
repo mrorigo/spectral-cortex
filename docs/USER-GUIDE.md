@@ -67,8 +67,6 @@ Install just the CLI binary from this repo:
 cargo install --path crates/spectral-cortex-cli --force
 ```
 
-On macOS, install/build also places required Torch dylibs in a sibling `libtorch/` directory so the binary can load `libtorch_cpu.dylib` at runtime.
-
 ## Command Overview
 
 ```bash

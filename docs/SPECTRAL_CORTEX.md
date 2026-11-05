@@ -203,7 +203,6 @@ Spectral Cortex turns Git history into a spectral memory graph for AI agents: se
 1. Incremental update skips already-seen commits by commit ID.
 2. Graph outputs include explicit scoring/provenance fields for inspectability.
 3. Strict JSON format versioning is enforced for load compatibility.
-4. On macOS installs, runtime Torch dylibs are provisioned for installed binary execution.
 
 ## Suggested Visuals for Presentations
 
