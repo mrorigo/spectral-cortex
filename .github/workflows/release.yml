@@ -68,7 +68,21 @@ jobs:
           TARGET_TRIPLE="${{ matrix.target }}"
           ZIG_TARGET_TRIPLE="${TARGET_TRIPLE/-unknown/}"
           CC_ENV_NAME="CC_${TARGET_TRIPLE//-/_}"
-          env "$CC_ENV_NAME=zig cc -target $ZIG_TARGET_TRIPLE" \
+          ZIG_CC="${RUNNER_TEMP}/zig-cc-${TARGET_TRIPLE}"
+          cat > "$ZIG_CC" <<EOF
+          #!/usr/bin/env bash
+          set -euo pipefail
+          args=()
+          for arg in "\$@"; do
+            case "\$arg" in
+              --target=*) ;;
+              *) args+=("\$arg") ;;
+            esac
+          done
+          exec zig cc -target "$ZIG_TARGET_TRIPLE" "\${args[@]}"
+          EOF
+          chmod +x "$ZIG_CC"
+          env "$CC_ENV_NAME=$ZIG_CC" \
             cargo zigbuild --release -p spectral-cortex \
               --features git2/vendored-openssl \
               --target "$TARGET_TRIPLE"
