@@ -36,10 +36,22 @@ cd spectral-cortex
 cargo build --release
 ```
 
-Install from this repository (single binary with CLI + MCP subcommand):
+Install a published release with `cargo-binstall` (downloads a prebuilt binary):
 
 ```bash
-cargo install --path crates/spectral-cortex-cli --force
+cargo binstall spectral-cortex
+```
+
+Install a published release from source with Cargo:
+
+```bash
+cargo install spectral-cortex
+```
+
+Install from a local checkout (single binary with CLI and MCP subcommands):
+
+```bash
+cargo install --path crates/spectral-cortex-cli
 ```
 
 Run with:
