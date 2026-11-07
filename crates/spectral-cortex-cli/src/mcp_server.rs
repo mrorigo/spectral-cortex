@@ -1,8 +1,11 @@
 // Rust guideline compliant 2026-02-15
 
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, RwLock,
+};
 
 use anyhow::{Context, Result};
 use rmcp::{
@@ -13,7 +16,7 @@ use rmcp::{
     ErrorData as McpError, ServerHandler, ServiceExt,
 };
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use spectral_cortex::{load_smg_json, SpectralMemoryGraph};
 
 const DEFAULT_TOP_K: usize = 5;
@@ -34,6 +37,10 @@ fn markdown_output_schema() -> Arc<JsonObject> {
     )
 }
 
+fn query_output_schema() -> Arc<JsonObject> {
+    Arc::new(json!({"type":"object","properties":{"markdown":{"type":"string"},"results":{"type":"array","items":{"type":"object"}}},"required":["markdown","results"],"additionalProperties":false}).as_object().cloned().unwrap_or_default())
+}
+
 /// Input for querying the graph with a text query.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct QueryGraphInput {
@@ -47,6 +54,20 @@ pub struct QueryGraphInput {
     pub snippet_chars: Option<usize>,
     #[schemars(description = "Optional minimum score threshold")]
     pub min_score: Option<f32>,
+    #[schemars(description = "Optional file path substring filter")]
+    pub file: Option<String>,
+    #[schemars(description = "Optional symbol ID substring filter")]
+    pub symbol: Option<String>,
+    #[schemars(description = "Temporal reranking weight, from 0 to 1 (default: 0.2)")]
+    pub temporal_weight: Option<f32>,
+    pub candidate_k: Option<usize>,
+    pub no_temporal: Option<bool>,
+    pub temporal_mode: Option<String>,
+    pub temporal_half_life_days: Option<f32>,
+    pub time_start: Option<String>,
+    pub time_end: Option<String>,
+    pub time_window_days: Option<f64>,
+    pub temporal_now: Option<String>,
 }
 
 /// Input for inspecting one note and its related notes.
@@ -90,13 +111,19 @@ pub struct SymbolHistoryInput {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct CommitDiffInput {
+    pub commit_id: String,
+    pub file: Option<String>,
+}
+
 /// MCP server that provides compact tools for SMG query and inspection.
 #[derive(Clone)]
 pub struct SpectralCortexMcpServer {
     #[allow(dead_code)]
     pub tool_router: ToolRouter<Self>,
     pub smg_path: String,
-    pub smg: Arc<SpectralMemoryGraph>,
+    pub smg: Arc<RwLock<Arc<SpectralMemoryGraph>>>,
 }
 
 #[tool_handler]
@@ -130,21 +157,26 @@ impl SpectralCortexMcpServer {
         Self {
             tool_router: Self::tool_router(),
             smg_path,
-            smg: Arc::new(smg),
+            smg: Arc::new(RwLock::new(Arc::new(smg))),
         }
     }
 
     /// Query the graph and return a compact markdown table.
     #[rmcp::tool(
         description = "Run semantic query against an SMG and return token-efficient markdown results",
-        output_schema = markdown_output_schema()
+        output_schema = query_output_schema()
     )]
     fn query_graph(
         &self,
         Parameters(input): Parameters<QueryGraphInput>,
     ) -> Result<CallToolResult, McpError> {
         match self.query_graph_impl(input) {
-            Ok(output) => Ok(Self::success_result(output)),
+            Ok((markdown, results)) => {
+                let mut result =
+                    CallToolResult::structured(json!({"markdown": markdown, "results": results}));
+                result.content = vec![ContentBlock::text(markdown)];
+                Ok(result)
+            }
             Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
@@ -223,6 +255,17 @@ impl SpectralCortexMcpServer {
             Err(err) => Err(McpError::internal_error(err.to_string(), None)),
         }
     }
+
+    #[rmcp::tool(description = "Retrieve a bounded commit diff excerpt from the source Git repository", output_schema = markdown_output_schema())]
+    fn get_commit_diff(
+        &self,
+        Parameters(input): Parameters<CommitDiffInput>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.get_commit_diff_impl(input) {
+            Ok(output) => Ok(Self::success_result(output)),
+            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
+        }
+    }
 }
 
 impl SpectralCortexMcpServer {
@@ -248,8 +291,12 @@ impl SpectralCortexMcpServer {
         }
     }
 
-    fn query_graph_impl(&self, input: QueryGraphInput) -> Result<String> {
-        let smg = &self.smg;
+    fn query_graph_impl(&self, input: QueryGraphInput) -> Result<(String, Vec<Value>)> {
+        let smg = self
+            .smg
+            .read()
+            .map_err(|_| anyhow::anyhow!("SMG snapshot lock poisoned"))?
+            .clone();
         let top_k = Self::bounded_limit(input.top_k, DEFAULT_TOP_K, 20, "top_k")?;
         let snippet_chars = Self::bounded_limit(
             input.snippet_chars,
@@ -266,40 +313,211 @@ impl SpectralCortexMcpServer {
             }
         }
 
-        let hits = smg.search(&input.query, top_k, input.min_score)?;
+        let temporal_weight = input.temporal_weight.unwrap_or(0.20);
+        if !temporal_weight.is_finite() || !(0.0..=1.0).contains(&temporal_weight) {
+            anyhow::bail!("temporal_weight must be between 0.0 and 1.0");
+        }
+        let temporal_mode = match input.temporal_mode.as_deref().unwrap_or("exponential") {
+            "exponential" => spectral_cortex::temporal::TemporalMode::Exponential,
+            "linear" | "linearwindow" => spectral_cortex::temporal::TemporalMode::LinearWindow,
+            "step" => spectral_cortex::temporal::TemporalMode::Step,
+            "buckets" => spectral_cortex::temporal::TemporalMode::Buckets,
+            mode => anyhow::bail!("unsupported temporal_mode '{mode}'"),
+        };
+        let mut temporal = spectral_cortex::temporal::TemporalConfig {
+            enabled: !input.no_temporal.unwrap_or(false),
+            weight: temporal_weight,
+            mode: temporal_mode,
+            ..Default::default()
+        };
+        if let Some(days) = input.temporal_half_life_days {
+            if !days.is_finite() || days <= 0.0 {
+                anyhow::bail!("temporal_half_life_days must be greater than zero");
+            }
+            temporal.half_life_seconds = Some((days * 86_400.0).round() as u64);
+        }
+        let parse_time = |value: Option<&str>| -> Result<Option<u64>> {
+            value
+                .map(|text| {
+                    chrono::DateTime::parse_from_rfc3339(text)
+                        .map(|time| time.timestamp().max(0) as u64)
+                        .with_context(|| format!("invalid RFC3339 timestamp '{text}'"))
+                })
+                .transpose()
+        };
+        let mut time_start = parse_time(input.time_start.as_deref())?;
+        let time_end = parse_time(input.time_end.as_deref())?;
+        if let Some(now_text) = input.temporal_now.as_deref() {
+            temporal.now_seconds = parse_time(Some(now_text))?;
+        }
+        if let Some(days) = input.time_window_days {
+            if !days.is_finite() || days < 0.0 {
+                anyhow::bail!("time_window_days must be non-negative");
+            }
+            if time_start.is_some() {
+                anyhow::bail!("time_window_days cannot be combined with time_start");
+            }
+            let now = match temporal.now_seconds {
+                Some(now) => now,
+                None => std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs(),
+            };
+            temporal.now_seconds = Some(now);
+            let window = (days * 86_400.0).round().min(u64::MAX as f64) as u64;
+            time_start = Some(now.saturating_sub(window));
+        }
+        if time_start
+            .zip(time_end)
+            .is_some_and(|(start, end)| start > end)
+        {
+            anyhow::bail!("time_start must be less than or equal to time_end");
+        }
+        let candidate_k = Self::bounded_limit(
+            input.candidate_k,
+            top_k.saturating_mul(5).max(top_k),
+            100,
+            "candidate_k",
+        )?;
+        let candidates = smg.retrieve_with_scores_config_filtered(
+            &input.query,
+            candidate_k,
+            Some(temporal),
+            time_start,
+            time_end,
+            input.file.as_deref(),
+            input.symbol.as_deref(),
+            0.3,
+        )?;
+        let mut hits = Vec::new();
+        for (turn_id, score) in candidates {
+            if input.min_score.is_some_and(|minimum| score < minimum) {
+                continue;
+            }
+            if let Some(note) = smg
+                .notes
+                .values()
+                .find(|note| note.source_turn_ids.contains(&turn_id))
+            {
+                hits.push((score, note.note_id));
+            }
+        }
+        hits.truncate(top_k);
 
         let mut out = String::new();
+        let mut structured = Vec::new();
         out.push_str(&format!("# Query Result: `{}`\n", input.query));
         out.push_str(&format!("- SMG: `{}`\n\n", self.smg_path));
-
+        out.push_str(&format!(
+            "- indexed_revision: `{}`\n\n",
+            smg.source_revision.as_deref().unwrap_or("unknown")
+        ));
+        let mut groups: Vec<(String, Vec<(f32, u32)>)> = Vec::new();
         for (score, note_id) in hits {
             let note = &smg.notes[&note_id];
             let snippet = Self::compact_snippet(&note.context(), snippet_chars);
-            out.push_str(&format!(
-                "- **Score {:.3}** [Note {}]: {}\n",
-                score, note_id, snippet
-            ));
+            let commit_id = note.source_commit_ids.iter().flatten().next().cloned();
+            let commit_label = commit_id.as_deref().unwrap_or("unknown");
+            if let Some((_, group)) = groups.iter_mut().find(|(key, _)| key == commit_label) {
+                group.push((score, note_id));
+            } else {
+                groups.push((commit_label.to_owned(), vec![(score, note_id)]));
+            }
+            structured.push(json!({
+                "note_id": note_id, "score": score, "commit_id": commit_id,
+                "timestamp": note.source_timestamps.first(), "file_path": note.file_path,
+                "symbol_id": note.symbol_id, "snippet": snippet
+            }));
+        }
+        for (commit_label, group) in groups {
+            out.push_str(&format!("\n## Commit `{commit_label}`\n"));
+            for (score, note_id) in group {
+                let note = &smg.notes[&note_id];
+                let snippet = Self::compact_snippet(&note.context(), snippet_chars);
+                out.push_str(&format!(
+                    "- **Score {:.3}** [Note {}] commit={} time={} file={} symbol={}: {}\n",
+                    score,
+                    note_id,
+                    commit_label,
+                    note.source_timestamps
+                        .first()
+                        .map(u64::to_string)
+                        .unwrap_or_else(|| "unknown".into()),
+                    note.file_path.as_deref().unwrap_or("unknown"),
+                    note.symbol_id.as_deref().unwrap_or("unknown"),
+                    snippet
+                ));
 
-            if let Some(links_k) = input.links_k {
-                let related = smg.get_related_note_links(note_id, Some(links_k));
-                if !related.is_empty() {
-                    let compact = {
-                        related
-                            .into_iter()
-                            .map(|(nid, sim)| format!("{}({:.3})", nid, sim))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    };
-                    out.push_str(&format!("    - related nodes: {}\n", compact));
+                if let Some(links_k) = input.links_k {
+                    let related = smg.get_related_note_links(note_id, Some(links_k));
+                    if !related.is_empty() {
+                        let compact = {
+                            related
+                                .into_iter()
+                                .map(|(nid, sim)| format!("{}({:.3})", nid, sim))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+                        out.push_str(&format!("    - related nodes: {}\n", compact));
+                    }
                 }
             }
         }
 
-        Ok(out)
+        Ok((out, structured))
+    }
+
+    fn get_commit_diff_impl(&self, input: CommitDiffInput) -> Result<String> {
+        let snapshot = self
+            .smg
+            .read()
+            .map_err(|_| anyhow::anyhow!("SMG snapshot lock poisoned"))?
+            .clone();
+        let repo_path = snapshot
+            .source_repo
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("SMG has no source repository metadata"))?;
+        let repo = git2::Repository::open(repo_path)
+            .with_context(|| format!("opening source repository {repo_path}"))?;
+        let commit = repo.revparse_single(&input.commit_id)?.peel_to_commit()?;
+        let tree = commit.tree()?;
+        let parent = if commit.parent_count() > 0 {
+            Some(commit.parent(0)?.tree()?)
+        } else {
+            None
+        };
+        let mut diff = repo.diff_tree_to_tree(parent.as_ref(), Some(&tree), None)?;
+        if let Some(file) = input.file.as_deref() {
+            diff = repo.diff_tree_to_tree(
+                parent.as_ref(),
+                Some(&tree),
+                Some(git2::DiffOptions::new().pathspec(file)),
+            )?;
+        }
+        let mut output = String::new();
+        diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+            if output.len() < 8000 {
+                output.push(line.origin());
+                output.push_str(
+                    std::str::from_utf8(line.content()).unwrap_or("<non-UTF8 diff content>"),
+                );
+            }
+            true
+        })?;
+        let truncated = output.len() >= 8000;
+        if truncated {
+            output.truncate(8000);
+            output.push_str("\n[diff excerpt truncated]");
+        }
+        Ok(format!("# Commit diff `{}`\n\n{}", commit.id(), output))
     }
 
     fn inspect_note_impl(&self, input: InspectNoteInput) -> Result<String> {
-        let smg = &self.smg;
+        let smg = self
+            .smg
+            .read()
+            .map_err(|_| anyhow::anyhow!("SMG snapshot lock poisoned"))?
+            .clone();
         let links_k = Self::bounded_limit(input.links_k, 10, 25, "links_k")?;
         let snippet_chars = Self::bounded_limit(
             input.snippet_chars,
@@ -319,6 +537,14 @@ impl SpectralCortexMcpServer {
         let mut out = String::new();
         out.push_str(&format!("# Note {}\n", note.note_id));
         out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
+        out.push_str(&format!(
+            "- indexed_revision: `{}`\n",
+            smg.source_revision.as_deref().unwrap_or("unknown")
+        ));
+        out.push_str(&format!(
+            "- source_repository: `{}`\n",
+            smg.source_repo.as_deref().unwrap_or("unknown")
+        ));
         out.push_str(&format!("- symbol_id: {:?}\n", note.symbol_id));
         out.push_str(&format!("- ast_node_type: {:?}\n", note.ast_node_type));
         out.push_str(&format!(
@@ -347,7 +573,11 @@ impl SpectralCortexMcpServer {
     }
 
     fn long_range_links_impl(&self, input: LongRangeLinksInput) -> Result<String> {
-        let smg = &self.smg;
+        let smg = self
+            .smg
+            .read()
+            .map_err(|_| anyhow::anyhow!("SMG snapshot lock poisoned"))?
+            .clone();
         let top_k = Self::bounded_limit(input.top_k, 20, 100, "top_k")?;
         let links = smg.get_long_range_links(Some(top_k));
 
@@ -366,7 +596,11 @@ impl SpectralCortexMcpServer {
     }
 
     pub fn get_structural_hotspots_impl(&self, input: StructuralHotspotsInput) -> Result<String> {
-        let smg = &self.smg;
+        let smg = self
+            .smg
+            .read()
+            .map_err(|_| anyhow::anyhow!("SMG snapshot lock poisoned"))?
+            .clone();
         let mut hotspots: HashMap<String, (usize, String)> = HashMap::new();
 
         for note in smg.notes.values() {
@@ -397,7 +631,11 @@ impl SpectralCortexMcpServer {
     }
 
     pub fn inspect_symbol_history_impl(&self, input: SymbolHistoryInput) -> Result<String> {
-        let smg = &self.smg;
+        let smg = self
+            .smg
+            .read()
+            .map_err(|_| anyhow::anyhow!("SMG snapshot lock poisoned"))?
+            .clone();
         let mut history: Vec<(u64, u32, String)> = Vec::new();
 
         for note in smg.notes.values() {
@@ -454,7 +692,11 @@ impl SpectralCortexMcpServer {
     }
 
     fn graph_summary_impl(&self, input: GraphSummaryInput) -> Result<String> {
-        let smg = &self.smg;
+        let smg = self
+            .smg
+            .read()
+            .map_err(|_| anyhow::anyhow!("SMG snapshot lock poisoned"))?
+            .clone();
 
         let links_count = smg.long_range_links.as_ref().map(|v| v.len()).unwrap_or(0);
         let cluster_labels = smg.cluster_labels.as_ref().map(|v| v.len()).unwrap_or(0);
@@ -483,6 +725,14 @@ impl SpectralCortexMcpServer {
         let mut out = String::new();
         out.push_str("# Graph Summary\n");
         out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
+        out.push_str(&format!(
+            "- indexed_revision: `{}`\n",
+            smg.source_revision.as_deref().unwrap_or("unknown")
+        ));
+        out.push_str(&format!(
+            "- source_repository: `{}`\n",
+            smg.source_repo.as_deref().unwrap_or("unknown")
+        ));
         out.push_str(&format!("- notes: {}\n", smg.notes.len()));
         out.push_str(&format!("- next_id: {}\n", smg.next_id));
         out.push_str(&format!("- long_range_links: {}\n", links_count));
@@ -518,13 +768,30 @@ impl SpectralCortexMcpServer {
     }
 }
 
-pub fn run_mcp_server(smg_path: &Path) -> Result<()> {
+pub fn run_mcp_server(smg_path: &Path, watch: bool) -> Result<()> {
     let smg_path = smg_path
         .to_path_buf()
         .canonicalize()
         .unwrap_or_else(|_| smg_path.to_path_buf());
     let smg = load_smg_json(&smg_path)
         .with_context(|| format!("failed to load SMG '{}'", smg_path.display()))?;
+    let server = SpectralCortexMcpServer::new(smg_path.display().to_string(), smg);
+    let shared_smg = Arc::clone(&server.smg);
+    let watched_path = smg_path.clone();
+    if watch {
+        let stop = Arc::new(AtomicBool::new(false));
+        std::thread::Builder::new()
+            .name("smg-file-watch".into())
+            .spawn(move || {
+                watch_smg_file(
+                    watched_path,
+                    shared_smg,
+                    stop,
+                    std::time::Duration::from_millis(500),
+                )
+            })
+            .context("starting SMG file watcher")?;
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -532,17 +799,61 @@ pub fn run_mcp_server(smg_path: &Path) -> Result<()> {
         .context("failed to build tokio runtime for MCP server")?;
 
     runtime.block_on(async move {
-        let service = SpectralCortexMcpServer::new(smg_path.display().to_string(), smg)
-            .serve(stdio())
-            .await?;
+        let service = server.serve(stdio()).await?;
         service.waiting().await?;
         Ok::<(), anyhow::Error>(())
     })
 }
 
+fn watch_smg_file(
+    path: PathBuf,
+    shared: Arc<RwLock<Arc<SpectralMemoryGraph>>>,
+    stop: Arc<AtomicBool>,
+    interval: std::time::Duration,
+) {
+    let mut last_loaded = file_stamp(&path);
+    while !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(interval);
+        let current = file_stamp(&path);
+        if current.is_none() || current == last_loaded {
+            continue;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let stable = file_stamp(&path);
+        if stable != current {
+            continue;
+        }
+        match reload_snapshot(&path, &shared) {
+            Ok(()) => last_loaded = stable,
+            Err(error) => {
+                eprintln!(
+                    "level=error event=smg_reload path={} error={error:#}",
+                    path.display()
+                );
+                last_loaded = stable;
+            }
+        }
+    }
+}
+
+fn file_stamp(path: &Path) -> Option<(u64, Option<std::time::SystemTime>)> {
+    std::fs::metadata(path)
+        .ok()
+        .map(|metadata| (metadata.len(), metadata.modified().ok()))
+}
+
+fn reload_snapshot(path: &Path, shared: &Arc<RwLock<Arc<SpectralMemoryGraph>>>) -> Result<()> {
+    let replacement = Arc::new(load_smg_json(path)?);
+    let mut guard = shared
+        .write()
+        .map_err(|_| anyhow::anyhow!("SMG snapshot lock poisoned"))?;
+    *guard = replacement;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::SpectralCortexMcpServer;
+    use super::{reload_snapshot, watch_smg_file, QueryGraphInput, SpectralCortexMcpServer};
     use rmcp::{
         model::{
             CallToolRequest, CallToolRequestParams, ClientCapabilities, ClientJsonRpcMessage,
@@ -554,6 +865,154 @@ mod tests {
         transport::{IntoTransport, Transport},
         ServiceExt,
     };
+
+    fn query_input() -> QueryGraphInput {
+        QueryGraphInput {
+            query: "test".into(),
+            top_k: None,
+            links_k: None,
+            snippet_chars: None,
+            min_score: None,
+            file: None,
+            symbol: None,
+            temporal_weight: None,
+            candidate_k: None,
+            no_temporal: None,
+            temporal_mode: None,
+            temporal_half_life_days: None,
+            time_start: None,
+            time_end: None,
+            time_window_days: None,
+            temporal_now: None,
+        }
+    }
+
+    #[test]
+    fn query_rejects_invalid_temporal_settings() {
+        let server = SpectralCortexMcpServer::new(
+            "fixture.json".into(),
+            spectral_cortex::SpectralMemoryGraph::new().unwrap(),
+        );
+        let mut invalid_weight = query_input();
+        invalid_weight.temporal_weight = Some(2.0);
+        assert!(server.query_graph_impl(invalid_weight).is_err());
+
+        let mut inverted_range = query_input();
+        inverted_range.time_start = Some("2026-02-01T00:00:00Z".into());
+        inverted_range.time_end = Some("2026-01-01T00:00:00Z".into());
+        assert!(server.query_graph_impl(inverted_range).is_err());
+
+        let mut conflicting_window = query_input();
+        conflicting_window.time_start = Some("2026-01-01T00:00:00Z".into());
+        conflicting_window.time_window_days = Some(7.0);
+        assert!(server.query_graph_impl(conflicting_window).is_err());
+
+        let mut invalid_now = query_input();
+        invalid_now.temporal_now = Some("yesterday".into());
+        assert!(server.query_graph_impl(invalid_now).is_err());
+    }
+
+    #[test]
+    fn query_returns_structured_evidence_and_groups_repeated_commits() {
+        spectral_cortex::embed::init(1, 0).unwrap();
+        let text = "query target";
+        let embedding = spectral_cortex::embed::get_embedding(text).unwrap();
+        let norm = embedding.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let mut graph = spectral_cortex::SpectralMemoryGraph::new().unwrap();
+        for (id, turn_id, commit_id, content) in [
+            (0, 1, "commit-a", "first related note"),
+            (1, 2, "commit-a", "second related note"),
+            (2, 3, "commit-b", "third related note"),
+        ] {
+            graph.notes.insert(
+                id,
+                spectral_cortex::SMGNote {
+                    note_id: id,
+                    raw_content: content.into(),
+                    embedding: embedding.clone(),
+                    norm,
+                    source_turn_ids: vec![turn_id],
+                    source_commit_ids: vec![Some(commit_id.into())],
+                    source_timestamps: vec![1_700_000_000],
+                    spectral_coords: None,
+                    related_note_links: Vec::new(),
+                    symbol_id: Some(format!("symbol_{id}")),
+                    ast_node_type: None,
+                    file_path: Some(format!("src/{id}.rs")),
+                    history_links: Vec::new(),
+                },
+            );
+        }
+        graph.next_id = 3;
+        let server = SpectralCortexMcpServer::new("fixture.json".into(), graph);
+        let mut input = query_input();
+        input.query = text.into();
+        input.top_k = Some(3);
+        let (markdown, results) = server.query_graph_impl(input).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0]["note_id"].as_u64(), Some(0));
+        assert_eq!(results[0]["commit_id"].as_str(), Some("commit-a"));
+        assert!(results[0]["timestamp"].is_number());
+        assert!(markdown.contains("## Commit `commit-a`"));
+        assert_eq!(markdown.matches("## Commit `commit-a`").count(), 1);
+        assert!(markdown.contains("## Commit `commit-b`"));
+        let _ = spectral_cortex::embed::shutdown();
+    }
+
+    #[test]
+    fn reload_swaps_valid_graph_and_preserves_snapshot_on_invalid_file() {
+        let fixture = tempfile::NamedTempFile::new().unwrap();
+        let mut original = spectral_cortex::SpectralMemoryGraph::new().unwrap();
+        original.source_revision = Some("old".into());
+        let shared = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(original)));
+
+        let replacement = spectral_cortex::SpectralMemoryGraph::new().unwrap();
+        spectral_cortex::save_smg_json(&replacement, fixture.path()).unwrap();
+        reload_snapshot(fixture.path(), &shared).unwrap();
+        assert_eq!(shared.read().unwrap().source_revision, None);
+
+        std::fs::write(fixture.path(), "not json").unwrap();
+        assert!(reload_snapshot(fixture.path(), &shared).is_err());
+        assert_eq!(shared.read().unwrap().source_revision, None);
+    }
+
+    #[test]
+    fn running_watcher_observes_atomic_graph_replacement() {
+        let fixture = tempfile::NamedTempFile::new().unwrap();
+        let mut initial = spectral_cortex::SpectralMemoryGraph::new().unwrap();
+        initial.source_revision = Some("initial".into());
+        spectral_cortex::save_smg_json(&initial, fixture.path()).unwrap();
+        let shared = std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(initial)));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let watcher_path = fixture.path().to_path_buf();
+        let watcher_shared = std::sync::Arc::clone(&shared);
+        let watcher_stop = std::sync::Arc::clone(&stop);
+        let watcher = std::thread::spawn(move || {
+            watch_smg_file(
+                watcher_path,
+                watcher_shared,
+                watcher_stop,
+                std::time::Duration::from_millis(20),
+            )
+        });
+        std::thread::sleep(std::time::Duration::from_millis(40));
+        let mut replacement = spectral_cortex::SpectralMemoryGraph::new().unwrap();
+        replacement.source_revision = Some("replacement-revision".into());
+        spectral_cortex::save_smg_json(&replacement, fixture.path()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            if shared.read().unwrap().source_revision.as_deref() == Some("replacement-revision") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        watcher.join().unwrap();
+        assert_eq!(
+            shared.read().unwrap().source_revision.as_deref(),
+            Some("replacement-revision")
+        );
+    }
     use serde_json::json;
 
     #[test]
@@ -579,6 +1038,7 @@ mod tests {
         assert_eq!(
             names,
             vec![
+                "get_commit_diff",
                 "get_structural_hotspots",
                 "graph_summary",
                 "inspect_note",
@@ -638,7 +1098,7 @@ mod tests {
             },
             other => panic!("expected tools/list response, got {other:?}"),
         };
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
         assert!(tools.iter().all(|tool| tool.output_schema.is_some()));
 
         let mut call = CallToolRequest::new(

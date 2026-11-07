@@ -22,6 +22,7 @@
 //!    (save/load) will be added in later phases.
 
 use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -32,6 +33,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use regex::{Regex, RegexBuilder};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use spectral_cortex::embed;
 
@@ -65,6 +67,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Create a repository-local Spectral Cortex configuration.
+    Init(InitArgs),
+    /// Show indexed graph and repository freshness.
+    Status(StatusArgs),
     /// Ingest a git repository into an SMG and build spectral structures.
     Ingest(IngestArgs),
 
@@ -85,6 +91,162 @@ enum Commands {
 
     /// Retrieve chronological change history for a single symbol.
     History(HistoryArgs),
+}
+
+#[derive(Args, Debug)]
+struct InitArgs {
+    #[arg(long, default_value = ".")]
+    repo: PathBuf,
+    #[arg(long, default_value = "spectral-cortex.smg.json")]
+    smg: PathBuf,
+    #[arg(long)]
+    model_name: Option<String>,
+    #[arg(long)]
+    batch_size: Option<usize>,
+    #[arg(long)]
+    workers: Option<usize>,
+    #[arg(long)]
+    normalize: Option<bool>,
+}
+
+#[derive(Args, Debug)]
+struct StatusArgs {
+    #[arg(long, default_value = ".")]
+    repo: PathBuf,
+    #[arg(long)]
+    smg: Option<PathBuf>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct RepoConfig {
+    smg: PathBuf,
+    #[serde(default)]
+    model_name: Option<String>,
+    #[serde(default)]
+    batch_size: Option<usize>,
+    #[serde(default)]
+    workers: Option<usize>,
+    #[serde(default)]
+    normalize: Option<bool>,
+    #[serde(default)]
+    git_filter_drop: Vec<String>,
+    #[serde(default)]
+    git_filter_preset: Option<String>,
+    #[serde(default)]
+    git_filter_case_insensitive: Option<bool>,
+    #[serde(default)]
+    git_commit_split_mode: Option<String>,
+    #[serde(default)]
+    git_commit_split_max_segments: Option<usize>,
+    #[serde(default)]
+    git_commit_split_min_confidence: Option<f32>,
+    #[serde(default)]
+    num_spectral_dims: Option<usize>,
+    #[serde(default)]
+    min_clusters: Option<usize>,
+    #[serde(default)]
+    max_clusters: Option<usize>,
+}
+
+fn config_path(repo: &std::path::Path) -> PathBuf {
+    repo.join(".spectral-cortex.toml")
+}
+
+fn load_repo_config(repo: &std::path::Path) -> Result<Option<RepoConfig>> {
+    let path = config_path(repo);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    Ok(Some(
+        toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?,
+    ))
+}
+
+fn configured_smg(repo: &std::path::Path) -> Result<PathBuf> {
+    Ok(load_repo_config(repo)?
+        .map(|config| config.smg)
+        .unwrap_or_else(|| PathBuf::from("spectral-cortex.smg.json")))
+}
+
+fn run_init(args: InitArgs) -> Result<()> {
+    let repo = args
+        .repo
+        .canonicalize()
+        .with_context(|| format!("opening repo {}", args.repo.display()))?;
+    let path = config_path(&repo);
+    if path.exists() {
+        anyhow::bail!("{} already exists", path.display());
+    }
+    let config = RepoConfig {
+        smg: args.smg,
+        model_name: args.model_name,
+        batch_size: args.batch_size,
+        workers: args.workers,
+        normalize: args.normalize,
+        ..Default::default()
+    };
+    fs::write(&path, toml::to_string_pretty(&config)?)?;
+    println!("Created {}", path.display());
+    Ok(())
+}
+
+fn run_status(args: StatusArgs) -> Result<()> {
+    let repo = args
+        .repo
+        .canonicalize()
+        .with_context(|| format!("opening repo {}", args.repo.display()))?;
+    let config = load_repo_config(&repo)?;
+    let smg_path = args
+        .smg
+        .or_else(|| config.map(|c| c.smg))
+        .unwrap_or_else(|| PathBuf::from("spectral-cortex.smg.json"));
+    let smg_path = if smg_path.is_absolute() {
+        smg_path
+    } else {
+        repo.join(smg_path)
+    };
+    println!("repo: {}", repo.display());
+    println!("smg: {}", smg_path.display());
+    if !smg_path.exists() {
+        println!("indexed: no");
+        return Ok(());
+    }
+    let smg = load_smg_json(&smg_path)?;
+    println!("indexed: yes");
+    println!("notes: {}", smg.notes.len());
+    println!(
+        "revision: {}",
+        smg.source_revision.as_deref().unwrap_or("unknown")
+    );
+    let repository = git2::Repository::open(&repo).ok();
+    let head_id = repository
+        .as_ref()
+        .and_then(|r| r.head().ok()?.peel_to_commit().ok().map(|c| c.id()));
+    let freshness = match (&smg.source_revision, repository, head_id) {
+        (Some(indexed), Some(repository), Some(head_id)) => {
+            let indexed = git2::Oid::from_str(indexed)?;
+            if indexed == head_id {
+                "current"
+            } else if repository
+                .graph_descendant_of(head_id, indexed)
+                .unwrap_or(false)
+            {
+                "behind"
+            } else if repository
+                .graph_descendant_of(indexed, head_id)
+                .unwrap_or(false)
+            {
+                "ahead"
+            } else {
+                "diverged"
+            }
+        }
+        _ => "unknown",
+    };
+    println!("freshness: {freshness}");
+    Ok(())
 }
 
 /// Arguments for the `ingest` subcommand.
@@ -111,8 +273,8 @@ struct IngestArgs {
     max_commits: Option<usize>,
 
     /// Number of parallel embedding workers (default: 4).
-    #[arg(long, default_value = "4")]
-    workers: usize,
+    #[arg(long)]
+    workers: Option<usize>,
 
     /// Cache size per worker (default: 0, no caching for unique commits).
     #[arg(long, default_value = "100")]
@@ -123,12 +285,12 @@ struct IngestArgs {
     model_name: Option<String>,
 
     /// Override the Model2Vec model normalization setting.
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-    normalize: bool,
+    #[arg(long)]
+    normalize: Option<bool>,
 
     /// Model2Vec encoding batch size.
-    #[arg(long, default_value_t = 1024)]
-    batch_size: usize,
+    #[arg(long)]
+    batch_size: Option<usize>,
 
     /// Optional Model2Vec subfolder containing model files.
     #[arg(long)]
@@ -143,8 +305,8 @@ struct IngestArgs {
     git_filter_preset: Option<String>,
 
     /// Apply case-insensitive matching for git line filters.
-    #[arg(long = "git-filter-case-insensitive")]
-    git_filter_case_insensitive: bool,
+    #[arg(long = "git-filter-case-insensitive", num_args = 0..=1, default_missing_value = "true")]
+    git_filter_case_insensitive: Option<bool>,
 
     /// Only ingest commits that are not already present in the target SMG (matched by commit_id).
     /// Recommended for post-commit hooks with `--append --out <smg.json>`.
@@ -152,16 +314,16 @@ struct IngestArgs {
     incremental: bool,
 
     /// Commit message split mode: off|auto|strict.
-    #[arg(long = "git-commit-split-mode", default_value = "auto")]
-    git_commit_split_mode: String,
+    #[arg(long = "git-commit-split-mode")]
+    git_commit_split_mode: Option<String>,
 
     /// Maximum number of segments emitted per commit.
-    #[arg(long = "git-commit-split-max-segments", default_value_t = 6)]
-    git_commit_split_max_segments: usize,
+    #[arg(long = "git-commit-split-max-segments")]
+    git_commit_split_max_segments: Option<usize>,
 
     /// Minimum parser confidence for emitting split segments in auto mode (0.0..1.0).
-    #[arg(long = "git-commit-split-min-confidence", default_value_t = 0.75)]
-    git_commit_split_min_confidence: f32,
+    #[arg(long = "git-commit-split-min-confidence")]
+    git_commit_split_min_confidence: Option<f32>,
 
     /// Number of spectral embedding dimensions to compute.
     #[arg(long = "num-spectral-dims")]
@@ -185,15 +347,25 @@ struct UpdateArgs {
 
     /// Path to SMG JSON file to update in place.
     #[arg(long, short = 'o', value_name = "PATH")]
-    out: PathBuf,
+    out: Option<PathBuf>,
 
     /// Maximum number of commits to scan from git history.
     #[arg(long)]
     max_commits: Option<usize>,
 
     /// Number of parallel embedding workers (default: 4).
-    #[arg(long, default_value = "4")]
-    workers: usize,
+    #[arg(long)]
+    workers: Option<usize>,
+
+    /// Override the embedding model recorded with the graph.
+    #[arg(long)]
+    model_name: Option<String>,
+    /// Override whether embeddings are normalized.
+    #[arg(long)]
+    normalize: Option<bool>,
+    /// Override the embedding batch size.
+    #[arg(long)]
+    batch_size: Option<usize>,
 
     /// Cache size per worker (default: 100).
     #[arg(long, default_value = "100")]
@@ -208,20 +380,20 @@ struct UpdateArgs {
     git_filter_preset: Option<String>,
 
     /// Apply case-insensitive matching for git line filters.
-    #[arg(long = "git-filter-case-insensitive")]
-    git_filter_case_insensitive: bool,
+    #[arg(long = "git-filter-case-insensitive", num_args = 0..=1, default_missing_value = "true")]
+    git_filter_case_insensitive: Option<bool>,
 
     /// Commit message split mode: off|auto|strict.
-    #[arg(long = "git-commit-split-mode", default_value = "auto")]
-    git_commit_split_mode: String,
+    #[arg(long = "git-commit-split-mode")]
+    git_commit_split_mode: Option<String>,
 
     /// Maximum number of segments emitted per commit.
-    #[arg(long = "git-commit-split-max-segments", default_value_t = 6)]
-    git_commit_split_max_segments: usize,
+    #[arg(long = "git-commit-split-max-segments")]
+    git_commit_split_max_segments: Option<usize>,
 
     /// Minimum parser confidence for emitting split segments in auto mode (0.0..1.0).
-    #[arg(long = "git-commit-split-min-confidence", default_value_t = 0.75)]
-    git_commit_split_min_confidence: f32,
+    #[arg(long = "git-commit-split-min-confidence")]
+    git_commit_split_min_confidence: Option<f32>,
 
     /// Number of spectral embedding dimensions to compute.
     #[arg(long = "num-spectral-dims")]
@@ -346,7 +518,7 @@ struct QueryArgs {
 struct NoteArgs {
     /// Path to a saved SMG JSON file to load.
     #[arg(short = 's', long)]
-    smg: PathBuf,
+    smg: Option<PathBuf>,
 
     /// Note ID to inspect.
     #[arg(long)]
@@ -366,7 +538,7 @@ struct NoteArgs {
 struct McpArgs {
     /// Path to the SMG JSON file to preload and serve.
     #[arg(short = 's', long = "smg", value_name = "PATH")]
-    smg: PathBuf,
+    smg: Option<PathBuf>,
 
     /// Optional Model2Vec model used by MCP query tools.
     #[arg(long)]
@@ -383,6 +555,9 @@ struct McpArgs {
     /// Optional Model2Vec model subfolder.
     #[arg(long)]
     subfolder: Option<String>,
+    /// Disable automatic graph reload when the SMG file changes.
+    #[arg(long)]
+    no_watch: bool,
 }
 
 /// Arguments for the `hotspots` subcommand.
@@ -390,7 +565,7 @@ struct McpArgs {
 struct HotspotsArgs {
     /// Path to the SMG JSON file to load.
     #[arg(short = 's', long = "smg", value_name = "PATH")]
-    smg: PathBuf,
+    smg: Option<PathBuf>,
 
     /// Number of hotspots to return (default: 10).
     #[arg(long, default_value_t = 10)]
@@ -402,7 +577,7 @@ struct HotspotsArgs {
 struct HistoryArgs {
     /// Path to the SMG JSON file to load.
     #[arg(short = 's', long = "smg", value_name = "PATH")]
-    smg: PathBuf,
+    smg: Option<PathBuf>,
 
     /// Stable symbol_id to inspect.
     #[arg(short, long)]
@@ -418,6 +593,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Init(args) => run_init(args),
+        Commands::Status(args) => run_status(args),
         Commands::Ingest(args) => run_ingest(args),
         Commands::Update(args) => run_update(args),
         Commands::Query(args) => run_query(args),
@@ -431,6 +608,10 @@ fn main() -> Result<()> {
 /// Run the `mcp` subcommand.
 #[allow(unused_variables)]
 fn run_mcp(args: McpArgs) -> Result<()> {
+    let smg_path = args
+        .smg
+        .clone()
+        .unwrap_or(configured_smg(std::path::Path::new("."))?);
     embed::init_model2vec(embed::Model2VecConfig {
         model_name: args
             .model_name
@@ -440,18 +621,20 @@ fn run_mcp(args: McpArgs) -> Result<()> {
         batch_size: args.batch_size,
         subfolder: args.subfolder,
     })?;
-    let result = run_mcp_server(&args.smg);
+    let result = run_mcp_server(&smg_path, !args.no_watch);
     let _ = embed::shutdown();
     result
 }
 
 /// Run the `hotspots` subcommand.
 fn run_hotspots(args: HotspotsArgs) -> Result<()> {
-    let smg = load_smg_json(&args.smg)
-        .with_context(|| format!("loading SMG from {}", args.smg.display()))?;
+    let path = args
+        .smg
+        .unwrap_or(configured_smg(std::path::Path::new("."))?);
+    let smg =
+        load_smg_json(&path).with_context(|| format!("loading SMG from {}", path.display()))?;
 
-    let server =
-        crate::mcp_server::SpectralCortexMcpServer::new(args.smg.display().to_string(), smg);
+    let server = crate::mcp_server::SpectralCortexMcpServer::new(path.display().to_string(), smg);
 
     let input = crate::mcp_server::StructuralHotspotsInput {
         top_k: Some(args.top_k),
@@ -465,11 +648,13 @@ fn run_hotspots(args: HotspotsArgs) -> Result<()> {
 
 /// Run the `history` subcommand.
 fn run_history(args: HistoryArgs) -> Result<()> {
-    let smg = load_smg_json(&args.smg)
-        .with_context(|| format!("loading SMG from {}", args.smg.display()))?;
+    let path = args
+        .smg
+        .unwrap_or(configured_smg(std::path::Path::new("."))?);
+    let smg =
+        load_smg_json(&path).with_context(|| format!("loading SMG from {}", path.display()))?;
 
-    let server =
-        crate::mcp_server::SpectralCortexMcpServer::new(args.smg.display().to_string(), smg);
+    let server = crate::mcp_server::SpectralCortexMcpServer::new(path.display().to_string(), smg);
 
     let input = crate::mcp_server::SymbolHistoryInput {
         symbol_id: args.symbol,
@@ -484,17 +669,18 @@ fn run_history(args: HistoryArgs) -> Result<()> {
 
 /// Run the `update` subcommand as an alias for incremental append ingestion.
 fn run_update(args: UpdateArgs) -> Result<()> {
+    let out = args.out.clone().unwrap_or(configured_smg(&args.repo)?);
     let ingest_args = IngestArgs {
         repo: args.repo,
-        out: Some(args.out),
+        out: Some(out),
         append: true,
         include_diff: false,
         max_commits: args.max_commits,
         workers: args.workers,
         cache_size: args.cache_size,
-        model_name: None,
-        normalize: true,
-        batch_size: 1024,
+        model_name: args.model_name,
+        normalize: args.normalize,
+        batch_size: args.batch_size,
         subfolder: None,
         git_filter_drop: args.git_filter_drop,
         git_filter_preset: args.git_filter_preset,
@@ -522,13 +708,85 @@ fn run_update(args: UpdateArgs) -> Result<()> {
 ///
 /// Returns an `anyhow::Error` when IO/git operations fail or when the library API fails.
 #[allow(unused_variables)]
-fn run_ingest(args: IngestArgs) -> Result<()> {
+fn run_ingest(mut args: IngestArgs) -> Result<()> {
+    if args.out.is_none() {
+        args.out = Some(configured_smg(&args.repo)?);
+    }
+    let persisted = if (args.append || args.incremental)
+        && args.out.as_ref().is_some_and(|path| path.exists())
+    {
+        args.out
+            .as_ref()
+            .and_then(|path| load_smg_json(path).ok())
+            .and_then(|smg| smg.embedding_config)
+    } else {
+        None
+    };
+    if args.model_name.is_none() {
+        args.model_name = persisted
+            .as_ref()
+            .and_then(|config| config.model_name.clone());
+    }
+    if args.batch_size.is_none() {
+        args.batch_size = persisted.as_ref().and_then(|config| config.batch_size);
+    }
+    if args.normalize.is_none() {
+        args.normalize = persisted.as_ref().and_then(|config| config.normalize);
+    }
+    if let Some(config) = load_repo_config(&args.repo)? {
+        if args.model_name.is_none() {
+            args.model_name = config.model_name;
+        }
+        if args.batch_size.is_none() {
+            args.batch_size = config.batch_size;
+        }
+        if args.workers.is_none() {
+            args.workers = config.workers;
+        }
+        if args.normalize.is_none() {
+            args.normalize = config.normalize;
+        }
+        if args.git_filter_drop.is_empty() {
+            args.git_filter_drop = config.git_filter_drop;
+        }
+        if args.git_filter_preset.is_none() {
+            args.git_filter_preset = config.git_filter_preset;
+        }
+        if args.git_filter_case_insensitive.is_none() {
+            args.git_filter_case_insensitive = config.git_filter_case_insensitive;
+        }
+        if args.git_commit_split_mode.is_none() {
+            args.git_commit_split_mode = config.git_commit_split_mode;
+        }
+        if args.git_commit_split_max_segments.is_none() {
+            args.git_commit_split_max_segments = config.git_commit_split_max_segments;
+        }
+        if args.git_commit_split_min_confidence.is_none() {
+            args.git_commit_split_min_confidence = config.git_commit_split_min_confidence;
+        }
+        if args.num_spectral_dims.is_none() {
+            args.num_spectral_dims = config.num_spectral_dims;
+        }
+        if args.min_clusters.is_none() {
+            args.min_clusters = config.min_clusters;
+        }
+        if args.max_clusters.is_none() {
+            args.max_clusters = config.max_clusters;
+        }
+    }
+    args.git_commit_split_mode
+        .get_or_insert_with(|| "auto".into());
+    args.git_commit_split_max_segments.get_or_insert(6);
+    args.git_commit_split_min_confidence.get_or_insert(0.75);
+    args.git_filter_case_insensitive.get_or_insert(false);
+    let batch_size = args.batch_size.unwrap_or(1024);
+    let workers = args.workers.unwrap_or(4);
     println!("Starting ingest for repo: {}", args.repo.display());
 
     // Initialize embedding pool asynchronously to overlap with commit collection
     println!(
         "Initializing embedding pool with {} workers (background)...",
-        args.workers
+        workers
     );
     let model_name = args
         .model_name
@@ -537,10 +795,10 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     let normalize = std::env::var("MODEL2VEC_NORMALIZE")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(args.normalize);
-    let batch_size = args.batch_size;
+        .unwrap_or(args.normalize.unwrap_or(true));
+    let batch_size = args.batch_size.unwrap_or(1024);
     let subfolder = args.subfolder.clone();
-    let workers = args.workers;
+    let workers = args.workers.unwrap_or(4);
     let cache_size = args.cache_size;
     let init_handle = std::thread::spawn(move || {
         if let Some(model_name) = model_name {
@@ -647,6 +905,22 @@ fn run_ingest(args: IngestArgs) -> Result<()> {
     } else {
         SpectralMemoryGraph::new().context("initializing SpectralMemoryGraph")?
     };
+
+    if let Ok(repository) = git2::Repository::open(&args.repo) {
+        if let Ok(head) = repository
+            .head()
+            .and_then(|reference| reference.peel_to_commit())
+        {
+            smg.source_repo = Some(
+                args.repo
+                    .canonicalize()
+                    .unwrap_or_else(|_| args.repo.clone())
+                    .display()
+                    .to_string(),
+            );
+            smg.source_revision = Some(head.id().to_string());
+        }
+    }
 
     #[cfg(not(feature = "fake-embed"))]
     {
@@ -909,7 +1183,7 @@ impl GitFilterConfig {
         let mut drop_patterns = Vec::with_capacity(raw_patterns.len());
         for pattern in raw_patterns {
             let rx = RegexBuilder::new(&pattern)
-                .case_insensitive(args.git_filter_case_insensitive)
+                .case_insensitive(args.git_filter_case_insensitive.unwrap_or(false))
                 .build()
                 .with_context(|| format!("invalid --git-filter-drop regex: '{}'", pattern))?;
             drop_patterns.push(rx);
@@ -1008,7 +1282,7 @@ fn run_query(args: QueryArgs) -> Result<()> {
     let smg_path = args
         .smg
         .clone()
-        .ok_or_else(|| anyhow::anyhow!("--smg <path> is required"))?;
+        .unwrap_or(configured_smg(std::path::Path::new("."))?);
     let start_load = Instant::now();
     let smg = load_smg_json(&smg_path)
         .with_context(|| format!("loading SMG from {}", smg_path.display()))?;
@@ -1367,8 +1641,11 @@ fn run_query(args: QueryArgs) -> Result<()> {
 
 /// Run the `note` subcommand.
 fn run_note(args: NoteArgs) -> Result<()> {
-    let smg = load_smg_json(&args.smg)
-        .with_context(|| format!("loading SMG from {}", args.smg.display()))?;
+    let path = args
+        .smg
+        .unwrap_or(configured_smg(std::path::Path::new("."))?);
+    let smg =
+        load_smg_json(&path).with_context(|| format!("loading SMG from {}", path.display()))?;
 
     let note = smg.notes.get(&args.note_id).ok_or_else(|| {
         anyhow::anyhow!(
@@ -1410,7 +1687,7 @@ fn run_note(args: NoteArgs) -> Result<()> {
             .collect();
 
         let out = json!({
-            "smg": args.smg.to_string_lossy().to_string(),
+            "smg": path.to_string_lossy().to_string(),
             "note": {
                 "note_id": note.note_id,
                 "context": note.context(),
@@ -1648,6 +1925,57 @@ fn collect_commits(
 mod tests {
     use super::*;
     use regex::Regex;
+
+    #[test]
+    fn init_writes_config_and_configured_smg_reads_it() {
+        let repo = tempfile::tempdir().unwrap();
+        run_init(InitArgs {
+            repo: repo.path().to_path_buf(),
+            smg: PathBuf::from("memory.json"),
+            model_name: Some("example/model".into()),
+            batch_size: Some(64),
+            workers: Some(2),
+            normalize: Some(false),
+        })
+        .unwrap();
+        let config = load_repo_config(repo.path()).unwrap().unwrap();
+        assert_eq!(config.smg, PathBuf::from("memory.json"));
+        assert_eq!(
+            configured_smg(repo.path()).unwrap(),
+            PathBuf::from("memory.json")
+        );
+        assert_eq!(config.model_name.as_deref(), Some("example/model"));
+        assert_eq!(config.batch_size, Some(64));
+    }
+
+    #[test]
+    fn ingest_cli_tracks_explicit_default_values_for_config_precedence() {
+        let omitted = Cli::try_parse_from(["spectral-cortex", "ingest"]).unwrap();
+        let Commands::Ingest(omitted) = omitted.command else {
+            panic!("expected ingest")
+        };
+        assert_eq!(omitted.workers, None);
+        assert_eq!(omitted.batch_size, None);
+        assert_eq!(omitted.git_commit_split_mode, None);
+
+        let explicit = Cli::try_parse_from([
+            "spectral-cortex",
+            "ingest",
+            "--workers",
+            "4",
+            "--batch-size",
+            "1024",
+            "--git-commit-split-mode",
+            "auto",
+        ])
+        .unwrap();
+        let Commands::Ingest(explicit) = explicit.command else {
+            panic!("expected ingest")
+        };
+        assert_eq!(explicit.workers, Some(4));
+        assert_eq!(explicit.batch_size, Some(1024));
+        assert_eq!(explicit.git_commit_split_mode.as_deref(), Some("auto"));
+    }
 
     #[test]
     fn test_strip_html_comments() {

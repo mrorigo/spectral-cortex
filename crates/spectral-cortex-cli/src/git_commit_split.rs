@@ -51,7 +51,13 @@ pub(crate) struct CommitSplitConfig {
 
 impl CommitSplitConfig {
     pub(crate) fn from_ingest_args(args: &IngestArgs) -> Result<Self> {
-        let mode = match args.git_commit_split_mode.to_lowercase().as_str() {
+        let mode = match args
+            .git_commit_split_mode
+            .as_deref()
+            .unwrap_or("auto")
+            .to_lowercase()
+            .as_str()
+        {
             "off" => CommitSplitMode::Off,
             "auto" => CommitSplitMode::Auto,
             "strict" => CommitSplitMode::Strict,
@@ -63,8 +69,11 @@ impl CommitSplitConfig {
                 ));
             }
         };
-        let max_segments = args.git_commit_split_max_segments.max(1);
-        let min_confidence = args.git_commit_split_min_confidence.clamp(0.0, 1.0);
+        let max_segments = args.git_commit_split_max_segments.unwrap_or(6).max(1);
+        let min_confidence = args
+            .git_commit_split_min_confidence
+            .unwrap_or(0.75)
+            .clamp(0.0, 1.0);
         Ok(Self {
             mode,
             max_segments,

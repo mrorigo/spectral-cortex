@@ -13,7 +13,7 @@ Spectral Cortex turns commit history into a graph of semantically related notes.
 3. It can split multi-change commit messages into multiple note segments.
 4. It embeds each segment.
 5. It builds spectral structures and long-range links.
-6. It saves results to SMG JSON (`format_version: spectral-cortex-v1`).
+6. It saves results to versioned SMG JSON (`format_version: spectral-cortex-v2`).
 7. It supports query and note inspection from saved SMG files.
 
 ## Core Concepts
@@ -75,17 +75,42 @@ spectral-cortex <COMMAND>
 
 Commands:
 
-1. `ingest`: Build/update SMG from git history.
-2. `update`: Incremental alias for append ingestion.
-3. `query`: Retrieve relevant notes from SMG JSON.
-4. `note`: Inspect one note and related links.
-5. `mcp`: Run an MCP stdio server with a preloaded SMG file.
-6. `hotspots`: List the most frequently modified structural symbols.
-7. `history`: List chronological changes for one structural symbol.
+1. `init`: Create a repository-local `.spectral-cortex.toml` configuration.
+2. `status`: Show graph size and freshness against the repository HEAD.
+3. `ingest`: Build or append an SMG from Git history.
+4. `update`: Incrementally ingest commits missing from the configured graph.
+5. `query`: Retrieve relevant notes from an SMG.
+6. `note`: Inspect one note and related links.
+7. `mcp`: Run an MCP stdio server with a preloaded graph.
+8. `hotspots`: List the most frequently modified structural symbols.
+9. `history`: List chronological changes for one structural symbol.
+
+## Repository configuration
+
+Run `spectral-cortex init` from a repository to create `.spectral-cortex.toml`.
+The `smg` setting chooses the default graph path. Optional ingestion defaults
+include `model_name`, `normalize`, `batch_size`, `workers`, Git filters,
+commit-splitting settings, and spectral clustering limits.
+
+```toml
+smg = "spectral-cortex.smg.json"
+model_name = "grybsh/m2v-MiniLM-L6-v2"
+normalize = true
+batch_size = 512
+workers = 4
+git_filter_preset = "git-noise"
+git_commit_split_mode = "auto"
+```
+
+Explicit CLI options take precedence over repo settings. For `update`, embedding
+settings recorded in the existing graph take precedence over repo defaults,
+unless the update command supplies an explicit override. `status` reports
+`current`, `behind`, `ahead`, `diverged`, or `unknown`. Legacy graphs without
+revision metadata report `unknown`.
 
 ## MCP
 
-Run MCP server over stdio using a preloaded graph:
+Run MCP over stdio using the configured graph, or pass an explicit graph path:
 
 ```bash
 ./target/release/spectral-cortex mcp --smg smg.json
@@ -93,12 +118,14 @@ Run MCP server over stdio using a preloaded graph:
 
 The MCP server is local-only and uses stdio. It supports MCP 2026-07-28
 negotiation through RMCP 3.2.0 and retains compatibility with clients that use
-the legacy initialize lifecycle. The SMG path is selected when the process
-starts; tools cannot select another file.
+the legacy initialize lifecycle. It watches for stable updates to the selected
+SMG file and reloads valid replacements. A failed reload leaves the previous
+valid graph active. Pass `--no-watch` to disable watching.
 
 Options:
 
-- `--smg <PATH>`: path to SMG JSON file to preload once at startup.
+- `--smg <PATH>`: graph file to load. Defaults to the configured `smg` path.
+- `--no-watch`: disable automatic graph reload when the file changes.
 
 MCP tool inputs (no `smg_path` required because graph is preloaded):
 
@@ -125,9 +152,31 @@ To inspect one historical topology snapshot, provide its commit ID:
 {
   "query": "mcp protocol",
   "top_k": 5,
-  "links_k": 3
+  "candidate_k": 25,
+  "links_k": 3,
+  "file": "crates/",
+  "symbol": "query_graph",
+  "temporal_mode": "exponential",
+  "temporal_weight": 0.2,
+  "temporal_half_life_days": 14,
+  "time_window_days": 30
 }
 ```
+
+`query_graph` also accepts `min_score`, `no_temporal`, `time_start`, `time_end`,
+and `temporal_now`. Time values use RFC3339. The response includes commit-grouped
+Markdown and structured note results with scores, provenance, paths, symbols,
+and bounded snippets.
+
+`get_commit_diff`
+
+```json
+{"commit_id":"<commit-sha>","file":"src/module.rs"}
+```
+
+This tool reads diffs from the source repository recorded in the SMG. It returns
+at most 8,000 characters and marks truncated output. Graphs without source
+repository metadata cannot provide diffs.
 
 `inspect_note`
 
@@ -184,7 +233,7 @@ Spectral structures are always rebuilt during `ingest` and `update`.
 `--out <PATH>`
 
 1. Output SMG JSON path.
-2. If omitted, runs in-memory only.
+2. If omitted, uses the configured `smg` path or `spectral-cortex.smg.json`.
 
 `--append`
 
@@ -274,8 +323,10 @@ Typical output includes:
 
 Update-specific notes:
 
-1. `--out` is required.
-2. Split settings are available here too.
+1. `--out` is optional. It defaults to the configured `smg` path.
+2. Split settings and embedding overrides are available here too.
+3. Without explicit embedding overrides, update retains the model, normalization,
+   and batch size recorded in the graph.
 
 ## Query
 
@@ -614,6 +665,6 @@ smg.build_spectral_structure_with_config(None, &config)?;
 
 ## Compatibility and Stability Notes
 
-1. JSON format is strict (`spectral-cortex-v1`).
+1. JSON format is strict (`spectral-cortex-v2`).
 2. `related_note_links` is the canonical per-note adjacency representation.
 3. `related_note_ids` has been removed from graph storage/output.

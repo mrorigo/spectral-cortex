@@ -46,7 +46,7 @@ Spectral Cortex addresses this by building a structured, queryable graph from re
 7. Long-range links for topological but semantically distant connections.
 8. Temporal re-ranking to favor fresh context when needed.
 9. Query and note inspection via CLI (`ingest`, `update`, `query`, `note`).
-10. Built-in MCP server mode with 6 dedicated tools.
+10. Built-in MCP server mode with seven tools, including structured query results and on-demand commit diffs.
 
 ## Key Differentiators
 
@@ -94,41 +94,46 @@ At a high level:
 
 ## MCP Integration
 
-Spectral Cortex includes MCP serving in the primary CLI:
+Spectral Cortex includes MCP serving in the primary CLI. Initialize the repository configuration, then start the server:
 
 ```bash
-spectral-cortex mcp --smg smg.json
+spectral-cortex init
+spectral-cortex mcp
 ```
 
 The MCP server is local-only and communicates over stdio. It uses RMCP 3.2.0
 for MCP 2026-07-28 negotiation while retaining the legacy initialize lifecycle
-for compatible clients. The graph is loaded once from `--smg`; MCP tools cannot
-choose arbitrary files. Successful calls return the existing compact markdown
-and structured content with a `markdown` field. Invalid bounds and graph
-failures are reported as protocol errors.
+for compatible clients. It loads the graph from `--smg` or the repository
+configuration and watches for stable file replacements. Valid updates replace
+the shared graph snapshot. Invalid updates leave the last valid graph active.
+Pass `--no-watch` to disable file watching. Query responses include compact
+Markdown and structured note evidence.
 
 MCP tools:
 
 1. `graph_summary`: compact graph metadata.
-2. `query_graph`: semantic query with markdown tables.
-3. `inspect_note`: inspect one note and its spectral neighborhood.
-4. `long_range_links`: list top long-range links.
-5. `get_structural_hotspots`: find the most frequently modified symbols (brittle code).
-6. `inspect_symbol_history`: chronological evolution of a specific structural symbol.
+2. `query_graph`: semantic retrieval with file, symbol, and temporal filters; results include commit provenance and are grouped by commit.
+3. `get_commit_diff`: bounded diff excerpt from the source repository recorded in the graph.
+4. `inspect_note`: inspect one note and its spectral neighborhood.
+5. `long_range_links`: list top long-range links.
+6. `get_structural_hotspots`: find the most frequently modified symbols (brittle code).
+7. `inspect_symbol_history`: chronological evolution of a specific structural symbol.
 
-The graph is preloaded once at startup, and tool inputs no longer require per-request `smg_path`.
+Tool inputs do not require per-request `smg_path`. The `get_commit_diff` tool requires source repository metadata, which older graphs may lack.
 
 ## Typical Workflow
 
 ### Initial Build
 
-1. Ingest repository history into `smg.json`.
-2. Spectral structures are built as part of ingest/update.
+1. Run `spectral-cortex init` to create `.spectral-cortex.toml`.
+2. Run `spectral-cortex ingest` to build the configured graph.
+3. Run `spectral-cortex status` to inspect the indexed revision and freshness.
+4. Spectral structures are built as part of ingest/update.
 
 ### Incremental Maintenance
 
-1. Run `update` with append+incremental behavior.
-2. Persist updated graph.
+1. Run `spectral-cortex update` to append commits missing from the graph.
+2. The graph file is replaced atomically so a running MCP server can reload it.
 
 ### Agent Runtime
 
@@ -190,7 +195,7 @@ Spectral Cortex turns Git history into a spectral memory graph for AI agents: se
 ## Technical Fact Sheet
 
 1. Language: Rust
-2. Storage format: versioned JSON SMG (`spectral-cortex-v1`)
+2. Storage format: versioned JSON SMG (`spectral-cortex-v2`)
 3. Retrieval modes: hybrid (semantic + keyword boosting) + temporal re-ranking
 4. Graph relationships: related links with similarity scores, long-range links, structural links
 5. Interfaces: CLI and MCP (`mcp` subcommand)

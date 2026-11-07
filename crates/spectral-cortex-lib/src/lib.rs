@@ -22,8 +22,8 @@ use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::fs::{self, File};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
 // use std::time::Instant;
 
@@ -101,6 +101,12 @@ impl SerializableSMG {
             "format_version".to_string(),
             "spectral-cortex-v2".to_string(),
         );
+        if let Some(repo) = &smg.source_repo {
+            metadata.insert("source_repo".into(), repo.clone());
+        }
+        if let Some(revision) = &smg.source_revision {
+            metadata.insert("source_revision".into(), revision.clone());
+        }
 
         if let Some(config) = &smg.last_build_config {
             metadata.insert(
@@ -158,9 +164,32 @@ impl From<&SMGNote> for SerializableNote {
 /// Save the provided `SpectralMemoryGraph` to a JSON file.
 pub fn save_smg_json(smg: &SpectralMemoryGraph, path: &Path) -> Result<()> {
     let serial = SerializableSMG::from_smg(smg);
-    let file = File::create(path)?;
-    let writer = BufWriter::new(file);
-    serde_json::to_writer(writer, &serial)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("SMG path has no file name"))?;
+    let temp_path = parent.join(format!(
+        ".{}.{}.tmp",
+        file_name.to_string_lossy(),
+        std::process::id()
+    ));
+    let result = (|| -> Result<()> {
+        let file = File::create(&temp_path)?;
+        let mut writer = BufWriter::new(file);
+        serde_json::to_writer(&mut writer, &serial)?;
+        writer.flush()?;
+        writer.get_ref().sync_all()?;
+        drop(writer);
+        fs::rename(&temp_path, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result?;
     Ok(())
 }
 
@@ -188,6 +217,8 @@ fn validate_serial_smg(serial: SerializableSMG) -> Result<SpectralMemoryGraph> {
 
     // Create a fresh graph (this also initialises logging/embedder per existing API).
     let mut smg = SpectralMemoryGraph::new()?;
+    smg.source_repo = serial.metadata.get("source_repo").cloned();
+    smg.source_revision = serial.metadata.get("source_revision").cloned();
     if let Some(backend) = serial.metadata.get("embedding_backend") {
         smg.embedding_config = Some(embed::EmbeddingConfig {
             backend: backend.clone(),

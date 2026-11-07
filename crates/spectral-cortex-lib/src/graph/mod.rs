@@ -123,6 +123,10 @@ pub mod spectral;
 ///
 /// Public fields are intentionally simple to make the structure easy to test.
 pub struct SpectralMemoryGraph {
+    /// Repository path associated with this graph, when built from Git.
+    pub source_repo: Option<String>,
+    /// Git revision indexed by this graph.
+    pub source_revision: Option<String>,
     pub notes: HashMap<u32, SMGNote>,
     pub next_id: u32,
     pub construction_time: Duration,
@@ -222,6 +226,8 @@ impl SpectralMemoryGraph {
     pub fn new() -> Result<Self> {
         logging::init();
         Ok(Self {
+            source_repo: None,
+            source_revision: None,
             notes: HashMap::new(),
             next_id: 0,
             construction_time: Duration::new(0, 0),

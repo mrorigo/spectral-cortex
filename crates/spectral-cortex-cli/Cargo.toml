@@ -36,6 +36,7 @@ tokio = { version = "1", features = ["full"] }
 rmcp = { version = "3.2.0", features = ["server", "macros", "transport-io"] }
 num = "0.4.3"
 regex = "1.11"
+toml = "0.8"
 
 # Tree-sitter for AST analysis
 tree-sitter = "0.24"

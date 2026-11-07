@@ -51,13 +51,34 @@ spectral-cortex --help
 Ingest a repository and build the SMG (recommended CLI flow):
 
 ```bash
-spectral-cortex ingest --repo /path/to/repo --out smg.json
+cd /path/to/repo
+spectral-cortex init
+spectral-cortex ingest
+spectral-cortex status
 ```
+
+`init` creates `.spectral-cortex.toml` with the graph path. You can set defaults
+there for `model_name`, `normalize`, `batch_size`, `workers`, `git_filter_drop`,
+`git_filter_preset`, `git_filter_case_insensitive`, `git_commit_split_mode`,
+`git_commit_split_max_segments`, `git_commit_split_min_confidence`,
+`num_spectral_dims`, `min_clusters`, and `max_clusters`. For example:
+
+```toml
+smg = "spectral-cortex.smg.json"
+model_name = "grybsh/m2v-MiniLM-L6-v2"
+batch_size = 512
+workers = 4
+git_filter_preset = "git-noise"
+git_commit_split_mode = "auto"
+```
+
+Command-line options override configured values. `status` reports whether the
+saved graph is current, behind, ahead, or diverged from the repository HEAD.
 
 Query the saved SMG programmatically (JSON output suitable for agents):
 
 ```bash
-spectral-cortex query --query "why did we add X" --smg smg.json --json --top-k 10
+spectral-cortex query --query "why did we add X" --json --top-k 10
 ```
 
 MCP server (markdown-first tools)
@@ -66,12 +87,16 @@ A dedicated MCP subcommand is available for agent workflows that need compact, m
 
 Run it over stdio:
 ```bash
-spectral-cortex mcp --smg smg.json
+spectral-cortex mcp
 ```
+
+The MCP server watches the configured graph file and reloads valid atomic
+updates automatically. Pass `--no-watch` to disable reloading.
 
 Available tools:
 - `graph_summary`: compact graph metadata for an SMG file
-- `query_graph`: semantic query with markdown tables and compact related-note summaries
+- `query_graph`: semantic query with file/symbol filters, temporal controls, commit-grouped Markdown, and structured note evidence
+- `get_commit_diff`: bounded on-demand diff excerpts from the source repository
 - `inspect_note`: inspect one note and related notes with spectral similarity
 - `long_range_links`: list top long-range links in markdown table format
 - `get_structural_hotspots`: find the most frequently modified AST symbols (the "brittle" parts)
@@ -145,19 +170,20 @@ Tool input examples:
 }
 ```
 
-All MCP tool responses are markdown-first and intentionally compact to reduce token usage.
+MCP tool responses include compact Markdown. Query responses also include structured per-note results with scores, commit IDs, timestamps, file paths, symbols, and snippets. `get_commit_diff` reads the requested commit from the source repository recorded in the graph and truncates long output.
 The server uses RMCP 3.2.0, supports MCP 2026-07-28 negotiation, and also
 retains the legacy initialize lifecycle supported by the SDK. Successful tool
-responses include the markdown plus structured content in the form
-`{"markdown":"..."}`. The server is local-only over stdio and reads the SMG
-file supplied at startup.
+responses include the Markdown in structured content. The server is local-only
+over stdio. It reloads a stable, valid graph-file replacement automatically;
+pass `--no-watch` to disable this behavior. Failed reloads leave the last valid
+graph active.
 
 Agent-oriented workflows & examples
 ----------------------------------
 The typical flow for an agent using the SMG as memory:
 
 1. Periodic ingestion: run the ingest job (cron / CI hook) and persist `smg.json`.
-2. At runtime, load `smg.json` once per agent process or cache it in memory.
+2. At runtime, start the MCP server against the configured graph or load `smg.json` through the library API.
 3. For a user or agent query:
    - Get top-K relevant turn IDs and associated note metadata via the CLI or library API (JSON).
    - Retrieve the source commit ids, timestamps, and content snippets for context.
@@ -172,7 +198,7 @@ Why this is suited to agents
 
 CLI reference (important flags)
 -------------------------------
-The `spectral-cortex` binary exposes: `ingest`, `update`, `query`, `note`, `mcp`, `hotspots`, and `history`.
+The `spectral-cortex` binary exposes: `init`, `status`, `ingest`, `update`, `query`, `note`, `mcp`, `hotspots`, and `history`.
 
 Ingest (collect commits -> SMG):
 ```bash
@@ -325,7 +351,7 @@ Primary types:
 
 Persistence format
 ------------------
-The JSON format is strict and versioned (`metadata.format_version = "spectral-cortex-v1"`).
+The JSON format is strict and versioned (`metadata.format_version = "spectral-cortex-v2"`). New graphs record the source repository and indexed Git revision; older v2 graphs may not contain this optional provenance.
 
 Persistence
 -----------
@@ -367,6 +393,10 @@ corresponding model-name and normalize options. Model2Vec models may be a
 Hugging Face identifier or a local model directory. The selected model must be
 the same for ingestion and querying; its embedding dimension is part of the
 SMG's compatibility contract.
+
+For incremental updates, the model name, normalization setting, and batch size
+recorded in the existing graph are retained unless an update option overrides
+them. Repository config supplies defaults when the graph does not provide them.
 
 - Run unit tests:
 ```bash
