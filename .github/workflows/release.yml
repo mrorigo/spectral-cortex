@@ -62,7 +62,16 @@ jobs:
 
       - name: Build spectral-cortex (musl)
         if: contains(matrix.target, 'musl')
-        run: cargo zigbuild --release -p spectral-cortex --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET_TRIPLE="${{ matrix.target }}"
+          ZIG_TARGET_TRIPLE="${TARGET_TRIPLE/-unknown/}"
+          CC_ENV_NAME="CC_${TARGET_TRIPLE//-/_}"
+          env "$CC_ENV_NAME=zig cc -target $ZIG_TARGET_TRIPLE" \
+            cargo zigbuild --release -p spectral-cortex \
+              --features git2/vendored-openssl \
+              --target "$TARGET_TRIPLE"
 
       - name: Package (tar.gz)
         if: matrix.archive == 'tar.gz'
