@@ -1,10 +1,11 @@
 [package]
 name = "spectral-cortex-lib"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Rust implementation of the Spectral Memory Graph (SMG)"
 license = "MIT"
 repository = "https://github.com/mrorigo/spectral-cortex"
+readme = "README.md"
 
 # Explicit crate name for the library (underscored form used in `use spectral_cortex::...`)
 [lib]
