@@ -20,25 +20,94 @@ use serde_json::{json, Value};
 use spectral_cortex::{load_smg_json, SpectralMemoryGraph};
 
 const DEFAULT_TOP_K: usize = 5;
-// const DEFAULT_LINKS_K: usize = 3;
+const DEFAULT_LINKS_K: usize = 3;
 const DEFAULT_SNIPPET_CHARS: usize = 140;
 
-fn markdown_output_schema() -> Arc<JsonObject> {
-    Arc::new(
-        json!({
-            "type": "object",
-            "properties": { "markdown": { "type": "string" } },
-            "required": ["markdown"],
-            "additionalProperties": false
-        })
-        .as_object()
-        .cloned()
-        .unwrap_or_default(),
-    )
+fn output_schema(schema: Value) -> Arc<JsonObject> {
+    let mut schema = schema.as_object().cloned().unwrap_or_default();
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        properties.extend(provenance_schema().as_object().cloned().unwrap_or_default());
+    }
+    if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
+        required.extend([
+            json!("source_repository"),
+            json!("indexed_revision"),
+            json!("current_revision"),
+            json!("freshness"),
+        ]);
+    }
+    Arc::new(schema)
+}
+
+fn provenance_schema() -> Value {
+    json!({"source_repository":{"type":["string","null"]},"indexed_revision":{"type":["string","null"]},"current_revision":{"type":["string","null"]},"freshness":{"enum":["current","behind","ahead","diverged","unknown"]}})
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct InvalidToolInput(String);
+
+fn invalid_input(message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(InvalidToolInput(message.into()))
 }
 
 fn query_output_schema() -> Arc<JsonObject> {
-    Arc::new(json!({"type":"object","properties":{"markdown":{"type":"string"},"results":{"type":"array","items":{"type":"object"}}},"required":["markdown","results"],"additionalProperties":false}).as_object().cloned().unwrap_or_default())
+    output_schema(json!({
+        "type": "object",
+        "properties": {
+            "results": { "type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "note_id": { "type": "integer" }, "score": { "type": "number" },
+                    "commit_id": { "type": ["string", "null"] }, "timestamp": { "type": ["integer", "null"] },
+                    "file_path": { "type": ["string", "null"] }, "symbol_id": { "type": ["string", "null"] },
+                    "snippet": { "type": "string" },
+                    "related_notes": { "type": "array", "items": { "type": "object", "properties": {
+                        "note_id": { "type": "integer" }, "similarity": { "type": "number" }
+                    }, "required": ["note_id", "similarity"], "additionalProperties": false } }
+                },
+                "required": ["note_id", "score", "commit_id", "timestamp", "file_path", "symbol_id", "snippet", "related_notes"],
+                "additionalProperties": false
+            } }
+        },
+        "required": ["results"], "additionalProperties": false
+    }))
+}
+
+fn inspect_note_output_schema() -> Arc<JsonObject> {
+    output_schema(
+        json!({"type":"object","properties":{"note":{"type":"object","properties":{"note_id":{"type":"integer"},"symbol_id":{"type":["string","null"]},"ast_node_type":{"type":["string","null"]},"file_path":{"type":["string","null"]},"context":{"type":"string"}},"required":["note_id","symbol_id","ast_node_type","file_path","context"],"additionalProperties":false},"related_notes":{"type":"array","items":{"type":"object","properties":{"note_id":{"type":"integer"},"similarity":{"type":"number"},"snippet":{"type":"string"}},"required":["note_id","similarity","snippet"],"additionalProperties":false}}},"required":["note","related_notes"],"additionalProperties":false}),
+    )
+}
+
+fn long_range_output_schema() -> Arc<JsonObject> {
+    output_schema(
+        json!({"type":"object","properties":{"links":{"type":"array","items":{"type":"object","properties":{"rank":{"type":"integer"},"note_a":{"type":"integer"},"note_b":{"type":"integer"},"similarity":{"type":"number"}},"required":["rank","note_a","note_b","similarity"],"additionalProperties":false}}},"required":["links"],"additionalProperties":false}),
+    )
+}
+
+fn hotspots_output_schema() -> Arc<JsonObject> {
+    output_schema(
+        json!({"type":"object","properties":{"hotspots":{"type":"array","items":{"type":"object","properties":{"symbol_id":{"type":"string"},"category":{"type":"string"},"churn_count":{"type":"integer"}},"required":["symbol_id","category","churn_count"],"additionalProperties":false}}},"required":["hotspots"],"additionalProperties":false}),
+    )
+}
+
+fn history_output_schema() -> Arc<JsonObject> {
+    output_schema(
+        json!({"type":"object","properties":{"symbol_id":{"type":"string"},"total_entries":{"type":"integer"},"entries":{"type":"array","items":{"type":"object","properties":{"timestamp":{"type":"integer"},"note_id":{"type":"integer"},"context":{"type":"string"}},"required":["timestamp","note_id","context"],"additionalProperties":false}}},"required":["symbol_id","total_entries","entries"],"additionalProperties":false}),
+    )
+}
+
+fn summary_output_schema() -> Arc<JsonObject> {
+    output_schema(
+        json!({"type":"object","properties":{"note_count":{"type":"integer"},"next_id":{"type":"integer"},"long_range_link_count":{"type":"integer"},"cluster_label_count":{"type":"integer"},"cluster_centroid_count":{"type":"integer"},"topology_snapshot_count":{"type":"integer"},"topology_symbol_count":{"type":"integer"},"topology_edge_count":{"type":"integer"},"selected_topology":{"type":["object","null"]},"similarity_matrix_cached":{"type":"boolean"},"spectral_embeddings_cached":{"type":"boolean"}},"required":["note_count","next_id","long_range_link_count","cluster_label_count","cluster_centroid_count","topology_snapshot_count","topology_symbol_count","topology_edge_count","selected_topology","similarity_matrix_cached","spectral_embeddings_cached"],"additionalProperties":false}),
+    )
+}
+
+fn diff_output_schema() -> Arc<JsonObject> {
+    output_schema(
+        json!({"type":"object","properties":{"commit_id":{"type":"string"},"diff":{"type":"string"},"truncated":{"type":"boolean"}},"required":["commit_id","diff","truncated"],"additionalProperties":false}),
+    )
 }
 
 /// Input for querying the graph with a text query.
@@ -46,28 +115,71 @@ fn query_output_schema() -> Arc<JsonObject> {
 pub struct QueryGraphInput {
     #[schemars(description = "Text query to run against the graph")]
     pub query: String,
-    #[schemars(description = "Number of rows to return (default: 5)")]
+    #[schemars(
+        description = "Number of rows to return (default: 5; range: 1–20)",
+        range(min = 1, max = 20)
+    )]
     pub top_k: Option<usize>,
-    #[schemars(description = "Number of related notes per hit (default: 3)")]
+    #[schemars(
+        description = "Number of related notes per hit (default: 3; range: 1–25)",
+        range(min = 1, max = 25)
+    )]
     pub links_k: Option<usize>,
-    #[schemars(description = "Maximum characters per snippet (default: 140)")]
+    #[schemars(
+        description = "Maximum characters per snippet (default: 140; range: 40–300)",
+        range(min = 40, max = 300)
+    )]
     pub snippet_chars: Option<usize>,
-    #[schemars(description = "Optional minimum score threshold")]
+    #[schemars(
+        description = "Optional minimum score threshold from 0 to 1",
+        range(min = 0.0, max = 1.0)
+    )]
     pub min_score: Option<f32>,
     #[schemars(description = "Optional file path substring filter")]
     pub file: Option<String>,
     #[schemars(description = "Optional symbol ID substring filter")]
     pub symbol: Option<String>,
-    #[schemars(description = "Temporal reranking weight, from 0 to 1 (default: 0.2)")]
+    #[schemars(
+        description = "Temporal reranking weight, from 0 to 1 (default: 0.2)",
+        range(min = 0.0, max = 1.0)
+    )]
     pub temporal_weight: Option<f32>,
+    #[schemars(
+        description = "Candidate count before final ranking (default: max(top_k * 5, top_k); range: 1–100)",
+        range(min = 1, max = 100)
+    )]
     pub candidate_k: Option<usize>,
+    #[schemars(description = "Disable temporal reranking")]
     pub no_temporal: Option<bool>,
-    pub temporal_mode: Option<String>,
+    #[schemars(
+        description = "Temporal mode: exponential, linear, linearwindow, step, or buckets (default: exponential)"
+    )]
+    pub temporal_mode: Option<TemporalModeInput>,
+    #[schemars(description = "Temporal decay half-life in days; must be positive")]
     pub temporal_half_life_days: Option<f32>,
+    #[schemars(description = "Inclusive RFC3339 lower timestamp bound")]
     pub time_start: Option<String>,
+    #[schemars(description = "Inclusive RFC3339 upper timestamp bound")]
     pub time_end: Option<String>,
+    #[schemars(
+        description = "Relative time window in days; non-negative and cannot be combined with time_start",
+        range(min = 0.0)
+    )]
     pub time_window_days: Option<f64>,
+    #[schemars(description = "RFC3339 reference time for temporal ranking")]
     pub temporal_now: Option<String>,
+}
+
+/// Supported temporal reranking modes for graph queries.
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TemporalModeInput {
+    Exponential,
+    Linear,
+    #[serde(rename = "linearwindow")]
+    LinearWindow,
+    Step,
+    Buckets,
 }
 
 /// Input for inspecting one note and its related notes.
@@ -75,16 +187,25 @@ pub struct QueryGraphInput {
 pub struct InspectNoteInput {
     #[schemars(description = "Note id to inspect")]
     pub note_id: u32,
-    #[schemars(description = "Number of related notes to include (default: 10)")]
+    #[schemars(
+        description = "Number of related notes to include (default: 10; range: 1–25)",
+        range(min = 1, max = 25)
+    )]
     pub links_k: Option<usize>,
-    #[schemars(description = "Maximum characters per snippet (default: 140)")]
+    #[schemars(
+        description = "Maximum characters per snippet (default: 140; range: 40–300)",
+        range(min = 40, max = 300)
+    )]
     pub snippet_chars: Option<usize>,
 }
 
 /// Input for listing long-range links.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct LongRangeLinksInput {
-    #[schemars(description = "Number of long-range links to include (default: 20)")]
+    #[schemars(
+        description = "Number of long-range links to include (default: 20; range: 1–100)",
+        range(min = 1, max = 100)
+    )]
     pub top_k: Option<usize>,
 }
 
@@ -98,7 +219,10 @@ pub struct GraphSummaryInput {
 /// Input for structural hotspots analysis.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct StructuralHotspotsInput {
-    #[schemars(description = "Number of hotspots to return (default: 10)")]
+    #[schemars(
+        description = "Number of hotspots to return (default: 10; range: 1–50)",
+        range(min = 1, max = 50)
+    )]
     pub top_k: Option<usize>,
 }
 
@@ -107,10 +231,14 @@ pub struct StructuralHotspotsInput {
 pub struct SymbolHistoryInput {
     #[schemars(description = "Stable symbol_id to inspect")]
     pub symbol_id: String,
-    #[schemars(description = "Maximum number of history entries to return (default: all)")]
+    #[schemars(
+        description = "Maximum number of history entries to return (default: all; range: 1–1000)",
+        range(min = 1, max = 1000)
+    )]
     pub limit: Option<usize>,
 }
 
+/// Parameters for retrieving a bounded commit diff excerpt.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct CommitDiffInput {
     pub commit_id: String,
@@ -132,24 +260,85 @@ impl ServerHandler for SpectralCortexMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::V_2026_07_28)
             .with_instructions(
-                "Spectral Cortex MCP Server: compact markdown tools for querying a preloaded SMG file. Prefer small top_k values to keep responses token efficient.",
+                "Spectral Cortex MCP Server for inspecting a preloaded Spectral Memory Graph. Results are structured data. Start with graph_summary, use query_graph to find evidence, inspect_note to expand a note, then get_commit_diff for source changes. Use get_structural_hotspots and inspect_symbol_history for structural or timeline questions. All tools are read-only.",
             )
     }
 }
 
 #[rmcp::tool_router]
 impl SpectralCortexMcpServer {
-    fn success_result(markdown: String) -> CallToolResult {
-        let mut result = CallToolResult::structured(json!({ "markdown": markdown }));
-        result.content = vec![ContentBlock::text(
-            result
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.get("markdown"))
-                .and_then(|value| value.as_str())
-                .unwrap_or_default(),
-        )];
+    fn success_result(&self, mut data: Value) -> CallToolResult {
+        if let Some(object) = data.as_object_mut() {
+            let snapshot = self.smg.read().ok().map(|guard| guard.clone());
+            let provenance = snapshot
+                .as_deref()
+                .map(Self::provenance)
+                .unwrap_or((None, None, None, "unknown"));
+            object.insert("source_repository".into(), json!(provenance.0));
+            object.insert("indexed_revision".into(), json!(provenance.1));
+            object.insert("current_revision".into(), json!(provenance.2));
+            object.insert("freshness".into(), json!(provenance.3));
+        }
+        let mut result = CallToolResult::structured(data);
+        result.content.clear();
         result
+    }
+
+    fn provenance(
+        smg: &SpectralMemoryGraph,
+    ) -> (Option<String>, Option<String>, Option<String>, &'static str) {
+        let source_repository = smg.source_repo.clone();
+        let indexed_revision = smg.source_revision.clone();
+        let current = source_repository.as_deref().and_then(|path| {
+            let repo = git2::Repository::open(path).ok()?;
+            let head = repo.head().ok()?.peel_to_commit().ok()?.id();
+            Some((repo, head))
+        });
+        let current_revision = current.as_ref().map(|(_, head)| head.to_string());
+        let freshness = match (&indexed_revision, current) {
+            (Some(indexed), Some((repo, head))) => match git2::Oid::from_str(indexed) {
+                Ok(indexed) if indexed == head => "current",
+                Ok(indexed) => match (
+                    repo.graph_descendant_of(head, indexed),
+                    repo.graph_descendant_of(indexed, head),
+                ) {
+                    (Ok(true), _) => "behind",
+                    (_, Ok(true)) => "ahead",
+                    (Ok(false), Ok(false)) => "diverged",
+                    _ => "unknown",
+                },
+                Err(_) => "unknown",
+            },
+            _ => "unknown",
+        };
+        (
+            source_repository,
+            indexed_revision,
+            current_revision,
+            freshness,
+        )
+    }
+
+    fn tool_error(err: anyhow::Error) -> McpError {
+        let message = err.to_string();
+        if err.downcast_ref::<InvalidToolInput>().is_some() {
+            McpError::invalid_params(message, None)
+        } else {
+            McpError::internal_error(message, None)
+        }
+    }
+
+    fn snapshot(&self) -> Result<Self, McpError> {
+        let graph = self
+            .smg
+            .read()
+            .map_err(|_| McpError::internal_error("SMG snapshot lock poisoned", None))?
+            .clone();
+        Ok(Self {
+            tool_router: self.tool_router.clone(),
+            smg_path: self.smg_path.clone(),
+            smg: Arc::new(RwLock::new(graph)),
+        })
     }
 
     /// Construct a new server instance.
@@ -161,109 +350,117 @@ impl SpectralCortexMcpServer {
         }
     }
 
-    /// Query the graph and return a compact markdown table.
+    /// Query the graph and return ranked evidence with related note identifiers.
     #[rmcp::tool(
-        description = "Run semantic query against an SMG and return token-efficient markdown results",
+        description = "Run a semantic query against the graph and return ranked note evidence as structured data",
+        annotations(title = "Query graph", read_only_hint = true, destructive_hint = false, idempotent_hint = true),
         output_schema = query_output_schema()
     )]
     fn query_graph(
         &self,
         Parameters(input): Parameters<QueryGraphInput>,
     ) -> Result<CallToolResult, McpError> {
-        match self.query_graph_impl(input) {
-            Ok((markdown, results)) => {
-                let mut result =
-                    CallToolResult::structured(json!({"markdown": markdown, "results": results}));
-                result.content = vec![ContentBlock::text(markdown)];
-                Ok(result)
-            }
-            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
+        let server = self.snapshot()?;
+        match server.query_graph_impl(input) {
+            Ok(results) => Ok(server.success_result(json!({"results": results}))),
+            Err(err) => Err(Self::tool_error(err)),
         }
     }
 
     /// Inspect a single note and show top related notes with similarity.
     #[rmcp::tool(
-        description = "Inspect one note by id and return compact markdown with related notes",
-        output_schema = markdown_output_schema()
+        description = "Inspect one note by ID and return its context and related-note report as structured data",
+        annotations(title = "Inspect note", read_only_hint = true, destructive_hint = false, idempotent_hint = true),
+        output_schema = inspect_note_output_schema()
     )]
     fn inspect_note(
         &self,
         Parameters(input): Parameters<InspectNoteInput>,
     ) -> Result<CallToolResult, McpError> {
-        match self.inspect_note_impl(input) {
-            Ok(output) => Ok(Self::success_result(output)),
-            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
+        let server = self.snapshot()?;
+        match server.inspect_note_impl(input) {
+            Ok(output) => Ok(server.success_result(output)),
+            Err(err) => Err(Self::tool_error(err)),
         }
     }
 
     /// List long-range links from the graph.
     #[rmcp::tool(
-        description = "List long-range spectral links as compact markdown",
-        output_schema = markdown_output_schema()
+        description = "List long-range spectral links as structured report data",
+        annotations(title = "Long-range links", read_only_hint = true, destructive_hint = false, idempotent_hint = true),
+        output_schema = long_range_output_schema()
     )]
     fn long_range_links(
         &self,
         Parameters(input): Parameters<LongRangeLinksInput>,
     ) -> Result<CallToolResult, McpError> {
-        match self.long_range_links_impl(input) {
-            Ok(output) => Ok(Self::success_result(output)),
-            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
+        let server = self.snapshot()?;
+        match server.long_range_links_impl(input) {
+            Ok(output) => Ok(server.success_result(output)),
+            Err(err) => Err(Self::tool_error(err)),
         }
     }
 
     /// Return a small summary of graph size and available structures.
     #[rmcp::tool(
-        description = "Return compact summary metadata for an SMG",
-        output_schema = markdown_output_schema()
+        description = "Return graph summary metadata as structured report data",
+        annotations(title = "Graph summary", read_only_hint = true, destructive_hint = false, idempotent_hint = true),
+        output_schema = summary_output_schema()
     )]
     fn graph_summary(
         &self,
         Parameters(input): Parameters<GraphSummaryInput>,
     ) -> Result<CallToolResult, McpError> {
-        match self.graph_summary_impl(input) {
-            Ok(output) => Ok(Self::success_result(output)),
-            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
+        let server = self.snapshot()?;
+        match server.graph_summary_impl(input) {
+            Ok(output) => Ok(server.success_result(output)),
+            Err(err) => Err(Self::tool_error(err)),
         }
     }
 
     /// Retrieve the most churn-heavy structural hotspots.
     #[rmcp::tool(
-        description = "Report top churn-heavy AST symbols",
-        output_schema = markdown_output_schema()
+        description = "Return the highest-churn AST symbols as structured report data",
+        annotations(title = "Structural hotspots", read_only_hint = true, destructive_hint = false, idempotent_hint = true),
+        output_schema = hotspots_output_schema()
     )]
     fn get_structural_hotspots(
         &self,
         Parameters(input): Parameters<StructuralHotspotsInput>,
     ) -> Result<CallToolResult, McpError> {
-        match self.get_structural_hotspots_impl(input) {
-            Ok(output) => Ok(Self::success_result(output)),
-            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
+        let server = self.snapshot()?;
+        match server.get_structural_hotspots_impl(input) {
+            Ok(output) => Ok(server.success_result(output)),
+            Err(err) => Err(Self::tool_error(err)),
         }
     }
 
     /// Retrieve chronological change history for a single symbol.
     #[rmcp::tool(
-        description = "Retrieve timeline of a symbol's evolution",
-        output_schema = markdown_output_schema()
+        description = "Retrieve a symbol's chronological history as structured report data",
+        annotations(title = "Symbol history", read_only_hint = true, destructive_hint = false, idempotent_hint = true),
+        output_schema = history_output_schema()
     )]
     fn inspect_symbol_history(
         &self,
         Parameters(input): Parameters<SymbolHistoryInput>,
     ) -> Result<CallToolResult, McpError> {
-        match self.inspect_symbol_history_impl(input) {
-            Ok(output) => Ok(Self::success_result(output)),
-            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
+        let server = self.snapshot()?;
+        match server.inspect_symbol_history_impl(input) {
+            Ok(output) => Ok(server.success_result(output)),
+            Err(err) => Err(Self::tool_error(err)),
         }
     }
 
-    #[rmcp::tool(description = "Retrieve a bounded commit diff excerpt from the source Git repository", output_schema = markdown_output_schema())]
+    #[rmcp::tool(description = "Retrieve a bounded commit diff excerpt from the source Git repository", annotations(title = "Commit diff", read_only_hint = true, destructive_hint = false, idempotent_hint = true), output_schema = diff_output_schema())]
     fn get_commit_diff(
         &self,
         Parameters(input): Parameters<CommitDiffInput>,
     ) -> Result<CallToolResult, McpError> {
-        match self.get_commit_diff_impl(input) {
-            Ok(output) => Ok(Self::success_result(output)),
-            Err(err) => Err(McpError::internal_error(err.to_string(), None)),
+        let server = self.snapshot()?;
+        match server.get_commit_diff_impl(input) {
+            Ok(output) => Ok(server.success_result(output)),
+            Err(err) => Err(Self::tool_error(err)),
         }
     }
 }
@@ -277,21 +474,25 @@ impl SpectralCortexMcpServer {
     ) -> Result<usize> {
         let value = value.unwrap_or(default_value);
         if !(1..=maximum).contains(&value) {
-            anyhow::bail!("{name} must be between 1 and {maximum}")
+            return Err(invalid_input(format!(
+                "{name} must be between 1 and {maximum}"
+            )));
         }
         Ok(value)
     }
 
     fn compact_snippet(text: &str, max_chars: usize) -> String {
         let single_line = text.replace('\n', " ").replace("  ", " ");
-        if single_line.len() > max_chars {
-            format!("{}...", &single_line[..max_chars])
+        let mut chars = single_line.chars();
+        let snippet: String = chars.by_ref().take(max_chars).collect();
+        if chars.next().is_some() {
+            format!("{snippet}...")
         } else {
             single_line
         }
     }
 
-    fn query_graph_impl(&self, input: QueryGraphInput) -> Result<(String, Vec<Value>)> {
+    fn query_graph_impl(&self, input: QueryGraphInput) -> Result<Vec<Value>> {
         let smg = self
             .smg
             .read()
@@ -305,24 +506,28 @@ impl SpectralCortexMcpServer {
             "snippet_chars",
         )?;
         if snippet_chars < 40 {
-            anyhow::bail!("snippet_chars must be between 40 and 300")
+            return Err(invalid_input("snippet_chars must be between 40 and 300"));
         }
         if let Some(min_score) = input.min_score {
             if !min_score.is_finite() || !(0.0..=1.0).contains(&min_score) {
-                anyhow::bail!("min_score must be between 0.0 and 1.0")
+                return Err(invalid_input("min_score must be between 0.0 and 1.0"));
             }
         }
 
         let temporal_weight = input.temporal_weight.unwrap_or(0.20);
         if !temporal_weight.is_finite() || !(0.0..=1.0).contains(&temporal_weight) {
-            anyhow::bail!("temporal_weight must be between 0.0 and 1.0");
+            return Err(invalid_input("temporal_weight must be between 0.0 and 1.0"));
         }
-        let temporal_mode = match input.temporal_mode.as_deref().unwrap_or("exponential") {
-            "exponential" => spectral_cortex::temporal::TemporalMode::Exponential,
-            "linear" | "linearwindow" => spectral_cortex::temporal::TemporalMode::LinearWindow,
-            "step" => spectral_cortex::temporal::TemporalMode::Step,
-            "buckets" => spectral_cortex::temporal::TemporalMode::Buckets,
-            mode => anyhow::bail!("unsupported temporal_mode '{mode}'"),
+        let temporal_mode = match input
+            .temporal_mode
+            .unwrap_or(TemporalModeInput::Exponential)
+        {
+            TemporalModeInput::Exponential => spectral_cortex::temporal::TemporalMode::Exponential,
+            TemporalModeInput::Linear | TemporalModeInput::LinearWindow => {
+                spectral_cortex::temporal::TemporalMode::LinearWindow
+            }
+            TemporalModeInput::Step => spectral_cortex::temporal::TemporalMode::Step,
+            TemporalModeInput::Buckets => spectral_cortex::temporal::TemporalMode::Buckets,
         };
         let mut temporal = spectral_cortex::temporal::TemporalConfig {
             enabled: !input.no_temporal.unwrap_or(false),
@@ -332,7 +537,9 @@ impl SpectralCortexMcpServer {
         };
         if let Some(days) = input.temporal_half_life_days {
             if !days.is_finite() || days <= 0.0 {
-                anyhow::bail!("temporal_half_life_days must be greater than zero");
+                return Err(invalid_input(
+                    "temporal_half_life_days must be greater than zero",
+                ));
             }
             temporal.half_life_seconds = Some((days * 86_400.0).round() as u64);
         }
@@ -341,7 +548,7 @@ impl SpectralCortexMcpServer {
                 .map(|text| {
                     chrono::DateTime::parse_from_rfc3339(text)
                         .map(|time| time.timestamp().max(0) as u64)
-                        .with_context(|| format!("invalid RFC3339 timestamp '{text}'"))
+                        .map_err(|_| invalid_input(format!("invalid RFC3339 timestamp '{text}'")))
                 })
                 .transpose()
         };
@@ -352,10 +559,12 @@ impl SpectralCortexMcpServer {
         }
         if let Some(days) = input.time_window_days {
             if !days.is_finite() || days < 0.0 {
-                anyhow::bail!("time_window_days must be non-negative");
+                return Err(invalid_input("time_window_days must be non-negative"));
             }
             if time_start.is_some() {
-                anyhow::bail!("time_window_days cannot be combined with time_start");
+                return Err(invalid_input(
+                    "time_window_days cannot be combined with time_start",
+                ));
             }
             let now = match temporal.now_seconds {
                 Some(now) => now,
@@ -371,8 +580,11 @@ impl SpectralCortexMcpServer {
             .zip(time_end)
             .is_some_and(|(start, end)| start > end)
         {
-            anyhow::bail!("time_start must be less than or equal to time_end");
+            return Err(invalid_input(
+                "time_start must be less than or equal to time_end",
+            ));
         }
+        let links_k = Self::bounded_limit(input.links_k, DEFAULT_LINKS_K, 25, "links_k")?;
         let candidate_k = Self::bounded_limit(
             input.candidate_k,
             top_k.saturating_mul(5).max(top_k),
@@ -404,70 +616,22 @@ impl SpectralCortexMcpServer {
         }
         hits.truncate(top_k);
 
-        let mut out = String::new();
         let mut structured = Vec::new();
-        out.push_str(&format!("# Query Result: `{}`\n", input.query));
-        out.push_str(&format!("- SMG: `{}`\n\n", self.smg_path));
-        out.push_str(&format!(
-            "- indexed_revision: `{}`\n\n",
-            smg.source_revision.as_deref().unwrap_or("unknown")
-        ));
-        let mut groups: Vec<(String, Vec<(f32, u32)>)> = Vec::new();
         for (score, note_id) in hits {
             let note = &smg.notes[&note_id];
             let snippet = Self::compact_snippet(&note.context(), snippet_chars);
             let commit_id = note.source_commit_ids.iter().flatten().next().cloned();
-            let commit_label = commit_id.as_deref().unwrap_or("unknown");
-            if let Some((_, group)) = groups.iter_mut().find(|(key, _)| key == commit_label) {
-                group.push((score, note_id));
-            } else {
-                groups.push((commit_label.to_owned(), vec![(score, note_id)]));
-            }
+            let related_notes = smg.get_related_note_links(note_id, Some(links_k)).into_iter().map(|(related_note_id, similarity)| json!({"note_id":related_note_id,"similarity":similarity})).collect::<Vec<_>>();
             structured.push(json!({
                 "note_id": note_id, "score": score, "commit_id": commit_id,
                 "timestamp": note.source_timestamps.first(), "file_path": note.file_path,
-                "symbol_id": note.symbol_id, "snippet": snippet
+                "symbol_id": note.symbol_id, "snippet": snippet, "related_notes": related_notes
             }));
         }
-        for (commit_label, group) in groups {
-            out.push_str(&format!("\n## Commit `{commit_label}`\n"));
-            for (score, note_id) in group {
-                let note = &smg.notes[&note_id];
-                let snippet = Self::compact_snippet(&note.context(), snippet_chars);
-                out.push_str(&format!(
-                    "- **Score {:.3}** [Note {}] commit={} time={} file={} symbol={}: {}\n",
-                    score,
-                    note_id,
-                    commit_label,
-                    note.source_timestamps
-                        .first()
-                        .map(u64::to_string)
-                        .unwrap_or_else(|| "unknown".into()),
-                    note.file_path.as_deref().unwrap_or("unknown"),
-                    note.symbol_id.as_deref().unwrap_or("unknown"),
-                    snippet
-                ));
-
-                if let Some(links_k) = input.links_k {
-                    let related = smg.get_related_note_links(note_id, Some(links_k));
-                    if !related.is_empty() {
-                        let compact = {
-                            related
-                                .into_iter()
-                                .map(|(nid, sim)| format!("{}({:.3})", nid, sim))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        };
-                        out.push_str(&format!("    - related nodes: {}\n", compact));
-                    }
-                }
-            }
-        }
-
-        Ok((out, structured))
+        Ok(structured)
     }
 
-    fn get_commit_diff_impl(&self, input: CommitDiffInput) -> Result<String> {
+    fn get_commit_diff_impl(&self, input: CommitDiffInput) -> Result<Value> {
         let snapshot = self
             .smg
             .read()
@@ -479,7 +643,11 @@ impl SpectralCortexMcpServer {
             .ok_or_else(|| anyhow::anyhow!("SMG has no source repository metadata"))?;
         let repo = git2::Repository::open(repo_path)
             .with_context(|| format!("opening source repository {repo_path}"))?;
-        let commit = repo.revparse_single(&input.commit_id)?.peel_to_commit()?;
+        let commit = repo
+            .revparse_single(&input.commit_id)
+            .map_err(|_| invalid_input(format!("commit {} not found", input.commit_id)))?
+            .peel_to_commit()
+            .map_err(|_| invalid_input(format!("commit {} is not a commit", input.commit_id)))?;
         let tree = commit.tree()?;
         let parent = if commit.parent_count() > 0 {
             Some(commit.parent(0)?.tree()?)
@@ -509,10 +677,10 @@ impl SpectralCortexMcpServer {
             output.truncate(8000);
             output.push_str("\n[diff excerpt truncated]");
         }
-        Ok(format!("# Commit diff `{}`\n\n{}", commit.id(), output))
+        Ok(json!({"commit_id": commit.id().to_string(), "diff": output, "truncated": truncated}))
     }
 
-    fn inspect_note_impl(&self, input: InspectNoteInput) -> Result<String> {
+    fn inspect_note_impl(&self, input: InspectNoteInput) -> Result<Value> {
         let smg = self
             .smg
             .read()
@@ -526,53 +694,31 @@ impl SpectralCortexMcpServer {
             "snippet_chars",
         )?;
         if snippet_chars < 40 {
-            anyhow::bail!("snippet_chars must be between 40 and 300")
+            return Err(invalid_input("snippet_chars must be between 40 and 300"));
         }
 
         let note = smg
             .notes
             .get(&input.note_id)
-            .ok_or_else(|| anyhow::anyhow!("note {} not found", input.note_id))?;
-
-        let mut out = String::new();
-        out.push_str(&format!("# Note {}\n", note.note_id));
-        out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
-        out.push_str(&format!(
-            "- indexed_revision: `{}`\n",
-            smg.source_revision.as_deref().unwrap_or("unknown")
-        ));
-        out.push_str(&format!(
-            "- source_repository: `{}`\n",
-            smg.source_repo.as_deref().unwrap_or("unknown")
-        ));
-        out.push_str(&format!("- symbol_id: {:?}\n", note.symbol_id));
-        out.push_str(&format!("- ast_node_type: {:?}\n", note.ast_node_type));
-        out.push_str(&format!(
-            "- context: {}\n\n",
-            Self::compact_snippet(&note.context(), snippet_chars)
-        ));
-
-        let related = smg.get_related_note_links(note.note_id, Some(links_k));
-        if related.is_empty() {
-            out.push_str("No related notes.\n");
-            return Ok(out);
-        }
-
-        out.push_str("| related_note_id | spectral_similarity | snippet |\n");
-        out.push_str("|-----------------|---------------------|---------|\n");
-        for (related_id, sim) in related {
-            let snippet = smg
-                .notes
-                .get(&related_id)
-                .map(|n| Self::compact_snippet(&n.context(), snippet_chars).replace('|', "\\|"))
-                .unwrap_or_else(|| String::from("<missing note payload>"));
-            out.push_str(&format!("| {} | {:.4} | {} |\n", related_id, sim, snippet));
-        }
-
-        Ok(out)
+            .ok_or_else(|| invalid_input(format!("note {} not found", input.note_id)))?;
+        let related_notes = smg
+            .get_related_note_links(note.note_id, Some(links_k))
+            .into_iter()
+            .map(|(related_id, similarity)| {
+                let snippet = smg
+                    .notes
+                    .get(&related_id)
+                    .map(|related| Self::compact_snippet(&related.context(), snippet_chars))
+                    .unwrap_or_else(|| "<missing note payload>".into());
+                json!({"note_id": related_id, "similarity": similarity, "snippet": snippet})
+            })
+            .collect::<Vec<_>>();
+        Ok(
+            json!({"note":{"note_id":note.note_id,"symbol_id":note.symbol_id,"ast_node_type":note.ast_node_type,"file_path":note.file_path,"context":Self::compact_snippet(&note.context(), snippet_chars)},"related_notes":related_notes}),
+        )
     }
 
-    fn long_range_links_impl(&self, input: LongRangeLinksInput) -> Result<String> {
+    fn long_range_links_impl(&self, input: LongRangeLinksInput) -> Result<Value> {
         let smg = self
             .smg
             .read()
@@ -581,21 +727,13 @@ impl SpectralCortexMcpServer {
         let top_k = Self::bounded_limit(input.top_k, 20, 100, "top_k")?;
         let links = smg.get_long_range_links(Some(top_k));
 
-        let mut out = String::new();
-        out.push_str("# Long-Range Links\n");
-        out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
-        out.push_str(&format!("- links: {}\n\n", links.len()));
-        out.push_str("| # | note_a | note_b | spectral_similarity |\n");
-        out.push_str("|---|--------|--------|---------------------|\n");
-
-        for (idx, (a, b, sim)) in links.into_iter().enumerate() {
-            out.push_str(&format!("| {} | {} | {} | {:.4} |\n", idx + 1, a, b, sim));
-        }
-
-        Ok(out)
+        Ok(
+            json!({"links": links.into_iter().enumerate().map(|(idx,(a,b,similarity))| json!({"rank":idx+1,"note_a":a,"note_b":b,"similarity":similarity})).collect::<Vec<_>>()}),
+        )
     }
 
-    pub fn get_structural_hotspots_impl(&self, input: StructuralHotspotsInput) -> Result<String> {
+    /// Return structural symbols ranked by observed churn.
+    pub fn get_structural_hotspots_impl(&self, input: StructuralHotspotsInput) -> Result<Value> {
         let smg = self
             .smg
             .read()
@@ -617,20 +755,13 @@ impl SpectralCortexMcpServer {
         sorted.sort_by_key(|entry| std::cmp::Reverse(entry.1));
 
         let top_k = Self::bounded_limit(input.top_k, 10, 50, "top_k")?;
-        let results = sorted.into_iter().take(top_k);
-
-        let mut out = String::new();
-        out.push_str("# Structural Hotspots (Top Churn Symbols)\n");
-        out.push_str("| Symbol ID | Category | Churn Count |\n");
-        out.push_str("|-----------|----------|-------------|\n");
-        for (sid, count, typ) in results {
-            out.push_str(&format!("| `{}` | {} | {} |\n", sid, typ, count));
-        }
-
-        Ok(out)
+        Ok(
+            json!({"hotspots": sorted.into_iter().take(top_k).map(|(symbol_id,churn_count,category)| json!({"symbol_id":symbol_id,"category":category,"churn_count":churn_count})).collect::<Vec<_>>()}),
+        )
     }
 
-    pub fn inspect_symbol_history_impl(&self, input: SymbolHistoryInput) -> Result<String> {
+    /// Return chronological entries for a stable symbol identifier.
+    pub fn inspect_symbol_history_impl(&self, input: SymbolHistoryInput) -> Result<Value> {
         let smg = self
             .smg
             .read()
@@ -654,44 +785,19 @@ impl SpectralCortexMcpServer {
         let total_found = history.len();
         if let Some(limit) = input.limit {
             if !(1..=1_000).contains(&limit) {
-                anyhow::bail!("limit must be between 1 and 1000")
+                return Err(invalid_input("limit must be between 1 and 1000"));
             }
             if history.len() > limit {
                 history.truncate(limit);
             }
         }
 
-        let mut out = String::new();
-        out.push_str(&format!("# Symbol History: `{}`\n", input.symbol_id));
-        if let Some(_limit) = input.limit {
-            out.push_str(&format!(
-                "- showing last {} of {} entries\n",
-                history.len(),
-                total_found
-            ));
-        }
-
-        if history.is_empty() {
-            out.push_str("No history found for this symbol.\n");
-            return Ok(out);
-        }
-
-        for (ts, nid, ctx) in history {
-            let date = chrono::DateTime::from_timestamp(ts as i64, 0)
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_else(|| ts.to_string());
-            out.push_str(&format!(
-                "- **{}** [Note {}]: {}\n",
-                date,
-                nid,
-                Self::compact_snippet(&ctx, 100)
-            ));
-        }
-
-        Ok(out)
+        Ok(
+            json!({"symbol_id":input.symbol_id,"total_entries":total_found,"entries":history.into_iter().map(|(timestamp,note_id,context)| json!({"timestamp":timestamp,"note_id":note_id,"context":Self::compact_snippet(&context,100)})).collect::<Vec<_>>()}),
+        )
     }
 
-    fn graph_summary_impl(&self, input: GraphSummaryInput) -> Result<String> {
+    fn graph_summary_impl(&self, input: GraphSummaryInput) -> Result<Value> {
         let smg = self
             .smg
             .read()
@@ -718,53 +824,16 @@ impl SpectralCortexMcpServer {
                 smg.topology_snapshots
                     .iter()
                     .find(|snapshot| snapshot.commit_id == commit_id)
-                    .ok_or_else(|| anyhow::anyhow!("topology snapshot '{}' not found", commit_id))
+                    .ok_or_else(|| {
+                        invalid_input(format!("topology snapshot '{}' not found", commit_id))
+                    })
             })
             .transpose()?;
 
-        let mut out = String::new();
-        out.push_str("# Graph Summary\n");
-        out.push_str(&format!("- SMG: `{}`\n", self.smg_path));
-        out.push_str(&format!(
-            "- indexed_revision: `{}`\n",
-            smg.source_revision.as_deref().unwrap_or("unknown")
-        ));
-        out.push_str(&format!(
-            "- source_repository: `{}`\n",
-            smg.source_repo.as_deref().unwrap_or("unknown")
-        ));
-        out.push_str(&format!("- notes: {}\n", smg.notes.len()));
-        out.push_str(&format!("- next_id: {}\n", smg.next_id));
-        out.push_str(&format!("- long_range_links: {}\n", links_count));
-        out.push_str(&format!("- cluster_labels: {}\n", cluster_labels));
-        out.push_str(&format!("- cluster_centroids: {}\n", centroid_count));
-        out.push_str(&format!(
-            "- topology_snapshots: {}\n",
-            smg.topology_snapshots.len()
-        ));
-        out.push_str(&format!("- topology_symbols: {}\n", topology_symbols));
-        out.push_str(&format!("- topology_edges: {}\n", topology_edges));
-        if let Some(snapshot) = selected_snapshot {
-            out.push_str(&format!("- topology_commit_id: `{}`\n", snapshot.commit_id));
-            out.push_str(&format!(
-                "- selected_topology_symbols: {}\n",
-                snapshot.symbols.len()
-            ));
-            out.push_str(&format!(
-                "- selected_topology_edges: {}\n",
-                snapshot.edges.len()
-            ));
-        }
-        out.push_str(&format!(
-            "- similarity_matrix_cached: {}\n",
-            smg.similarity_matrix.is_some()
-        ));
-        out.push_str(&format!(
-            "- spectral_embeddings_cached: {}\n",
-            smg.spectral_embeddings.is_some()
-        ));
-
-        Ok(out)
+        let selected_topology = selected_snapshot.map(|snapshot| json!({"commit_id":snapshot.commit_id,"symbol_count":snapshot.symbols.len(),"edge_count":snapshot.edges.len()}));
+        Ok(
+            json!({"note_count":smg.notes.len(),"next_id":smg.next_id,"long_range_link_count":links_count,"cluster_label_count":cluster_labels,"cluster_centroid_count":centroid_count,"topology_snapshot_count":smg.topology_snapshots.len(),"topology_symbol_count":topology_symbols,"topology_edge_count":topology_edges,"selected_topology":selected_topology,"similarity_matrix_cached":smg.similarity_matrix.is_some(),"spectral_embeddings_cached":smg.spectral_embeddings.is_some()}),
+        )
     }
 }
 
@@ -853,7 +922,10 @@ fn reload_snapshot(path: &Path, shared: &Arc<RwLock<Arc<SpectralMemoryGraph>>>) 
 
 #[cfg(test)]
 mod tests {
-    use super::{reload_snapshot, watch_smg_file, QueryGraphInput, SpectralCortexMcpServer};
+    use super::{
+        reload_snapshot, watch_smg_file, GraphSummaryInput, LongRangeLinksInput, QueryGraphInput,
+        SpectralCortexMcpServer, StructuralHotspotsInput, SymbolHistoryInput,
+    };
     use rmcp::{
         model::{
             CallToolRequest, CallToolRequestParams, ClientCapabilities, ClientJsonRpcMessage,
@@ -913,7 +985,7 @@ mod tests {
     }
 
     #[test]
-    fn query_returns_structured_evidence_and_groups_repeated_commits() {
+    fn query_returns_structured_evidence_and_related_notes() {
         spectral_cortex::embed::init(1, 0).unwrap();
         let text = "query target";
         let embedding = spectral_cortex::embed::get_embedding(text).unwrap();
@@ -948,14 +1020,12 @@ mod tests {
         let mut input = query_input();
         input.query = text.into();
         input.top_k = Some(3);
-        let (markdown, results) = server.query_graph_impl(input).unwrap();
+        let results = server.query_graph_impl(input).unwrap();
         assert_eq!(results.len(), 3);
         assert_eq!(results[0]["note_id"].as_u64(), Some(0));
         assert_eq!(results[0]["commit_id"].as_str(), Some("commit-a"));
         assert!(results[0]["timestamp"].is_number());
-        assert!(markdown.contains("## Commit `commit-a`"));
-        assert_eq!(markdown.matches("## Commit `commit-a`").count(), 1);
-        assert!(markdown.contains("## Commit `commit-b`"));
+        assert!(results[0]["related_notes"].is_array());
         let _ = spectral_cortex::embed::shutdown();
     }
 
@@ -1014,19 +1084,111 @@ mod tests {
         );
     }
     use serde_json::json;
+    use serde_json::Value;
 
     #[test]
-    fn successful_results_include_markdown_and_structured_content() {
-        let result = SpectralCortexMcpServer::success_result("# Graph Summary".into());
+    fn successful_results_include_typed_content_without_text_blocks() {
+        let graph = spectral_cortex::SpectralMemoryGraph::new().unwrap();
+        let server = SpectralCortexMcpServer::new("fixture.json".into(), graph);
+        let result = server.success_result(json!({"note_count": 0}));
 
         assert_eq!(result.is_error, Some(false));
-        assert_eq!(result.content.len(), 1);
+        assert!(result.content.is_empty());
         assert_eq!(
             result
                 .structured_content
-                .and_then(|value| value.get("markdown").cloned())
-                .and_then(|value| value.as_str().map(str::to_owned)),
-            Some("# Graph Summary".into())
+                .and_then(|value| value.get("note_count").cloned())
+                .and_then(|value| value.as_u64()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn provenance_classifies_current_behind_ahead_diverged_and_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+        let signature = git2::Signature::now("test", "test@example.com").unwrap();
+        let tree_id = repo.treebuilder(None).unwrap().write().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let initial = repo
+            .commit(Some("HEAD"), &signature, &signature, "initial", &tree, &[])
+            .unwrap();
+        let initial_commit = repo.find_commit(initial).unwrap();
+        let second = repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                "second",
+                &tree,
+                &[&initial_commit],
+            )
+            .unwrap();
+        let initial_commit = repo.find_commit(initial).unwrap();
+        let divergent = repo
+            .commit(
+                None,
+                &signature,
+                &signature,
+                "divergent",
+                &tree,
+                &[&initial_commit],
+            )
+            .unwrap();
+        let mut graph = spectral_cortex::SpectralMemoryGraph::new().unwrap();
+        graph.source_repo = Some(dir.path().display().to_string());
+        let mut freshness_for = |revision: Option<git2::Oid>| {
+            graph.source_revision = revision.map(|oid| oid.to_string());
+            SpectralCortexMcpServer::provenance(&graph)
+        };
+
+        let (_, indexed, current, freshness) = freshness_for(None);
+        assert_eq!(indexed, None);
+        assert_eq!(current.as_deref(), Some(second.to_string().as_str()));
+        assert_eq!(freshness, "unknown");
+        assert_eq!(freshness_for(Some(second)).3, "current");
+        assert_eq!(freshness_for(Some(initial)).3, "behind");
+
+        repo.set_head_detached(initial).unwrap();
+        let (_, _, current, freshness) = freshness_for(Some(second));
+        assert_eq!(current.as_deref(), Some(initial.to_string().as_str()));
+        assert_eq!(freshness, "ahead");
+
+        repo.set_head_detached(divergent).unwrap();
+        let (_, _, current, freshness) = freshness_for(Some(second));
+        assert_eq!(current.as_deref(), Some(divergent.to_string().as_str()));
+        assert_eq!(freshness, "diverged");
+    }
+
+    #[test]
+    fn typed_tool_implementations_return_named_fields() {
+        let mut graph = spectral_cortex::SpectralMemoryGraph::new().unwrap();
+        graph.next_id = 7;
+        let server = SpectralCortexMcpServer::new("fixture.json".into(), graph);
+        assert_eq!(
+            server
+                .graph_summary_impl(GraphSummaryInput {
+                    topology_commit_id: None
+                })
+                .unwrap()["next_id"],
+            7
+        );
+        assert!(server
+            .long_range_links_impl(LongRangeLinksInput { top_k: None })
+            .unwrap()["links"]
+            .is_array());
+        assert!(server
+            .get_structural_hotspots_impl(StructuralHotspotsInput { top_k: None })
+            .unwrap()["hotspots"]
+            .is_array());
+        assert_eq!(
+            server
+                .inspect_symbol_history_impl(SymbolHistoryInput {
+                    symbol_id: "missing".into(),
+                    limit: None
+                })
+                .unwrap()["symbol_id"],
+            "missing"
         );
     }
 
@@ -1054,6 +1216,52 @@ mod tests {
                 && tool.input_schema.get("type") == Some(&json!("object"))
                 && tool.output_schema.is_some()
         }));
+        assert!(tools.iter().all(|tool| {
+            let annotations = tool.annotations.as_ref().expect("tool annotations");
+            annotations.read_only_hint == Some(true)
+                && annotations.destructive_hint == Some(false)
+                && annotations.idempotent_hint == Some(true)
+        }));
+        for tool in &tools {
+            let properties = tool
+                .output_schema
+                .as_ref()
+                .unwrap()
+                .get("properties")
+                .unwrap();
+            assert!(properties.get("report").is_none());
+            assert!(properties.get("source_repository").is_some());
+            assert!(properties.get("indexed_revision").is_some());
+            assert!(properties.get("current_revision").is_some());
+            assert!(properties.get("freshness").is_some());
+            let expected_field = match tool.name.as_ref() {
+                "query_graph" => "results",
+                "inspect_note" => "note",
+                "long_range_links" => "links",
+                "graph_summary" => "note_count",
+                "get_structural_hotspots" => "hotspots",
+                "inspect_symbol_history" => "entries",
+                "get_commit_diff" => "diff",
+                _ => unreachable!(),
+            };
+            assert!(
+                properties.get(expected_field).is_some(),
+                "{} schema missing {expected_field}",
+                tool.name
+            );
+        }
+        let query = tools
+            .iter()
+            .find(|tool| tool.name == "query_graph")
+            .unwrap();
+        assert_eq!(query.input_schema["properties"]["top_k"]["maximum"], 20);
+        assert_eq!(
+            query.input_schema["properties"]["snippet_chars"]["minimum"],
+            40
+        );
+        let query_schema = Value::Object(query.input_schema.as_ref().clone()).to_string();
+        assert!(query_schema.contains("linearwindow"));
+        assert!(query_schema.contains("buckets"));
     }
 
     #[tokio::test]
@@ -1151,7 +1359,7 @@ mod tests {
         let failed = client.receive().await.expect("receive failing tools/call");
         match failed {
             ServerJsonRpcMessage::Error(error) => {
-                assert_eq!(error.error.code, ErrorCode::INTERNAL_ERROR)
+                assert_eq!(error.error.code, ErrorCode::INVALID_PARAMS)
             }
             other => panic!("expected protocol error, got {other:?}"),
         }
